@@ -15,6 +15,25 @@ export interface MaintenanceTask {
   id: string;
   title: string;
   completed: boolean;
+  frequency?: 'daily' | 'monthly';
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  lowThreshold: number;
+  category: 'chemical' | 'equipment' | 'supplies';
+}
+
+export interface Equipment {
+  id: string;
+  name: string;
+  type: string;
+  status: 'operational' | 'needs-attention' | 'offline';
+  lastChecked?: string;
+  notes?: string;
 }
 
 export interface Ranges {
