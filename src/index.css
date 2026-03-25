@@ -1,0 +1,91 @@
+@import url('https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Exo 2", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-primary: #060e1a;
+  --color-accent: #4fc3f7;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-critical: #ef4444;
+  --color-bg: #060e1a;
+  --color-surface: #0d1f38;
+  --color-ink: #ffffff;
+  --color-ink-muted: #8ab4cc;
+  --color-ink-dim: #4a6a80;
+  --color-border-dim: #1e3a5f;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-ink font-sans;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface rounded-xl border border-border-dim shadow-lg p-4;
+  }
+  
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-bold transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95;
+  }
+  
+  .btn-primary {
+    @apply bg-accent text-primary hover:bg-[#38b2f0];
+  }
+  
+  .btn-secondary {
+    @apply bg-surface text-ink-muted border border-border-dim hover:text-white hover:bg-[#1e3a5f];
+  }
+  
+  .input {
+    @apply w-full px-4 py-3 rounded-lg border border-border-dim focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all bg-[#060e1a] text-white text-lg font-mono;
+  }
+  
+  .label {
+    @apply block text-xs font-bold text-ink-dim mb-1.5 uppercase tracking-widest;
+  }
+}
+
+/* Custom scrollbar for better mobile feel */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border-dim rounded-full hover:bg-ink-dim transition-colors;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    padding: 0 !important;
+  }
+  
+  .card {
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  
+  main {
+    padding-top: 0 !important;
+    max-width: 100% !important;
+  }
+}
