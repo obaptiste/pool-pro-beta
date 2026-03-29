@@ -22,6 +22,13 @@ export default function TrendCharts({ readings }: Props) {
     .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     .map(r => ({
       ...r,
+      chlorine: Number(r.chlorine) || 0,
+      ph: Number(r.ph) || 0,
+      alkalinity: Number(r.alkalinity) || 0,
+      temperature: Number(r.temperature) || 0,
+      differentialPressure: Number(r.differentialPressure) || 0,
+      calciumHardness: Number(r.calciumHardness) || 0,
+      cyanuricAcid: Number(r.cyanuricAcid) || 0,
       formattedDate: format(r.timestamp, 'MMM d, HH:mm'),
     }));
 
@@ -76,8 +83,24 @@ export default function TrendCharts({ readings }: Props) {
         data={chartData} 
         dataKey="differentialPressure" 
         color="#8ab4cc" 
-        unit="PSI"
+        unit="kPa"
         range={DEFAULT_RANGES.differentialPressure}
+      />
+      <ChartSection 
+        title="Calcium Hardness" 
+        data={chartData} 
+        dataKey="calciumHardness" 
+        color="#22d3ee" 
+        unit="ppm"
+        range={DEFAULT_RANGES.calciumHardness}
+      />
+      <ChartSection 
+        title="Cyanuric Acid" 
+        data={chartData} 
+        dataKey="cyanuricAcid" 
+        color="#facc15" 
+        unit="ppm"
+        range={DEFAULT_RANGES.cyanuricAcid}
       />
     </div>
   );

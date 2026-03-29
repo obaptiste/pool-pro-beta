@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge } from 'lucide-react';
+import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { format } from 'date-fns';
@@ -57,12 +57,14 @@ export default function History({ readings, onBack, onDelete }: Props) {
 
                   {/* Data Grid */}
                   <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
                       <DataPoint label="Chlorine" value={reading.chlorine} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" />
                       <DataPoint label="pH Level" value={reading.ph} unit="" icon={<Activity size={12} />} color="text-emerald-400" />
                       <DataPoint label="Alkalinity" value={reading.alkalinity} unit="ppm" icon={<TrendingUp size={12} />} color="text-amber-400" />
                       <DataPoint label="Temp" value={reading.temperature} unit="°C" icon={<Thermometer size={12} />} color="text-red-400" />
                       <DataPoint label="Pressure" value={reading.differentialPressure} unit="PSI" icon={<Gauge size={12} />} color="text-indigo-400" />
+                      <DataPoint label="Calcium" value={reading.calciumHardness} unit="ppm" icon={<Waves size={12} />} color="text-cyan-400" />
+                      <DataPoint label="CYA" value={reading.cyanuricAcid} unit="ppm" icon={<Sun size={12} />} color="text-yellow-400" />
                     </div>
 
                     {reading.notes && (

@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "Reading": {
+      "title": "Reading",
+      "description": "A single water quality reading.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "chlorine": { "type": "number" },
+        "ph": { "type": "number" },
+        "alkalinity": { "type": "number" },
+        "temperature": { "type": "number" },
+        "differentialPressure": { "type": "number" },
+        "calciumHardness": { "type": "number" },
+        "cyanuricAcid": { "type": "number" },
+        "notes": { "type": "string" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "chlorine", "ph", "alkalinity", "uid"]
+    },
+    "MaintenanceTask": {
+      "title": "MaintenanceTask",
+      "description": "A task to be performed for pool maintenance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "frequency": { "type": "string", "enum": ["daily", "weekly", "monthly", "once"] },
+        "isAI": { "type": "boolean" },
+        "uid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "completed", "priority", "frequency", "uid"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "A chemical or supply item in stock.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "minThreshold": { "type": "number" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "name", "quantity", "unit", "minThreshold", "uid"]
+    },
+    "EquipmentItem": {
+      "title": "EquipmentItem",
+      "description": "A piece of pool equipment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "installDate": { "type": "string", "format": "date-time" },
+        "lastServiceDate": { "type": "string", "format": "date-time" },
+        "serviceIntervalMonths": { "type": "number" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "name", "installDate", "uid"]
+    },
+    "MaintenanceSchedule": {
+      "title": "MaintenanceSchedule",
+      "description": "User's testing schedule settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "testFrequency": { "type": "string", "enum": ["daily", "weekly", "biweekly", "monthly"] },
+        "lastTestDate": { "type": "string", "format": "date-time" },
+        "nextTestDate": { "type": "string", "format": "date-time" },
+        "remindersEnabled": { "type": "boolean" }
+      },
+      "required": ["uid", "testFrequency", "remindersEnabled"]
+    }
+  },
+  "firestore": {
+    "/readings/{readingId}": {
+      "schema": "Reading",
+      "description": "Collection of water quality readings."
+    },
+    "/tasks/{taskId}": {
+      "schema": "MaintenanceTask",
+      "description": "Collection of maintenance tasks."
+    },
+    "/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Collection of inventory items."
+    },
+    "/equipment/{equipmentId}": {
+      "schema": "EquipmentItem",
+      "description": "Collection of pool equipment."
+    },
+    "/schedules/{uid}": {
+      "schema": "MaintenanceSchedule",
+      "description": "User's maintenance schedule settings."
+    }
+  }
+}

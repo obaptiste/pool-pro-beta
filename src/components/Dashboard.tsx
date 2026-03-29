@@ -1,14 +1,14 @@
 import React from 'react';
-import {
-  Droplets,
-  Thermometer,
-  Activity,
-  AlertCircle,
-  Plus,
-  BookOpen,
+import { 
+  Droplets, 
+  Thermometer, 
+  Activity, 
+  AlertCircle, 
+  Plus, 
+  BookOpen, 
   Book,
-  Download,
-  CheckCircle2,
+  Download, 
+  CheckCircle2, 
   Circle,
   ChevronRight,
   TrendingUp,
@@ -19,45 +19,115 @@ import {
   LineChart as LineChartIcon,
   X,
   Sparkles,
-  CalendarDays,
-  Package,
-  RotateCcw,
+  Bell,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Reading, MaintenanceTask, InventoryItem, Equipment, DEFAULT_RANGES, Status } from '../types';
+import { GoogleGenAI } from "@google/genai";
+import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
 import TrendCharts from './TrendCharts';
-import Inventory from './Inventory';
 
 interface Props {
   readings: Reading[];
   tasks: MaintenanceTask[];
-  monthlyTasks: MaintenanceTask[];
+  schedule: MaintenanceSchedule;
   inventory: InventoryItem[];
-  equipment: Equipment[];
+  equipment: EquipmentItem[];
   onLogReading: () => void;
   onOpenCheatSheet: () => void;
   onOpenGlossary: () => void;
   onViewHistory: () => void;
+  onOpenReminderSettings: () => void;
   onExport: () => void;
   onPrint: () => void;
   toggleTask: (id: string) => void;
-  toggleMonthlyTask: (id: string) => void;
-  onUpdateInventoryQuantity: (id: string, quantity: number) => void;
-  onUpdateEquipmentStatus: (id: string, status: Equipment['status']) => void;
 }
 
-type Tab = 'overview' | 'monthly' | 'trends' | 'inventory';
-
-export default function Dashboard({
-  readings, tasks, monthlyTasks, inventory, equipment,
-  onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory,
-  onExport, onPrint, toggleTask, toggleMonthlyTask,
-  onUpdateInventoryQuantity, onUpdateEquipmentStatus,
-}: Props) {
-  const [activeTab, setActiveTab] = React.useState<Tab>('overview');
+export default function Dashboard({ readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask }: Props) {
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
+  const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
+  const [lsiAnalysis, setLsiAnalysis] = React.useState<string | null>(null);
+  const [isLsiLoading, setIsLsiLoading] = React.useState(false);
   const latest = readings[0];
 
+  const calculateLSI = (reading: Reading) => {
+    // LSI = pH + TF + CF + AF - TDS_factor
+    // Simplified factors for common ranges
+    const getTF = (temp: number) => {
+      if (temp < 0) return 0;
+      if (temp < 10) return 0.3;
+      if (temp < 15) return 0.4;
+      if (temp < 20) return 0.5;
+      if (temp < 25) return 0.6;
+      if (temp < 30) return 0.7;
+      if (temp < 35) return 0.8;
+      return 0.9;
+    };
+
+    const getCF = (ch: number) => {
+      if (ch < 50) return 1.3;
+      if (ch < 100) return 1.6;
+      if (ch < 150) return 1.8;
+      if (ch < 200) return 1.9;
+      if (ch < 250) return 2.0;
+      if (ch < 300) return 2.1;
+      if (ch < 400) return 2.2;
+      if (ch < 500) return 2.3;
+      return 2.4;
+    };
+
+    const getAF = (alk: number) => {
+      if (alk < 50) return 1.7;
+      if (alk < 100) return 2.0;
+      if (alk < 150) return 2.2;
+      if (alk < 200) return 2.3;
+      if (alk < 300) return 2.5;
+      return 2.6;
+    };
+
+    const lsi = (Number(reading.ph) || 0) + 
+                getTF(Number(reading.temperature) || 0) + 
+                getCF(Number(reading.calciumHardness) || 0) + 
+                getAF(Number(reading.alkalinity) || 0) - 12.1;
+    return parseFloat(lsi.toFixed(2));
+  };
+
+  const lsiScore = latest ? calculateLSI(latest) : 0;
+
+  const getLsiStatus = (score: number): Status => {
+    if (score < -0.3 || score > 0.3) return 'critical';
+    if (score < -0.1 || score > 0.1) return 'warning';
+    return 'good';
+  };
+
+  const runLsiAnalysis = async () => {
+    if (!latest || isLsiLoading) return;
+    setIsLsiLoading(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: `Analyze this LSI score of ${lsiScore} for a pool. 
+        Context: pH ${latest.ph}, Temp ${latest.temperature}°C, CH ${latest.calciumHardness}, TA ${latest.alkalinity}.
+        Provide a 1-sentence technical recommendation.`,
+      });
+      setLsiAnalysis(response.text || "Analysis unavailable.");
+    } catch (e) {
+      console.error(e);
+      setLsiAnalysis("Failed to load AI analysis.");
+    } finally {
+      setIsLsiLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (latest) {
+      runLsiAnalysis();
+    }
+  }, [latest?.id]);
+
+  // Reset dismissed alerts when a new reading is added
   React.useEffect(() => {
     if (latest?.id) {
       setDismissedAlerts([]);
@@ -128,6 +198,14 @@ export default function Dashboard({
       msg: 'Filter pressure elevated — flow restricted.',
       action: 'Backwash filter or clean cartridges immediately.',
       severity: 'critical'
+    },
+    {
+      id: 'test_due',
+      type: 'schedule',
+      condition: schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false,
+      msg: 'Water test due — maintenance schedule.',
+      action: 'Log a new reading to maintain water balance.',
+      severity: 'warning'
     }
   ].filter(a => a.condition && !dismissedAlerts.includes(a.id)) : [];
 
@@ -135,19 +213,32 @@ export default function Dashboard({
     setDismissedAlerts(prev => [...prev, id]);
   };
 
-  const getTrendData = (key: keyof Reading) => {
-    return readings.slice(0, 7).map(r => r[key] as number).reverse();
+  const isTestDue = schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false;
+
+  const lowInventory = inventory.filter(item => item.quantity <= item.minThreshold);
+  const equipmentNeedingService = equipment.filter(item => {
+    if (!item.lastServiceDate || !item.serviceIntervalMonths) return false;
+    const nextService = new Date(item.lastServiceDate);
+    nextService.setMonth(nextService.getMonth() + item.serviceIntervalMonths);
+    return new Date() >= nextService;
+  });
+
+  const getPriorityColor = (priority: MaintenanceTask['priority']) => {
+    switch (priority) {
+      case 'critical': return 'text-red-400 bg-red-400/10 border-red-400/20';
+      case 'high': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
+      case 'medium': return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20';
+      case 'low': return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
+      default: return 'text-ink-dim bg-surface border-border-dim';
+    }
   };
 
-  const lowInventoryCount = inventory.filter(item => item.quantity <= item.lowThreshold).length;
-  const monthlyCompleted = monthlyTasks.filter(t => t.completed).length;
-
-  const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={13} /> },
-    { id: 'monthly', label: 'Monthly', icon: <CalendarDays size={13} />, badge: monthlyCompleted > 0 ? monthlyCompleted : undefined },
-    { id: 'trends', label: 'Trends', icon: <LineChartIcon size={13} /> },
-    { id: 'inventory', label: 'Inventory', icon: <Package size={13} />, badge: lowInventoryCount > 0 ? lowInventoryCount : undefined },
-  ];
+  const getTrendData = (key: keyof Reading) => {
+    return readings.slice(0, 7).map(r => {
+      const val = r[key];
+      return typeof val === 'number' && !isNaN(val) ? val : 0;
+    }).reverse();
+  };
 
   return (
     <div className="space-y-6 pb-24">
@@ -174,113 +265,162 @@ export default function Dashboard({
           <button onClick={onOpenGlossary} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors" title="Glossary">
             <Book size={18} />
           </button>
+          <button onClick={onOpenReminderSettings} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors" title="Reminders">
+            <Bell size={18} />
+          </button>
         </div>
       </header>
 
       {/* Tab Navigation */}
-      <div className="flex p-1 bg-[#0a1628] border border-border-dim rounded-xl no-print gap-0.5">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`relative flex-1 flex items-center justify-center gap-1.5 py-2 text-[9px] font-bold uppercase tracking-widest rounded-lg transition-all ${
-              activeTab === tab.id ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'
-            }`}
-          >
-            {tab.icon}
-            <span className="hidden sm:inline">{tab.label}</span>
-            {tab.badge !== undefined && (
-              <span className={`absolute -top-1 -right-1 min-w-[14px] h-[14px] flex items-center justify-center rounded-full text-[8px] font-bold px-0.5 ${
-                activeTab === tab.id ? 'bg-primary text-accent' : 'bg-amber-500 text-primary'
-              }`}>
-                {tab.badge}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="flex p-1 bg-[#0a1628] border border-border-dim rounded-xl no-print">
+        <button 
+          onClick={() => setActiveTab('overview')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeTab === 'overview' ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'}`}
+        >
+          <LayoutDashboard size={14} />
+          Overview
+        </button>
+        <button 
+          onClick={() => setActiveTab('trends')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeTab === 'trends' ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'}`}
+        >
+          <LineChartIcon size={14} />
+          Trends
+        </button>
       </div>
 
       <AnimatePresence mode="wait">
-        {activeTab === 'overview' && (
-          <motion.div
+        {activeTab === 'overview' ? (
+          <motion.div 
             key="overview"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             className="space-y-6"
           >
-            {/* Alert Panel */}
-            <AnimatePresence>
-              {allAlerts.length > 0 && (
-                <div className="space-y-2 no-print">
-                  {allAlerts.map((alert: any) => (
-                    <motion.div
-                      key={alert.id}
-                      initial={{ opacity: 0, height: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, height: 'auto', scale: 1 }}
-                      exit={{ opacity: 0, height: 0, scale: 0.95 }}
-                      className={`p-3 rounded-xl border flex gap-3 relative overflow-hidden ${
-                        alert.severity === 'critical'
-                          ? 'bg-critical/10 border-critical/30 text-red-300'
-                          : 'bg-warning/10 border-warning/30 text-amber-300'
-                      }`}
-                    >
-                      <div className="mt-0.5">
-                        <AlertCircle size={16} />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-xs font-bold uppercase tracking-wider mb-1">
-                          {alert.msg}
-                        </p>
-                        <p className="text-[10px] opacity-80 leading-relaxed">
-                          <span className="font-bold">ACTION:</span> {alert.action}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => dismissAlert(alert.id)}
-                        className="p-1 h-fit text-current opacity-50 hover:opacity-100 transition-opacity"
-                      >
-                        <X size={14} />
-                      </button>
-                    </motion.div>
-                  ))}
+      {/* Alerts Section */}
+      <div className="space-y-3 no-print">
+        {allAlerts.length > 0 && (
+          <div className="space-y-2">
+            {allAlerts.map((alert: any) => (
+              <motion.div 
+                key={alert.id}
+                initial={{ opacity: 0, height: 0, scale: 0.95 }}
+                animate={{ opacity: 1, height: 'auto', scale: 1 }}
+                exit={{ opacity: 0, height: 0, scale: 0.95 }}
+                className={`p-3 rounded-xl border flex gap-3 relative overflow-hidden ${
+                  alert.severity === 'critical' 
+                    ? 'bg-critical/10 border-critical/30 text-red-300' 
+                    : 'bg-warning/10 border-warning/30 text-amber-300'
+                }`}
+              >
+                <div className="mt-0.5">
+                  <AlertCircle size={16} />
                 </div>
-              )}
-            </AnimatePresence>
+                <div className="flex-1">
+                  <p className="text-xs font-bold uppercase tracking-wider mb-1">
+                    {alert.msg}
+                  </p>
+                  <p className="text-[10px] opacity-80 leading-relaxed">
+                    <span className="font-bold">ACTION:</span> {alert.action}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => dismissAlert(alert.id)}
+                  className="p-1 h-fit text-current opacity-50 hover:opacity-100 transition-opacity"
+                >
+                  <X size={14} />
+                </button>
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {lowInventory.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center gap-4"
+          >
+            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 shrink-0">
+              <Plus size={20} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-red-500 font-bold text-xs uppercase tracking-widest">Low Inventory</h3>
+              <p className="text-ink-dim text-[11px]">{lowInventory.length} items are below minimum threshold.</p>
+            </div>
+          </motion.div>
+        )}
+
+        {equipmentNeedingService.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="p-4 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-4"
+          >
+            <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center text-yellow-500 shrink-0">
+              <Activity size={20} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-yellow-500 font-bold text-xs uppercase tracking-widest">Equipment Service Due</h3>
+              <p className="text-ink-dim text-[11px]">{equipmentNeedingService.length} items require maintenance.</p>
+            </div>
+          </motion.div>
+        )}
+      </div>
 
             {/* Status Grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <StatusCard
-                label="Free Chlorine"
-                value={latest?.chlorine}
-                unit="ppm"
+              <div className={`card border col-span-2 md:col-span-1 flex flex-col justify-between p-4 ${
+                lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' : 
+                lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' : 
+                'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Saturation Index (LSI)</p>
+                  <Sparkles size={14} className={isLsiLoading ? 'animate-spin' : ''} />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold font-mono">{lsiScore}</span>
+                  <span className="text-[10px] uppercase tracking-widest opacity-70">
+                    {lsiScore < -0.3 ? 'Corrosive' : lsiScore > 0.3 ? 'Scale Forming' : 'Balanced'}
+                  </span>
+                </div>
+                <p className="text-[9px] mt-2 italic opacity-80 line-clamp-2">
+                  {isLsiLoading ? 'AI analyzing saturation...' : lsiAnalysis}
+                </p>
+              </div>
+              <StatusCard 
+                label="Free Chlorine" 
+                value={latest?.chlorine} 
+                unit="ppm" 
                 status={latest ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
                 trend={getTrendData('chlorine')}
                 ideal="1–3"
               />
-              <StatusCard
-                label="pH Level"
-                value={latest?.ph}
-                unit=""
+              <StatusCard 
+                label="pH Level" 
+                value={latest?.ph} 
+                unit="" 
                 status={latest ? getStatus(latest.ph, DEFAULT_RANGES.ph.min, DEFAULT_RANGES.ph.max) : 'good'}
                 trend={getTrendData('ph')}
                 ideal="7.2–7.6"
               />
-              <StatusCard
-                label="Alkalinity"
-                value={latest?.alkalinity}
-                unit="ppm"
+              <StatusCard 
+                label="Alkalinity" 
+                value={latest?.alkalinity} 
+                unit="ppm" 
                 status={latest ? getStatus(latest.alkalinity, DEFAULT_RANGES.alkalinity.min, DEFAULT_RANGES.alkalinity.max) : 'good'}
                 trend={getTrendData('alkalinity')}
                 ideal="80–120"
               />
-              <StatusCard
-                label="Diff Pressure"
-                value={latest?.differentialPressure}
-                unit="PSI"
+              <StatusCard 
+                label="Diff Pressure" 
+                value={latest?.differentialPressure} 
+                unit="kPa" 
                 status={latest ? getStatus(latest.differentialPressure, DEFAULT_RANGES.differentialPressure.min, DEFAULT_RANGES.differentialPressure.max) : 'good'}
                 trend={getTrendData('differentialPressure')}
-                ideal="8–15"
+                ideal="55–140"
               />
               <div className="card bg-[#0a1628] border-border-dim flex flex-col justify-between p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
@@ -294,26 +434,79 @@ export default function Dashboard({
             {/* Maintenance Checklist */}
             <section className="card space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Maintenance Checklist</h2>
-                <span className="text-[9px] font-mono text-ink-dim">
-                  {tasks.filter(t => t.completed).length}/{tasks.length} done
-                </span>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Maintenance Checklist</h2>
+                  <div className="flex bg-[#060e1a] rounded-lg border border-border-dim p-0.5">
+                    {(['all', 'daily', 'weekly', 'monthly'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setTaskFilter(f)}
+                        className={`px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${taskFilter === f ? 'bg-accent text-primary' : 'text-ink-dim hover:text-ink-muted'}`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {tasks.some(t => t.isAI && !t.completed) && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/20">
+                    <Sparkles size={10} className="text-accent" />
+                    <span className="text-[8px] font-bold uppercase tracking-widest text-accent">Active AI Protocol</span>
+                  </div>
+                )}
               </div>
-              <div className="space-y-3">
-                {tasks.map(task => (
-                  <button
-                    key={task.id}
+              <div className="space-y-2">
+                {/* Active AI Tasks First */}
+                {tasks
+                  .filter(t => t.isAI && !t.completed && (taskFilter === 'all' || t.frequency === taskFilter))
+                  .map(task => (
+                  <button 
+                    key={task.id} 
                     onClick={() => toggleTask(task.id)}
-                    className="flex items-center gap-3 w-full text-left group"
+                    className="flex items-center gap-3 w-full text-left group p-2 rounded-lg transition-all bg-accent/5 border border-accent/20 shadow-sm shadow-accent/5"
                   >
-                    {task.completed ? (
-                      <CheckCircle2 size={18} className="text-success shrink-0" />
-                    ) : (
-                      <Circle size={18} className="text-border-dim group-hover:text-accent shrink-0" />
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-3">
+                        <Circle size={18} className="text-accent" />
+                        <span className="text-sm font-medium tracking-wide text-ink">
+                          {task.title}
+                        </span>
+                      </div>
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-tighter ${getPriorityColor(task.priority)}`}>
+                        {task.priority}
+                      </span>
+                    </div>
+                    <Sparkles size={12} className="text-accent opacity-50" />
+                  </button>
+                ))}
+
+                {/* Manual and Completed Tasks */}
+                {tasks
+                  .filter(t => (!t.isAI || t.completed) && (taskFilter === 'all' || t.frequency === taskFilter))
+                  .map(task => (
+                  <button 
+                    key={task.id} 
+                    onClick={() => toggleTask(task.id)}
+                    className="flex items-center gap-3 w-full text-left group p-2 rounded-lg transition-all hover:bg-surface/50"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-3">
+                        {task.completed ? (
+                          <CheckCircle2 size={18} className="text-success" />
+                        ) : (
+                          <Circle size={18} className="text-border-dim group-hover:text-accent" />
+                        )}
+                        <span className={`text-sm font-medium tracking-wide ${task.completed ? 'text-ink-dim line-through' : 'text-ink'}`}>
+                          {task.title}
+                        </span>
+                      </div>
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-tighter ${getPriorityColor(task.priority)}`}>
+                        {task.priority}
+                      </span>
+                    </div>
+                    {task.isAI && task.completed && (
+                      <span className="text-[8px] font-bold uppercase tracking-widest text-ink-dim/50">AI</span>
                     )}
-                    <span className={`text-sm font-medium tracking-wide ${task.completed ? 'text-ink-dim line-through' : 'text-ink'}`}>
-                      {task.title}
-                    </span>
                   </button>
                 ))}
               </div>
@@ -323,7 +516,7 @@ export default function Dashboard({
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Recent Logs</h2>
-                <button
+                <button 
                   onClick={onViewHistory}
                   className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center gap-1 hover:underline"
                 >
@@ -347,7 +540,7 @@ export default function Dashboard({
                         <p className="font-bold text-accent">{reading.ph}</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-ink-dim mb-0.5">PSI</p>
+                        <p className="text-ink-dim mb-0.5">kPa</p>
                         <p className="font-bold text-accent">{reading.differentialPressure}</p>
                       </div>
                       <div className="text-center">
@@ -360,71 +553,8 @@ export default function Dashboard({
               </div>
             </section>
           </motion.div>
-        )}
-
-        {activeTab === 'monthly' && (
-          <motion.div
-            key="monthly"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
-            <section className="card space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Monthly Checklist</h2>
-                  <p className="text-[9px] text-ink-dim font-mono mt-0.5">
-                    {monthlyTasks.filter(t => t.completed).length} of {monthlyTasks.length} completed
-                  </p>
-                </div>
-                {monthlyTasks.some(t => t.completed) && (
-                  <button
-                    onClick={() => {
-                      // Reset all monthly tasks — handled via toggleMonthlyTask looping
-                      monthlyTasks.filter(t => t.completed).forEach(t => toggleMonthlyTask(t.id));
-                    }}
-                    className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-ink-dim hover:text-accent transition-colors"
-                    title="Reset all monthly tasks"
-                  >
-                    <RotateCcw size={11} />
-                    Reset
-                  </button>
-                )}
-              </div>
-
-              {/* Progress Bar */}
-              <div className="w-full bg-[#0a1628] rounded-full h-1.5 overflow-hidden">
-                <div
-                  className="h-full bg-accent rounded-full transition-all duration-500"
-                  style={{ width: `${(monthlyTasks.filter(t => t.completed).length / monthlyTasks.length) * 100}%` }}
-                />
-              </div>
-
-              <div className="space-y-3">
-                {monthlyTasks.map(task => (
-                  <button
-                    key={task.id}
-                    onClick={() => toggleMonthlyTask(task.id)}
-                    className="flex items-center gap-3 w-full text-left group"
-                  >
-                    {task.completed ? (
-                      <CheckCircle2 size={18} className="text-success shrink-0" />
-                    ) : (
-                      <Circle size={18} className="text-border-dim group-hover:text-accent shrink-0" />
-                    )}
-                    <span className={`text-sm font-medium tracking-wide ${task.completed ? 'text-ink-dim line-through' : 'text-ink'}`}>
-                      {task.title}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          </motion.div>
-        )}
-
-        {activeTab === 'trends' && (
-          <motion.div
+        ) : (
+          <motion.div 
             key="trends"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -433,26 +563,10 @@ export default function Dashboard({
             <TrendCharts readings={readings} />
           </motion.div>
         )}
-
-        {activeTab === 'inventory' && (
-          <motion.div
-            key="inventory"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <Inventory
-              inventory={inventory}
-              equipment={equipment}
-              onUpdateQuantity={onUpdateInventoryQuantity}
-              onUpdateEquipmentStatus={onUpdateEquipmentStatus}
-            />
-          </motion.div>
-        )}
       </AnimatePresence>
 
       {/* Quick Action FAB */}
-      <button
+      <button 
         onClick={onLogReading}
         className="fixed bottom-6 right-6 w-14 h-14 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print"
       >
@@ -463,14 +577,19 @@ export default function Dashboard({
 }
 
 function Sparkline({ values, color }: { values: number[], color: string }) {
-  if (values.length < 2) return null;
-  const min = Math.min(...values);
-  const max = Math.max(...values) - min || 1;
-  const points = values.map((v, i) => {
-    const x = (i / (values.length - 1)) * 60;
+  const safeValues = values.map(v => isNaN(v) ? 0 : v);
+  if (safeValues.length < 2) return null;
+  
+  const min = Math.min(...safeValues);
+  const max = Math.max(...safeValues) - min || 1;
+  const points = safeValues.map((v, i) => {
+    const x = (i / (safeValues.length - 1)) * 60;
     const y = 20 - ((v - min) / max) * 20;
     return `${x},${y}`;
   }).join(' ');
+
+  const lastValue = safeValues[safeValues.length - 1];
+  const lastY = 20 - ((lastValue - min) / max) * 20;
 
   return (
     <svg width="60" height="20" className="opacity-50">
@@ -481,11 +600,11 @@ function Sparkline({ values, color }: { values: number[], color: string }) {
         strokeWidth="1.5"
         strokeLinejoin="round"
       />
-      <circle
-        cx="60"
-        cy={20 - ((values[values.length - 1] - min) / max) * 20}
-        r="2"
-        fill={color}
+      <circle 
+        cx="60" 
+        cy={isNaN(lastY) ? 10 : lastY} 
+        r="2" 
+        fill={color} 
       />
     </svg>
   );

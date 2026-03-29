@@ -1,0 +1,197 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: readings
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string (required)
+    //   - timestamp: timestamp (required)
+    //   - chlorine: number (required)
+    //   - ph: number (required)
+    //   - alkalinity: number (required)
+    //   - temperature: number (required)
+    //   - differentialPressure: number (required)
+    //   - calciumHardness: number (required)
+    //   - cyanuricAcid: number (required)
+    //   - notes: string (optional)
+    //   - uid: string (required)
+    //
+    // Collection: tasks
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string (required)
+    //   - title: string (required, max 100 chars)
+    //   - completed: bool (required)
+    //   - priority: string (required, enum: low, medium, high, critical)
+    //   - frequency: string (required, enum: daily, weekly, monthly, once)
+    //   - isAI: bool (optional)
+    //   - uid: string (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: inventory
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, max 50 chars)
+    //   - quantity: number (required)
+    //   - unit: string (required, max 10 chars)
+    //   - minThreshold: number (required)
+    //   - uid: string (required)
+    //
+    // Collection: equipment
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, max 50 chars)
+    //   - installDate: timestamp (required)
+    //   - lastServiceDate: timestamp (optional)
+    //   - serviceIntervalMonths: number (optional)
+    //   - uid: string (required)
+    //
+    // Collection: schedules
+    // Document ID: uid
+    // Fields:
+    //   - uid: string (required)
+    //   - testFrequency: string (required, enum: daily, weekly, biweekly, monthly)
+    //   - lastTestDate: timestamp (optional)
+    //   - nextTestDate: timestamp (optional)
+    //   - remindersEnabled: bool (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "orisjb@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidReading(data) {
+      return hasRequiredFields(['id', 'timestamp', 'chlorine', 'ph', 'alkalinity', 'uid']) &&
+             data.id is string &&
+             data.timestamp is timestamp &&
+             data.chlorine is number &&
+             data.ph is number &&
+             data.alkalinity is number &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidTask(data) {
+      return hasRequiredFields(['id', 'title', 'completed', 'priority', 'frequency', 'uid', 'createdAt']) &&
+             data.id is string &&
+             data.title is string && data.title.size() <= 100 &&
+             data.completed is bool &&
+             data.priority in ['low', 'medium', 'high', 'critical'] &&
+             data.frequency in ['daily', 'weekly', 'monthly', 'once'] &&
+             data.uid == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidInventory(data) {
+      return hasRequiredFields(['id', 'name', 'quantity', 'unit', 'minThreshold', 'uid']) &&
+             data.id is string &&
+             data.name is string && data.name.size() <= 50 &&
+             data.quantity is number &&
+             data.unit is string && data.unit.size() <= 10 &&
+             data.minThreshold is number &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidEquipment(data) {
+      return hasRequiredFields(['id', 'name', 'installDate', 'uid']) &&
+             data.id is string &&
+             data.name is string && data.name.size() <= 50 &&
+             data.installDate is timestamp &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidSchedule(data) {
+      return hasRequiredFields(['uid', 'testFrequency', 'remindersEnabled']) &&
+             data.uid == request.auth.uid &&
+             data.testFrequency in ['daily', 'weekly', 'biweekly', 'monthly'] &&
+             data.remindersEnabled is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /readings/{readingId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidReading(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidReading(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidTask(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidTask(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /inventory/{itemId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidInventory(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidInventory(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /equipment/{equipmentId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidEquipment(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidEquipment(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /schedules/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidSchedule(request.resource.data);
+      allow update: if isOwner(uid) && isValidSchedule(request.resource.data);
+      allow delete: if isOwner(uid);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId);
+    }
+  }
+}
