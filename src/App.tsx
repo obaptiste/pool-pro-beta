@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Reading, MaintenanceTask } from './types';
 import Dashboard from './components/Dashboard';
 import ReadingForm from './components/ReadingForm';
 import CheatSheet from './components/CheatSheet';
@@ -8,13 +7,22 @@ import OfflineIndicator from './components/OfflineIndicator';
 import GeminiAssistant from './components/GeminiAssistant';
 import History from './components/History';
 import Glossary from './components/Glossary';
+import ReminderSettings from './components/ReminderSettings';
+import Inventory from './components/Inventory';
+import Equipment from './components/Equipment';
+import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem } from './types';
+import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
+import { LogIn, LogOut, User as UserIcon, Package, Wrench } from 'lucide-react';
+import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
 const INITIAL_TASKS: MaintenanceTask[] = [
-  { id: '1', title: 'Empty skimmer baskets', completed: false },
-  { id: '2', title: 'Check pump strainer', completed: false },
-  { id: '3', title: 'Inspect water level', completed: false },
-  { id: '4', title: 'Test chemical levels', completed: true },
-  { id: '5', title: 'Backwash filter (if needed)', completed: false },
+  { id: '1', title: 'Empty skimmer baskets', completed: false, priority: 'medium', frequency: 'daily', uid: 'system', createdAt: new Date() },
+  { id: '2', title: 'Check pump strainer', completed: false, priority: 'medium', frequency: 'weekly', uid: 'system', createdAt: new Date() },
+  { id: '3', title: 'Inspect water level', completed: false, priority: 'low', frequency: 'daily', uid: 'system', createdAt: new Date() },
+  { id: '4', title: 'Test chemical levels', completed: true, priority: 'high', frequency: 'weekly', uid: 'system', createdAt: new Date() },
+  { id: '5', title: 'Backwash filter (if needed)', completed: false, priority: 'high', frequency: 'monthly', uid: 'system', createdAt: new Date() },
 ];
 
 const INITIAL_READINGS: Reading[] = [
@@ -25,8 +33,11 @@ const INITIAL_READINGS: Reading[] = [
     ph: 7.8,
     alkalinity: 110,
     temperature: 27,
-    differentialPressure: 12,
+    differentialPressure: 85,
+    calciumHardness: 300,
+    cyanuricAcid: 40,
     notes: 'Morning check. Water looks clear.',
+    uid: 'system'
   },
   {
     id: '2',
@@ -35,37 +46,143 @@ const INITIAL_READINGS: Reading[] = [
     ph: 7.4,
     alkalinity: 100,
     temperature: 26,
-    differentialPressure: 11,
+    differentialPressure: 75,
+    calciumHardness: 280,
+    cyanuricAcid: 35,
     notes: 'Standard reading.',
+    uid: 'system'
   },
 ];
 
 export default function App() {
-  const [readings, setReadings] = useState<Reading[]>(() => {
-    const saved = localStorage.getItem('pool_readings');
-    if (saved) {
-      return JSON.parse(saved).map((r: any) => ({ ...r, timestamp: new Date(r.timestamp) }));
-    }
-    return INITIAL_READINGS;
-  });
-
-  const [tasks, setTasks] = useState<MaintenanceTask[]>(() => {
-    const saved = localStorage.getItem('pool_tasks');
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [readings, setReadings] = useState<Reading[]>([]);
+  const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
+  const [schedule, setSchedule] = useState<MaintenanceSchedule>({
+    uid: '',
+    testFrequency: 'weekly',
+    lastTestDate: null,
+    nextTestDate: null,
+    remindersEnabled: false,
   });
 
   const [isLogging, setIsLogging] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
+  const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+  const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
 
+  // Auth listener
   useEffect(() => {
-    localStorage.setItem('pool_readings', JSON.stringify(readings));
-    localStorage.setItem('pool_tasks', JSON.stringify(tasks));
-    setLastSaved(new Date());
-  }, [readings, tasks]);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      setIsAuthReady(true);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Firestore sync
+  useEffect(() => {
+    if (!user) {
+      setReadings([]);
+      setTasks([]);
+      setInventory([]);
+      setEquipment([]);
+      return;
+    }
+
+    const readingsQuery = query(collection(db, 'readings'), where('uid', '==', user.uid), orderBy('timestamp', 'desc'));
+    const tasksQuery = query(collection(db, 'tasks'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
+    const inventoryQuery = query(collection(db, 'inventory'), where('uid', '==', user.uid));
+    const equipmentQuery = query(collection(db, 'equipment'), where('uid', '==', user.uid));
+    const scheduleDoc = doc(db, 'schedules', user.uid);
+
+    const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
+      setReadings(snapshot.docs.map(doc => ({
+        ...doc.data(),
+        timestamp: (doc.data().timestamp as Timestamp).toDate()
+      } as Reading)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
+
+    const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_POOL_TASKS.forEach(async (task) => {
+          const newTaskRef = doc(collection(db, 'tasks'));
+          await setDoc(newTaskRef, {
+            ...task,
+            id: newTaskRef.id,
+            uid: user.uid,
+            createdAt: Timestamp.fromDate(new Date())
+          });
+        });
+      }
+      setTasks(snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id,
+        createdAt: (doc.data().createdAt as Timestamp).toDate()
+      } as MaintenanceTask)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
+
+    const unsubInventory = onSnapshot(inventoryQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_INVENTORY.forEach(async (item) => {
+          const newItemRef = doc(collection(db, 'inventory'));
+          await setDoc(newItemRef, {
+            ...item,
+            id: newItemRef.id,
+            uid: user.uid
+          });
+        });
+      }
+      setInventory(snapshot.docs.map(doc => doc.data() as InventoryItem));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'inventory'));
+
+    const unsubEquipment = onSnapshot(equipmentQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_EQUIPMENT.forEach(async (item) => {
+          const newItemRef = doc(collection(db, 'equipment'));
+          await setDoc(newItemRef, {
+            ...item,
+            id: newItemRef.id,
+            uid: user.uid,
+            installDate: Timestamp.fromDate(item.installDate)
+          });
+        });
+      }
+      setEquipment(snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id,
+        installDate: (doc.data().installDate as Timestamp).toDate(),
+        lastServiceDate: doc.data().lastServiceDate ? (doc.data().lastServiceDate as Timestamp).toDate() : undefined
+      } as EquipmentItem)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'equipment'));
+
+    const unsubSchedule = onSnapshot(scheduleDoc, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setSchedule({
+          ...data,
+          lastTestDate: data.lastTestDate ? (data.lastTestDate as Timestamp).toDate() : null,
+          nextTestDate: data.nextTestDate ? (data.nextTestDate as Timestamp).toDate() : null,
+        } as MaintenanceSchedule);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, `schedules/${user.uid}`));
+
+    return () => {
+      unsubReadings();
+      unsubTasks();
+      unsubInventory();
+      unsubEquipment();
+      unsubSchedule();
+    };
+  }, [user]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -78,26 +195,169 @@ export default function App() {
     };
   }, []);
 
-  const handleSaveReading = (newReading: Omit<Reading, 'id' | 'timestamp'>) => {
+  useEffect(() => {
+    if (schedule.remindersEnabled && schedule.nextTestDate) {
+      const now = new Date();
+      const nextTest = new Date(schedule.nextTestDate);
+      
+      if (now >= nextTest) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('Pool Maintenance Required', {
+            body: 'It is time for your scheduled water test.',
+            icon: '/favicon.ico'
+          });
+        }
+      }
+    }
+  }, [schedule]);
+
+  const handleSaveReading = async (newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => {
+    if (!user) return;
+    const now = new Date();
+    const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
-      id: Date.now().toString(),
-      timestamp: new Date(),
+      id,
+      timestamp: now,
+      uid: user.uid
     };
-    setReadings([reading, ...readings]);
-    setIsLogging(false);
+
+    try {
+      await setDoc(doc(db, 'readings', id), {
+        ...reading,
+        timestamp: Timestamp.fromDate(now)
+      });
+      
+      // Update schedule
+      const daysToAdd = {
+        daily: 1,
+        weekly: 7,
+        biweekly: 14,
+        monthly: 30,
+      }[schedule.testFrequency];
+
+      const nextTest = new Date(now);
+      nextTest.setDate(nextTest.getDate() + daysToAdd);
+
+      await setDoc(doc(db, 'schedules', user.uid), {
+        ...schedule,
+        uid: user.uid,
+        lastTestDate: Timestamp.fromDate(now),
+        nextTestDate: Timestamp.fromDate(nextTest),
+      }, { merge: true });
+
+      setIsLogging(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
+    }
   };
 
-  const handleDeleteReading = (id: string) => {
-    setReadings(readings.filter(r => r.id !== id));
+  const handleDeleteReading = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'readings', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `readings/${id}`);
+    }
   };
 
-  const toggleTask = (id: string) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+  const toggleTask = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    try {
+      await updateDoc(doc(db, 'tasks', id), { completed: !task.completed });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
+    }
+  };
+
+  const handleExecuteProtocol = async (newTasks: MaintenanceTask[]) => {
+    if (!user) return;
+    try {
+      // Delete old uncompleted AI tasks
+      const staleAiTasks = tasks.filter(t => t.isAI && !t.completed);
+      await Promise.all(staleAiTasks.map(t => deleteDoc(doc(db, 'tasks', t.id))));
+
+      // Add new tasks
+      await Promise.all(newTasks.map(t => setDoc(doc(db, 'tasks', t.id), {
+        ...t,
+        uid: user.uid,
+        createdAt: Timestamp.fromDate(new Date())
+      })));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'tasks');
+    }
+  };
+
+  const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'schedules', user.uid), {
+        ...newSchedule,
+        uid: user.uid,
+        lastTestDate: newSchedule.lastTestDate ? Timestamp.fromDate(newSchedule.lastTestDate) : null,
+        nextTestDate: newSchedule.nextTestDate ? Timestamp.fromDate(newSchedule.nextTestDate) : null,
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `schedules/${user.uid}`);
+    }
+  };
+
+  const handleAddTask = async (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => {
+    if (!user) return;
+    try {
+      const newTaskRef = doc(collection(db, 'tasks'));
+      await setDoc(newTaskRef, {
+        ...task,
+        id: newTaskRef.id,
+        uid: user.uid,
+        createdAt: Timestamp.fromDate(new Date())
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `tasks`);
+    }
+  };
+
+  const handleUpdateInventory = async (item: InventoryItem) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'inventory', item.id), { ...item, uid: user.uid });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `inventory/${item.id}`);
+    }
+  };
+
+  const handleUpdateEquipment = async (item: EquipmentItem) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'equipment', item.id), {
+        ...item,
+        uid: user.uid,
+        installDate: Timestamp.fromDate(item.installDate),
+        lastServiceDate: item.lastServiceDate ? Timestamp.fromDate(item.lastServiceDate) : null
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `equipment/${item.id}`);
+    }
+  };
+
+  const handleDeleteInventory = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'inventory', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
+    }
+  };
+
+  const handleDeleteEquipment = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'equipment', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `equipment/${id}`);
+    }
   };
 
   const exportToCSV = () => {
-    const headers = ['Timestamp', 'Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (PSI)', 'Notes'];
+    const headers = ['Timestamp', 'Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (kPa)', 'Calcium Hardness (ppm)', 'CYA (ppm)', 'Notes'];
     const rows = readings.map(r => [
       r.timestamp.toISOString(),
       r.chlorine,
@@ -105,6 +365,8 @@ export default function App() {
       r.alkalinity,
       r.temperature,
       r.differentialPressure,
+      r.calciumHardness,
+      r.cyanuricAcid,
       r.notes || '',
     ]);
     
@@ -120,23 +382,120 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-[#060e1a] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#060e1a] flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-[#0d1f38] p-8 rounded-3xl border border-border-dim text-center space-y-6"
+        >
+          <div className="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto text-accent">
+            <UserIcon size={40} />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+              Pool<span className="text-accent">Status</span>
+            </h1>
+            <p className="text-ink-dim text-sm">Sign in to sync your pool data across devices securely.</p>
+          </div>
+          <button 
+            onClick={signIn}
+            className="w-full py-4 rounded-2xl bg-accent text-primary font-bold uppercase tracking-widest hover:brightness-110 transition-all flex items-center justify-center gap-3"
+          >
+            <LogIn size={20} />
+            Sign in with Google
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#060e1a] text-ink selection:bg-accent/30 selection:text-white">
       <OfflineIndicator isOnline={isOnline} lastSaved={lastSaved} />
       
-      <main className="max-w-4xl mx-auto px-4 pt-16 pb-24 md:pt-20">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#060e1a]/80 backdrop-blur-md border-b border-border-dim px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+            Pool<span className="text-accent">Status</span>
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsInventoryOpen(true)}
+            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
+            title="Inventory"
+          >
+            <Package size={18} />
+          </button>
+          <button 
+            onClick={() => setIsEquipmentOpen(true)}
+            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
+            title="Equipment"
+          >
+            <Wrench size={18} />
+          </button>
+          <div className="h-8 w-[1px] bg-border-dim mx-1" />
+          <button 
+            onClick={logout}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border-dim text-ink-dim hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest"
+          >
+            <LogOut size={14} />
+            Sign Out
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28">
         <Dashboard 
           readings={readings} 
           tasks={tasks}
+          schedule={schedule}
+          inventory={inventory}
+          equipment={equipment}
           onLogReading={() => setIsLogging(true)}
           onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
           onOpenGlossary={() => setIsGlossaryOpen(true)}
           onViewHistory={() => setIsHistoryOpen(true)}
+          onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
           onExport={exportToCSV}
           onPrint={() => window.print()}
           toggleTask={toggleTask}
+          onAddTask={handleAddTask}
         />
       </main>
+
+      <ReminderSettings 
+        isOpen={isReminderSettingsOpen}
+        onClose={() => setIsReminderSettingsOpen(false)}
+        schedule={schedule}
+        onUpdateSchedule={handleUpdateSchedule}
+      />
+
+      <Inventory 
+        isOpen={isInventoryOpen}
+        onClose={() => setIsInventoryOpen(false)}
+        items={inventory}
+        onUpdateItem={handleUpdateInventory}
+        onDeleteItem={handleDeleteInventory}
+      />
+
+      <Equipment 
+        isOpen={isEquipmentOpen}
+        onClose={() => setIsEquipmentOpen(false)}
+        items={equipment}
+        onUpdateItem={handleUpdateEquipment}
+        onDeleteItem={handleDeleteEquipment}
+      />
 
       <AnimatePresence>
         {isLogging && (
@@ -165,7 +524,11 @@ export default function App() {
         onClose={() => setIsGlossaryOpen(false)}
       />
 
-      <GeminiAssistant latestReading={readings[0]} />
+      <GeminiAssistant 
+        latestReading={readings[0]} 
+        history={readings} 
+        onExecuteProtocol={handleExecuteProtocol}
+      />
     </div>
   );
 }
