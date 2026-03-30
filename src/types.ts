@@ -27,6 +27,21 @@ export interface MaintenanceTask {
   createdAt: Date;
 }
 
+export const DEFAULT_POOL_TASKS: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>[] = [
+  { title: 'Empty skimmer baskets', completed: false, priority: 'medium', frequency: 'daily', isAI: false },
+  { title: 'Check pump strainer', completed: false, priority: 'medium', frequency: 'daily', isAI: false },
+  { title: 'Inspect water level', completed: false, priority: 'low', frequency: 'daily', isAI: false },
+  { title: 'Check pump pressure', completed: false, priority: 'medium', frequency: 'daily', isAI: false },
+  { title: 'Test chemical levels', completed: false, priority: 'high', frequency: 'weekly', isAI: false },
+  { title: 'Vacuum pool', completed: false, priority: 'medium', frequency: 'weekly', isAI: false },
+  { title: 'Brush walls/floor', completed: false, priority: 'low', frequency: 'weekly', isAI: false },
+  { title: 'Clean skimmer baskets', completed: false, priority: 'medium', frequency: 'weekly', isAI: false },
+  { title: 'Backwash filter', completed: false, priority: 'high', frequency: 'monthly', isAI: false },
+  { title: 'Inspect equipment for leaks', completed: false, priority: 'high', frequency: 'monthly', isAI: false },
+  { title: 'Check pump/filter seals', completed: false, priority: 'medium', frequency: 'monthly', isAI: false },
+  { title: 'Test GFCI', completed: false, priority: 'critical', frequency: 'monthly', isAI: false },
+];
+
 export interface InventoryItem {
   id: string;
   name: string;

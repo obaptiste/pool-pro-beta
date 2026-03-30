@@ -13,8 +13,9 @@ import Equipment from './components/Equipment';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, Package, Wrench } from 'lucide-react';
+import { DEFAULT_POOL_TASKS } from './types';
 
 const INITIAL_TASKS: MaintenanceTask[] = [
   { id: '1', title: 'Empty skimmer baskets', completed: false, priority: 'medium', frequency: 'daily', uid: 'system', createdAt: new Date() },
@@ -111,8 +112,20 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
 
     const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_POOL_TASKS.forEach(async (task) => {
+          const newTaskRef = doc(collection(db, 'tasks'));
+          await setDoc(newTaskRef, {
+            ...task,
+            id: newTaskRef.id,
+            uid: user.uid,
+            createdAt: Timestamp.fromDate(new Date())
+          });
+        });
+      }
       setTasks(snapshot.docs.map(doc => ({
         ...doc.data(),
+        id: doc.id,
         createdAt: (doc.data().createdAt as Timestamp).toDate()
       } as MaintenanceTask)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
