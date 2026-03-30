@@ -15,7 +15,7 @@ import { auth, db, signIn, logout, handleFirestoreError, OperationType } from '.
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, Package, Wrench } from 'lucide-react';
-import { DEFAULT_POOL_TASKS } from './types';
+import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
 const INITIAL_TASKS: MaintenanceTask[] = [
   { id: '1', title: 'Empty skimmer baskets', completed: false, priority: 'medium', frequency: 'daily', uid: 'system', createdAt: new Date() },
@@ -131,12 +131,34 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
 
     const unsubInventory = onSnapshot(inventoryQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_INVENTORY.forEach(async (item) => {
+          const newItemRef = doc(collection(db, 'inventory'));
+          await setDoc(newItemRef, {
+            ...item,
+            id: newItemRef.id,
+            uid: user.uid
+          });
+        });
+      }
       setInventory(snapshot.docs.map(doc => doc.data() as InventoryItem));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'inventory'));
 
     const unsubEquipment = onSnapshot(equipmentQuery, (snapshot) => {
+      if (snapshot.empty && user) {
+        DEFAULT_EQUIPMENT.forEach(async (item) => {
+          const newItemRef = doc(collection(db, 'equipment'));
+          await setDoc(newItemRef, {
+            ...item,
+            id: newItemRef.id,
+            uid: user.uid,
+            installDate: Timestamp.fromDate(item.installDate)
+          });
+        });
+      }
       setEquipment(snapshot.docs.map(doc => ({
         ...doc.data(),
+        id: doc.id,
         installDate: (doc.data().installDate as Timestamp).toDate(),
         lastServiceDate: doc.data().lastServiceDate ? (doc.data().lastServiceDate as Timestamp).toDate() : undefined
       } as EquipmentItem)));
@@ -277,6 +299,21 @@ export default function App() {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `schedules/${user.uid}`);
+    }
+  };
+
+  const handleAddTask = async (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => {
+    if (!user) return;
+    try {
+      const newTaskRef = doc(collection(db, 'tasks'));
+      await setDoc(newTaskRef, {
+        ...task,
+        id: newTaskRef.id,
+        uid: user.uid,
+        createdAt: Timestamp.fromDate(new Date())
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `tasks`);
     }
   };
 
@@ -433,6 +470,7 @@ export default function App() {
           onExport={exportToCSV}
           onPrint={() => window.print()}
           toggleTask={toggleTask}
+          onAddTask={handleAddTask}
         />
       </main>
 

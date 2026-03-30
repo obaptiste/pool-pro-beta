@@ -41,11 +41,19 @@ interface Props {
   onExport: () => void;
   onPrint: () => void;
   toggleTask: (id: string) => void;
+  onAddTask: (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => void;
 }
 
-export default function Dashboard({ readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask }: Props) {
+export default function Dashboard({ readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask }: Props) {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
   const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
+  const [isAddingTask, setIsAddingTask] = React.useState(false);
+  const [newTask, setNewTask] = React.useState<Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>>({
+    title: '',
+    completed: false,
+    priority: 'medium',
+    frequency: 'once'
+  });
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   const [lsiAnalysis, setLsiAnalysis] = React.useState<string | null>(null);
   const [isLsiLoading, setIsLsiLoading] = React.useState(false);
@@ -238,6 +246,14 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
       const val = r[key];
       return typeof val === 'number' && !isNaN(val) ? val : 0;
     }).reverse();
+  };
+
+  const handleAddTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTask.title.trim()) return;
+    onAddTask(newTask);
+    setNewTask({ title: '', completed: false, priority: 'medium', frequency: 'once' });
+    setIsAddingTask(false);
   };
 
   return (
@@ -447,6 +463,13 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
                       </button>
                     ))}
                   </div>
+                  <button 
+                    onClick={() => setIsAddingTask(!isAddingTask)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors"
+                  >
+                    <Plus size={10} />
+                    <span className="text-[8px] font-bold uppercase tracking-widest">Add Task</span>
+                  </button>
                 </div>
                 {tasks.some(t => t.isAI && !t.completed) && (
                   <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/20">
@@ -455,6 +478,74 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
                   </div>
                 )}
               </div>
+
+              <AnimatePresence>
+                {isAddingTask && (
+                  <motion.form 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    onSubmit={handleAddTask}
+                    className="overflow-hidden space-y-3 bg-[#060e1a] p-3 rounded-lg border border-border-dim"
+                  >
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Task Title</label>
+                      <input 
+                        type="text"
+                        value={newTask.title}
+                        onChange={e => setNewTask(prev => ({ ...prev, title: e.target.value }))}
+                        placeholder="e.g. Clean filter cartridges"
+                        className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Priority</label>
+                        <select 
+                          value={newTask.priority}
+                          onChange={e => setNewTask(prev => ({ ...prev, priority: e.target.value as any }))}
+                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="critical">Critical</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Frequency</label>
+                        <select 
+                          value={newTask.frequency}
+                          onChange={e => setNewTask(prev => ({ ...prev, frequency: e.target.value as any }))}
+                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                        >
+                          <option value="once">Once</option>
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button 
+                        type="submit"
+                        className="flex-1 bg-accent text-primary font-bold text-[10px] uppercase tracking-widest py-2 rounded-md hover:bg-accent/90 transition-colors"
+                      >
+                        Create Task
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setIsAddingTask(false)}
+                        className="px-4 bg-border-dim text-ink-dim font-bold text-[10px] uppercase tracking-widest py-2 rounded-md hover:bg-border transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </motion.form>
+                )}
+              </AnimatePresence>
+
               <div className="space-y-2">
                 {/* Active AI Tasks First */}
                 {tasks

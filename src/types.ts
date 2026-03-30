@@ -40,6 +40,23 @@ export const DEFAULT_POOL_TASKS: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt
   { title: 'Inspect equipment for leaks', completed: false, priority: 'high', frequency: 'monthly', isAI: false },
   { title: 'Check pump/filter seals', completed: false, priority: 'medium', frequency: 'monthly', isAI: false },
   { title: 'Test GFCI', completed: false, priority: 'critical', frequency: 'monthly', isAI: false },
+  { title: 'Purchase Floating Thermometer', completed: false, priority: 'medium', frequency: 'once', isAI: false },
+  { title: 'Purchase Digital pH Tester', completed: false, priority: 'high', frequency: 'once', isAI: false },
+];
+
+export const DEFAULT_INVENTORY: Omit<InventoryItem, 'id' | 'uid'>[] = [
+  { name: 'Chlorine Granules', quantity: 10, unit: 'kg', minThreshold: 2 },
+  { name: 'Soda Ash', quantity: 5, unit: 'kg', minThreshold: 1 },
+  { name: 'Muriatic Acid', quantity: 5, unit: 'L', minThreshold: 1 },
+  { name: 'Sodium Bicarbonate', quantity: 10, unit: 'kg', minThreshold: 2 },
+  { name: 'Calcium Chloride', quantity: 5, unit: 'kg', minThreshold: 1 },
+  { name: 'Cyanuric Acid', quantity: 2, unit: 'kg', minThreshold: 0.5 },
+];
+
+export const DEFAULT_EQUIPMENT: Omit<EquipmentItem, 'id' | 'uid'>[] = [
+  { name: 'Pool Vacuum', installDate: new Date(), serviceIntervalMonths: 12 },
+  { name: 'Sand Filter', installDate: new Date(), serviceIntervalMonths: 24 },
+  { name: 'Main Pump', installDate: new Date(), serviceIntervalMonths: 12 },
 ];
 
 export interface InventoryItem {
