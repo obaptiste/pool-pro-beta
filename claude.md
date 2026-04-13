@@ -1,7 +1,7 @@
 # PoolStatus AI - Technical Overview
 
 ## System Architecture
-- **Frontend**: React 18 + Vite + Tailwind CSS
+- **Frontend**: React 19 + Vite + Tailwind CSS
 - **Intelligence**: Gemini 3.1 Pro (LSI Analysis) & Gemini 3 Flash (Voice Transcription)
 - **State Management**: React Hooks + LocalStorage
 - **Visualization**: Recharts (Trends) & Framer Motion (Animations)

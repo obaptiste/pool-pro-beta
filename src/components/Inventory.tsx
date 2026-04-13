@@ -25,7 +25,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
     if (!newItem.name) return;
     onUpdateItem({
       ...newItem,
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
     });
     setIsAdding(false);
     setNewItem({ name: '', quantity: 0, unit: 'kg', minThreshold: 1, uid: '' });

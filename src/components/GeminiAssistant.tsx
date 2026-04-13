@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { Sparkles, Loader2, Volume2, X, ChevronRight, Terminal, MapPin } from 'lucide-react';
+import { Sparkles, Loader2, X, ChevronRight, Terminal, MapPin, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
-import { Reading, DEFAULT_RANGES, MaintenanceTask } from '../types';
-import { generateContentWithRetry } from '../lib/gemini';
+import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
+import { calculateLSI } from '../lib/lsi';
 import { Type } from "@google/genai";
 
 interface Props {
@@ -156,36 +155,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   const [isFindingSupplies, setIsFindingSupplies] = useState(false);
   const [isMapsMode, setIsMapsMode] = useState(false);
   const [mapsContent, setMapsContent] = useState<string | null>(null);
-
-  const calculateLSI = (reading: Reading) => {
-    const getTF = (temp: number) => {
-      if (temp < 10) return 0.3;
-      if (temp < 15) return 0.4;
-      if (temp < 20) return 0.5;
-      if (temp < 25) return 0.6;
-      if (temp < 30) return 0.7;
-      if (temp < 35) return 0.8;
-      return 0.9;
-    };
-    const getCF = (ch: number) => {
-      if (ch < 100) return 1.6;
-      if (ch < 150) return 1.8;
-      if (ch < 200) return 1.9;
-      if (ch < 250) return 2.0;
-      if (ch < 300) return 2.1;
-      if (ch < 400) return 2.2;
-      if (ch < 500) return 2.3;
-      return 2.4;
-    };
-    const getAF = (alk: number) => {
-      if (alk < 100) return 2.0;
-      if (alk < 150) return 2.2;
-      if (alk < 200) return 2.3;
-      if (alk < 300) return 2.5;
-      return 2.6;
-    };
-    return parseFloat((reading.ph + getTF(reading.temperature) + getCF(reading.calciumHardness) + getAF(reading.alkalinity) - 12.1).toFixed(2));
-  };
+  const [protocolStaged, setProtocolStaged] = useState(false);
 
   const getInsight = async () => {
     if (!latestReading) return;
@@ -283,8 +253,11 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     }));
 
     onExecuteProtocol(tasks);
-    setIsOpen(false);
-    alert("Protocol Staged: The AI-generated maintenance checklist has been added to your dashboard. Please complete these actions in order and log a new reading once the water has stabilized (approx. 4-6 hours).");
+    setProtocolStaged(true);
+    setTimeout(() => {
+      setProtocolStaged(false);
+      setIsOpen(false);
+    }, 2500);
   };
 
   const findPoolSupplies = async () => {
@@ -396,20 +369,29 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
               </div>
 
               <footer className="p-4 bg-[#060e1a] border-t border-border-dim flex gap-3">
-                <button 
-                  onClick={findPoolSupplies}
-                  className="flex-1 py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2"
-                >
-                  <MapPin size={14} />
-                  Find Supplies
-                </button>
-                <button 
-                  onClick={executeProtocol}
-                  className="flex-1 py-3 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all flex items-center justify-center gap-2"
-                >
-                  Execute Protocol
-                  <ChevronRight size={14} />
-                </button>
+                {protocolStaged ? (
+                  <div className="flex-1 py-3 px-4 rounded-xl bg-success/10 border border-success/20 text-success text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                    <CheckCircle2 size={14} />
+                    Protocol Staged — Log new reading in 4–6 hours
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={findPoolSupplies}
+                      className="flex-1 py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2"
+                    >
+                      <MapPin size={14} />
+                      Find Supplies
+                    </button>
+                    <button
+                      onClick={executeProtocol}
+                      className="flex-1 py-3 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all flex items-center justify-center gap-2"
+                    >
+                      Execute Protocol
+                      <ChevronRight size={14} />
+                    </button>
+                  </>
+                )}
               </footer>
             </div>
           </motion.div>
