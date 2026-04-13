@@ -24,7 +24,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
     if (!newItem.name) return;
     onUpdateItem({
       ...newItem,
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
     });
     setIsAdding(false);
     setNewItem({ name: '', installDate: new Date(), serviceIntervalMonths: 6, uid: '' });

@@ -17,43 +17,6 @@ import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc
 import { LogIn, LogOut, User as UserIcon, Package, Wrench } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
-const INITIAL_TASKS: MaintenanceTask[] = [
-  { id: '1', title: 'Empty skimmer baskets', completed: false, priority: 'medium', frequency: 'daily', uid: 'system', createdAt: new Date() },
-  { id: '2', title: 'Check pump strainer', completed: false, priority: 'medium', frequency: 'weekly', uid: 'system', createdAt: new Date() },
-  { id: '3', title: 'Inspect water level', completed: false, priority: 'low', frequency: 'daily', uid: 'system', createdAt: new Date() },
-  { id: '4', title: 'Test chemical levels', completed: true, priority: 'high', frequency: 'weekly', uid: 'system', createdAt: new Date() },
-  { id: '5', title: 'Backwash filter (if needed)', completed: false, priority: 'high', frequency: 'monthly', uid: 'system', createdAt: new Date() },
-];
-
-const INITIAL_READINGS: Reading[] = [
-  {
-    id: '1',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2),
-    chlorine: 1.2,
-    ph: 7.8,
-    alkalinity: 110,
-    temperature: 27,
-    differentialPressure: 85,
-    calciumHardness: 300,
-    cyanuricAcid: 40,
-    notes: 'Morning check. Water looks clear.',
-    uid: 'system'
-  },
-  {
-    id: '2',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24),
-    chlorine: 2.1,
-    ph: 7.4,
-    alkalinity: 100,
-    temperature: 26,
-    differentialPressure: 75,
-    calciumHardness: 280,
-    cyanuricAcid: 35,
-    notes: 'Standard reading.',
-    uid: 'system'
-  },
-];
-
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -113,15 +76,15 @@ export default function App() {
 
     const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
       if (snapshot.empty && user) {
-        DEFAULT_POOL_TASKS.forEach(async (task) => {
+        Promise.all(DEFAULT_POOL_TASKS.map((task) => {
           const newTaskRef = doc(collection(db, 'tasks'));
-          await setDoc(newTaskRef, {
+          return setDoc(newTaskRef, {
             ...task,
             id: newTaskRef.id,
             uid: user.uid,
             createdAt: Timestamp.fromDate(new Date())
           });
-        });
+        })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'tasks'));
       }
       setTasks(snapshot.docs.map(doc => ({
         ...doc.data(),
@@ -132,29 +95,29 @@ export default function App() {
 
     const unsubInventory = onSnapshot(inventoryQuery, (snapshot) => {
       if (snapshot.empty && user) {
-        DEFAULT_INVENTORY.forEach(async (item) => {
+        Promise.all(DEFAULT_INVENTORY.map((item) => {
           const newItemRef = doc(collection(db, 'inventory'));
-          await setDoc(newItemRef, {
+          return setDoc(newItemRef, {
             ...item,
             id: newItemRef.id,
             uid: user.uid
           });
-        });
+        })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'inventory'));
       }
       setInventory(snapshot.docs.map(doc => doc.data() as InventoryItem));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'inventory'));
 
     const unsubEquipment = onSnapshot(equipmentQuery, (snapshot) => {
       if (snapshot.empty && user) {
-        DEFAULT_EQUIPMENT.forEach(async (item) => {
+        Promise.all(DEFAULT_EQUIPMENT.map((item) => {
           const newItemRef = doc(collection(db, 'equipment'));
-          await setDoc(newItemRef, {
+          return setDoc(newItemRef, {
             ...item,
             id: newItemRef.id,
             uid: user.uid,
             installDate: Timestamp.fromDate(item.installDate)
           });
-        });
+        })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'equipment'));
       }
       setEquipment(snapshot.docs.map(doc => ({
         ...doc.data(),

@@ -23,9 +23,10 @@ import {
   Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI } from "@google/genai";
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
 import TrendCharts from './TrendCharts';
+import { calculateLSI } from '../lib/lsi';
+import { generateContentWithRetry } from '../lib/gemini';
 
 interface Props {
   readings: Reading[];
@@ -59,48 +60,6 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
   const [isLsiLoading, setIsLsiLoading] = React.useState(false);
   const latest = readings[0];
 
-  const calculateLSI = (reading: Reading) => {
-    // LSI = pH + TF + CF + AF - TDS_factor
-    // Simplified factors for common ranges
-    const getTF = (temp: number) => {
-      if (temp < 0) return 0;
-      if (temp < 10) return 0.3;
-      if (temp < 15) return 0.4;
-      if (temp < 20) return 0.5;
-      if (temp < 25) return 0.6;
-      if (temp < 30) return 0.7;
-      if (temp < 35) return 0.8;
-      return 0.9;
-    };
-
-    const getCF = (ch: number) => {
-      if (ch < 50) return 1.3;
-      if (ch < 100) return 1.6;
-      if (ch < 150) return 1.8;
-      if (ch < 200) return 1.9;
-      if (ch < 250) return 2.0;
-      if (ch < 300) return 2.1;
-      if (ch < 400) return 2.2;
-      if (ch < 500) return 2.3;
-      return 2.4;
-    };
-
-    const getAF = (alk: number) => {
-      if (alk < 50) return 1.7;
-      if (alk < 100) return 2.0;
-      if (alk < 150) return 2.2;
-      if (alk < 200) return 2.3;
-      if (alk < 300) return 2.5;
-      return 2.6;
-    };
-
-    const lsi = (Number(reading.ph) || 0) + 
-                getTF(Number(reading.temperature) || 0) + 
-                getCF(Number(reading.calciumHardness) || 0) + 
-                getAF(Number(reading.alkalinity) || 0) - 12.1;
-    return parseFloat(lsi.toFixed(2));
-  };
-
   const lsiScore = latest ? calculateLSI(latest) : 0;
 
   const getLsiStatus = (score: number): Status => {
@@ -113,13 +72,12 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     if (!latest || isLsiLoading) return;
     setIsLsiLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: `Analyze this LSI score of ${lsiScore} for a pool. 
+      const response = await generateContentWithRetry({
+        model: "gemini-2.0-flash",
+        contents: `Analyze this LSI score of ${lsiScore} for a pool.
         Context: pH ${latest.ph}, Temp ${latest.temperature}°C, CH ${latest.calciumHardness}, TA ${latest.alkalinity}.
         Provide a 1-sentence technical recommendation.`,
-      });
+      }, process.env.GEMINI_API_KEY!);
       setLsiAnalysis(response.text || "Analysis unavailable.");
     } catch (e) {
       console.error(e);
