@@ -219,10 +219,10 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
       {/* Header Section */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+          <h1 className="wordmark text-2xl text-white">
             Pool<span className="text-accent">Status</span>
           </h1>
-          <p className="text-[10px] font-mono text-ink-dim uppercase tracking-widest">
+          <p className="text-[10px] font-mono text-ink-dim uppercase tracking-[0.2em]">
             Last reading: {latest ? latest.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data'}
           </p>
         </div>

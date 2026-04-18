@@ -50,14 +50,14 @@ export default function ReminderSettings({ isOpen, onClose, schedule, onUpdateSc
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="overlay z-[100] flex items-center justify-center p-4">
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="w-full max-w-md bg-[#0d1f38] rounded-2xl shadow-2xl border border-border-dim overflow-hidden"
+            className="w-full max-w-md panel rounded-2xl overflow-hidden"
           >
-            <header className="p-4 border-b border-border-dim flex items-center justify-between bg-[#060e1a]">
+            <header className="panel-header p-4 flex items-center justify-between">
               <div className="flex items-center gap-3 text-accent font-bold text-[10px] uppercase tracking-widest">
                 <Bell size={14} />
                 <span>Test Reminders</span>
@@ -128,7 +128,7 @@ export default function ReminderSettings({ isOpen, onClose, schedule, onUpdateSc
               </div>
             </div>
 
-            <footer className="p-4 bg-[#060e1a] border-t border-border-dim">
+            <footer className="panel-footer p-4">
               <button
                 onClick={onClose}
                 className="w-full py-3 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all"

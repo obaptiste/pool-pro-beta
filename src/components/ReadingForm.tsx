@@ -152,7 +152,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 z-50 bg-[#060e1a] overflow-y-auto"
+      className="fixed inset-0 z-50 bg-bg overflow-y-auto"
     >
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
@@ -257,7 +257,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
             />
           </div>
 
-          <div className="flex items-center gap-4 p-4 bg-[#0a1628] rounded-xl border border-border-dim">
+          <div className="flex items-center gap-4 p-4 bg-bg/40 rounded-xl border border-border-dim">
             <button
               type="button"
               onClick={() => handleVoiceInput('all')}

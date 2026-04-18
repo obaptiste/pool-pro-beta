@@ -53,14 +53,14 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[#060e1a]/90 backdrop-blur-sm">
+    <div className="overlay z-[60] flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-2xl bg-[#0d1f38] rounded-3xl border border-border-dim overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-2xl panel rounded-3xl overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <div className="p-6 border-b border-border-dim flex items-center justify-between bg-[#0d1f38]">
+        <div className="panel-header p-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent">
               <Wrench size={24} />
