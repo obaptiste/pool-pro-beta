@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoolStatus — Logo Refinement & Context</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap">
+<style>
+  @font-face {
+    font-family: "Exo 2";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("design/fonts/Exo2-VariableFont_wght.ttf") format("truetype");
+  }
+  html,body{margin:0;font-family:"Exo 2",sans-serif;-webkit-font-smoothing:antialiased}
+  *{box-sizing:border-box}
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+// ── Inlined design-canvas helpers ──
+const DC = {
+  bg:'#f0eee9', grid:'rgba(0,0,0,0.06)',
+  label:'rgba(60,50,40,0.7)', title:'rgba(40,30,20,0.85)', subtitle:'rgba(60,50,40,0.6)',
+  postitBg:'#fef4a8', postitText:'#5a4a2a',
+  font:'-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+};
+function DesignCanvas({ children, minScale=0.1, maxScale=8 }) {
+  const vpRef = React.useRef(null);
+  const worldRef = React.useRef(null);
+  const tf = React.useRef({ x:0, y:0, scale:1 });
+  const apply = React.useCallback(() => {
+    const { x, y, scale } = tf.current;
+    if (worldRef.current) worldRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  }, []);
+  React.useEffect(() => {
+    const vp = vpRef.current; if (!vp) return;
+    const zoomAt = (cx, cy, factor) => {
+      const r = vp.getBoundingClientRect();
+      const px = cx-r.left, py = cy-r.top;
+      const t = tf.current;
+      const next = Math.min(maxScale, Math.max(minScale, t.scale * factor));
+      const k = next/t.scale;
+      t.x = px-(px-t.x)*k; t.y = py-(py-t.y)*k; t.scale = next; apply();
+    };
+    const isMouseWheel = (e) => e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 40);
+    let isGesturing = false;
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (isGesturing) return;
+      if (e.ctrlKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY*0.01));
+      else if (isMouseWheel(e)) zoomAt(e.clientX, e.clientY, Math.exp(-Math.sign(e.deltaY)*0.18));
+      else { tf.current.x -= e.deltaX; tf.current.y -= e.deltaY; apply(); }
+    };
+    let gsBase = 1;
+    const onGS = (e) => { e.preventDefault(); isGesturing=true; gsBase = tf.current.scale; };
+    const onGC = (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, (gsBase*e.scale)/tf.current.scale); };
+    const onGE = (e) => { e.preventDefault(); isGesturing=false; };
+    let drag = null;
+    const onPD = (e) => {
+      const onBg = e.target===vp || e.target===worldRef.current;
+      if (!(e.button===1 || (e.button===0 && onBg))) return;
+      e.preventDefault(); vp.setPointerCapture(e.pointerId);
+      drag = { id:e.pointerId, lx:e.clientX, ly:e.clientY }; vp.style.cursor='grabbing';
+    };
+    const onPM = (e) => {
+      if (!drag || e.pointerId!==drag.id) return;
+      tf.current.x += e.clientX-drag.lx; tf.current.y += e.clientY-drag.ly;
+      drag.lx=e.clientX; drag.ly=e.clientY; apply();
+    };
+    const onPU = (e) => {
+      if (!drag || e.pointerId!==drag.id) return;
+      vp.releasePointerCapture(e.pointerId); drag=null; vp.style.cursor='';
+    };
+    vp.addEventListener('wheel', onWheel, { passive:false });
+    vp.addEventListener('gesturestart', onGS, { passive:false });
+    vp.addEventListener('gesturechange', onGC, { passive:false });
+    vp.addEventListener('gestureend', onGE, { passive:false });
+    vp.addEventListener('pointerdown', onPD);
+    vp.addEventListener('pointermove', onPM);
+    vp.addEventListener('pointerup', onPU);
+    vp.addEventListener('pointercancel', onPU);
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('gesturestart', onGS);
+      vp.removeEventListener('gesturechange', onGC);
+      vp.removeEventListener('gestureend', onGE);
+      vp.removeEventListener('pointerdown', onPD);
+      vp.removeEventListener('pointermove', onPM);
+      vp.removeEventListener('pointerup', onPU);
+      vp.removeEventListener('pointercancel', onPU);
+    };
+  }, [apply, minScale, maxScale]);
+  const gridSvg = `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M120 0H0v120' fill='none' stroke='${encodeURIComponent(DC.grid)}' stroke-width='1'/%3E%3C/svg%3E")`;
+  return (
+    <div ref={vpRef} style={{ height:'100vh', width:'100vw', background:DC.bg, overflow:'hidden', overscrollBehavior:'none', touchAction:'none', position:'relative', fontFamily:DC.font }}>
+      <div ref={worldRef} style={{ position:'absolute', top:0, left:0, transformOrigin:'0 0', willChange:'transform', width:'max-content', minWidth:'100%', minHeight:'100%', padding:'60px 0 80px', backgroundImage:gridSvg, backgroundSize:'120px 120px' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function DCSection({ title, subtitle, children, gap=48 }) {
+  return (
+    <div style={{ marginBottom:80, position:'relative' }}>
+      <div style={{ padding:'0 60px 36px' }}>
+        <div style={{ fontSize:22, fontWeight:600, color:DC.title, letterSpacing:-0.3, marginBottom:4 }}>{title}</div>
+        {subtitle && <div style={{ fontSize:14, color:DC.subtitle }}>{subtitle}</div>}
+      </div>
+      <div style={{ display:'flex', gap, padding:'0 60px', alignItems:'flex-start', width:'max-content' }}>{children}</div>
+    </div>
+  );
+}
+function DCArtboard({ label, children, width, height, style={} }) {
+  return (
+    <div style={{ position:'relative', flexShrink:0 }}>
+      {label && <div style={{ position:'absolute', bottom:'100%', left:0, paddingBottom:8, fontSize:12, fontWeight:500, color:DC.label, whiteSpace:'nowrap' }}>{label}</div>}
+      <div style={{ borderRadius:2, boxShadow:'0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)', overflow:'hidden', width, height, background:'#fff', ...style }}>{children}</div>
+    </div>
+  );
+}
+
+// ── Tokens ──
+const ACC = "#4FC3F7";
+const BG = "#060E1A";
+const INK = "#fff";
+const DIM = "#8AB4CC";
+
+// ═══════════════════════════════════════════════════════════
+// 01 RIPPLE — variations
+// A: original (3 rings + droplet)
+// B: tighter (2 rings, bigger droplet, heavier strokes)
+// C: off-center impact (droplet top-right, rings radiate asymmetrically)
+// ═══════════════════════════════════════════════════════════
+function R01A({ bg=BG, fg=ACC, counter=BG, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="34" r="22" fill="none" stroke={fg} strokeWidth="1.2" opacity="0.25"/>
+      <circle cx="32" cy="34" r="15" fill="none" stroke={fg} strokeWidth="1.4" opacity="0.5"/>
+      <circle cx="32" cy="34" r="8" fill="none" stroke={fg} strokeWidth="1.6" opacity="0.85"/>
+      <path d="M32 20 C 28 27, 26 30, 26 33 A 6 6 0 0 0 38 33 C 38 30, 36 27, 32 20 Z" fill={fg}/>
+      <circle cx="32" cy="34" r="1.8" fill={counter}/>
+    </svg>
+  );
+}
+function R01B({ bg=BG, fg=ACC, counter=BG, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="34" r="21" fill="none" stroke={fg} strokeWidth="1.8" opacity="0.4"/>
+      <circle cx="32" cy="34" r="13" fill="none" stroke={fg} strokeWidth="2" opacity="0.75"/>
+      <path d="M32 16 C 27 25, 24 29, 24 34 A 8 8 0 0 0 40 34 C 40 29, 37 25, 32 16 Z" fill={fg}/>
+      <circle cx="32" cy="34" r="2.4" fill={counter}/>
+    </svg>
+  );
+}
+function R01C({ bg=BG, fg=ACC, counter=BG, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {/* impact top-right, arcs radiate DL */}
+      <path d="M 8 48 A 28 28 0 0 1 46 14" fill="none" stroke={fg} strokeWidth="1.2" opacity="0.3"/>
+      <path d="M 14 48 A 22 22 0 0 1 46 20" fill="none" stroke={fg} strokeWidth="1.5" opacity="0.55"/>
+      <path d="M 22 48 A 14 14 0 0 1 46 28" fill="none" stroke={fg} strokeWidth="1.7" opacity="0.85"/>
+      <path d="M46 14 C 43 20, 41 22, 41 25 A 5 5 0 0 0 51 25 C 51 22, 49 20, 46 14 Z" fill={fg}/>
+      <circle cx="46" cy="25" r="1.6" fill={counter}/>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 02 RETICLE — variations
+// A: original (round reticle + waveform)
+// B: square crop reticle (corner brackets, no circles)
+// C: ranging reticle (dotted arc + waveform locked on center tick)
+// ═══════════════════════════════════════════════════════════
+function R02A({ bg=BG, fg=ACC, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="32" r="20" fill="none" stroke={fg} strokeWidth="1.2" opacity="0.35"/>
+      <circle cx="32" cy="32" r="13" fill="none" stroke={fg} strokeWidth="1.4" opacity="0.6"/>
+      <line x1="32" y1="6" x2="32" y2="14" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="32" y1="50" x2="32" y2="58" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="6" y1="32" x2="14" y2="32" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="50" y1="32" x2="58" y2="32" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <path d="M20 34 Q 24 28, 28 34 T 36 34 T 44 34" fill="none" stroke={fg} strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="32" cy="32" r="2.5" fill={fg}/>
+    </svg>
+  );
+}
+function R02B({ bg=BG, fg=ACC, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {/* corner brackets */}
+      <g stroke={fg} strokeWidth="1.8" strokeLinecap="round" fill="none">
+        <path d="M10 18 V 10 H 18"/>
+        <path d="M46 10 H 54 V 18"/>
+        <path d="M54 46 V 54 H 46"/>
+        <path d="M18 54 H 10 V 46"/>
+      </g>
+      {/* waveform across */}
+      <path d="M16 34 Q 21 26, 26 34 T 36 34 T 48 34" fill="none" stroke={fg} strokeWidth="2.2" strokeLinecap="round"/>
+      {/* lock dot + center cross */}
+      <line x1="32" y1="20" x2="32" y2="26" stroke={fg} strokeWidth="1.4" strokeLinecap="round" opacity="0.7"/>
+      <line x1="32" y1="42" x2="32" y2="48" stroke={fg} strokeWidth="1.4" strokeLinecap="round" opacity="0.7"/>
+      <circle cx="32" cy="34" r="2.8" fill={fg}/>
+    </svg>
+  );
+}
+function R02C({ bg=BG, fg=ACC, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {/* dotted range ring */}
+      <circle cx="32" cy="32" r="22" fill="none" stroke={fg} strokeWidth="1.3" strokeDasharray="2 3" opacity="0.5"/>
+      {/* tick marks at 12/3/6/9 */}
+      <g stroke={fg} strokeWidth="1.8" strokeLinecap="round">
+        <line x1="32" y1="7" x2="32" y2="13"/>
+        <line x1="57" y1="32" x2="51" y2="32"/>
+        <line x1="32" y1="57" x2="32" y2="51"/>
+        <line x1="7" y1="32" x2="13" y2="32"/>
+      </g>
+      {/* locked waveform */}
+      <path d="M14 38 Q 19 30, 24 38 Q 28 44, 32 32 Q 36 20, 40 32 Q 44 42, 50 34" fill="none" stroke={fg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="32" cy="32" r="3" fill={fg}/>
+      <circle cx="32" cy="32" r="1.2" fill={bg}/>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 03 HEX — variations
+// A: original (outlined hex + waterline fill, top indicator)
+// B: filled hex, cut waterline window (negative space water)
+// C: half-fill hex (lower half solid = fully saturated vessel)
+// ═══════════════════════════════════════════════════════════
+function R03A({ bg=BG, fg=ACC, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <path d="M32 8 L 54 20 L 54 44 L 32 56 L 10 44 L 10 20 Z" fill="none" stroke={fg} strokeWidth="1.6" strokeLinejoin="round" opacity="0.85"/>
+      <path d="M14 34 Q 20 30, 26 34 T 38 34 T 50 34" fill="none" stroke={fg} strokeWidth="1.8" strokeLinecap="round"/>
+      <path d="M14 34 Q 20 30, 26 34 T 38 34 T 50 34 L 50 46 L 32 56 L 14 46 Z" fill={fg} opacity="0.15"/>
+      <circle cx="32" cy="20" r="2" fill={fg}/>
+    </svg>
+  );
+}
+function R03B({ bg=BG, fg=ACC, counter=BG, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <path d="M32 8 L 54 20 L 54 44 L 32 56 L 10 44 L 10 20 Z" fill={fg}/>
+      {/* negative-space waterline */}
+      <path d="M14 34 Q 20 30, 26 34 T 38 34 T 50 34 L 50 24 L 14 24 Z" fill={counter}/>
+      {/* reading dot */}
+      <circle cx="32" cy="44" r="2.4" fill={counter}/>
+    </svg>
+  );
+}
+function R03C({ bg=BG, fg=ACC, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {/* hex outline */}
+      <path d="M32 8 L 54 20 L 54 44 L 32 56 L 10 44 L 10 20 Z" fill="none" stroke={fg} strokeWidth="1.8" strokeLinejoin="round"/>
+      {/* solid fill lower half, clipped to hex via matched path */}
+      <path d="M12.5 33 L 51.5 33 L 54 44 L 32 56 L 10 44 Z" fill={fg}/>
+      {/* waterline ripple on top of fill */}
+      <path d="M14 33 Q 20 29, 26 33 T 38 33 T 50 33" fill="none" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      {/* bubble */}
+      <circle cx="38" cy="44" r="1.6" fill={bg} opacity="0.6"/>
+      <circle cx="26" cy="48" r="1" fill={bg} opacity="0.5"/>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 04 DIAL — variations
+// A: original (3/4 arc + needle at 60%)
+// B: full ring gauge, inner value field (like an app icon)
+// C: stepped dial (segmented ticks, digital telemetry feel)
+// ═══════════════════════════════════════════════════════════
+function R04A({ bg=BG, fg=ACC, track="#1E3A5F", hub=BG, r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <path d="M 12 44 A 20 20 0 1 1 52 44" fill="none" stroke={track} strokeWidth="3" strokeLinecap="round"/>
+      <path d="M 12 44 A 20 20 0 0 1 42.9 14.4" fill="none" stroke={fg} strokeWidth="3" strokeLinecap="round"/>
+      <g stroke={fg} strokeWidth="1.4" strokeLinecap="round" opacity="0.6">
+        <line x1="10" y1="38" x2="14" y2="38.5"/>
+        <line x1="20" y1="18" x2="22.5" y2="21"/>
+        <line x1="32" y1="10" x2="32" y2="14"/>
+        <line x1="44" y1="18" x2="41.5" y2="21"/>
+        <line x1="54" y1="38" x2="50" y2="38.5"/>
+      </g>
+      <line x1="32" y1="44" x2="42" y2="22" stroke={fg} strokeWidth="2.2" strokeLinecap="round"/>
+      <circle cx="32" cy="44" r="3" fill={fg}/>
+      <circle cx="32" cy="44" r="1.3" fill={hub}/>
+    </svg>
+  );
+}
+function R04B({ bg=BG, fg=ACC, track="#1E3A5F", r=14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {/* full ring */}
+      <circle cx="32" cy="32" r="22" fill="none" stroke={track} strokeWidth="3"/>
+      {/* progress arc ~70% from top, clockwise */}
+      <circle cx="32" cy="32" r="22" fill="none" stroke={fg} strokeWidth="3" strokeLinecap="round"
+              strokeDasharray={`${2*Math.PI*22*0.72} ${2*Math.PI*22}`}
+              transform="rotate(-90 32 32)"/>
+      {/* inner reading */}
+      <text x="32" y="35" textAnchor="middle" fill={fg} fontFamily="Space Mono, monospace" fontWeight="700" fontSize="14" style={{ letterSpacing: "0.02em" }}>LSI</text>
+      <text x="32" y="45" textAnchor="middle" fill={fg} fontFamily="Space Mono, monospace" fontSize="7" opacity="0.7" style={{ letterSpacing: "0.1em" }}>+0.02</text>
+    </svg>
+  );
+}
+function R04C({ bg=BG, fg=ACC, track="#1E3A5F", r=14 }) {
+  // Segmented half-dial with 11 ticks, first 7 active
+  const ticks = Array.from({ length: 11 }, (_, i) => {
+    const angle = Math.PI * (1 - i / 10); // 180 → 0
+    const cx = 32 + Math.cos(angle) * 22;
+    const cy = 44 - Math.sin(angle) * 22;
+    const ix = 32 + Math.cos(angle) * 15;
+    const iy = 44 - Math.sin(angle) * 15;
+    return { cx, cy, ix, iy, active: i < 7 };
+  });
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      {ticks.map((t, i) => (
+        <line key={i} x1={t.ix} y1={t.iy} x2={t.cx} y2={t.cy}
+              stroke={t.active ? fg : track} strokeWidth="2.4" strokeLinecap="round"/>
+      ))}
+      {/* center reading */}
+      <line x1="32" y1="44" x2="32" y2="30" stroke={fg} strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="32" cy="44" r="2.6" fill={fg}/>
+      <text x="32" y="56" textAnchor="middle" fill={fg} fontFamily="Space Mono, monospace" fontSize="6" opacity="0.7" style={{ letterSpacing: "0.15em" }}>70%</text>
+    </svg>
+  );
+}
+
+// ── Wordmark ──
+function Wordmark({ size=22, color=INK, accent=ACC }) {
+  return (
+    <div style={{ fontFamily:'"Exo 2", sans-serif', fontWeight:800, fontSize:size, letterSpacing:".18em", textTransform:"uppercase", color, lineHeight:1, whiteSpace:"nowrap" }}>
+      Pool<span style={{ color:accent }}>Status</span>
+    </div>
+  );
+}
+
+// ── Artboards ──
+function BigMark({ Comp }) {
+  return (
+    <div style={{ width:"100%", height:"100%", background:BG, display:"flex", alignItems:"center", justifyContent:"center", padding:36 }}>
+      <div style={{ width:160, height:160 }}><Comp /></div>
+    </div>
+  );
+}
+function HorizontalLockup({ Comp }) {
+  return (
+    <div style={{ width:"100%", height:"100%", background:BG, display:"flex", alignItems:"center", justifyContent:"center", gap:16, padding:32 }}>
+      <div style={{ width:54, height:54, flexShrink:0 }}><Comp /></div>
+      <Wordmark size={22} />
+    </div>
+  );
+}
+
+// ── In-context: full landing hero preview ──
+function HeroPreview({ Comp, name }) {
+  return (
+    <div style={{ width:"100%", height:"100%", background:BG, position:"relative", overflow:"hidden" }}>
+      {/* grid bg */}
+      <div style={{
+        position:"absolute", inset:0,
+        backgroundImage: "linear-gradient(rgba(30,58,95,.25) 1px, transparent 1px), linear-gradient(90deg, rgba(30,58,95,.25) 1px, transparent 1px)",
+        backgroundSize: "48px 48px", opacity: 0.5,
+      }}/>
+      {/* nav */}
+      <div style={{
+        position:"relative",
+        borderBottom:"1px solid #1E3A5F",
+        padding:"14px 32px",
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        background:"rgba(6,14,26,.82)",
+      }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:28, height:28 }}><Comp /></div>
+          <Wordmark size={15} />
+        </div>
+        <div style={{ display:"flex", gap:24 }}>
+          {["FIELD OPS","TELEMETRY","AI PROTOCOLS","PRICING","DOCS"].map(t => (
+            <span key={t} style={{ fontSize:9, fontWeight:700, letterSpacing:".2em", color:"#8AB4CC" }}>{t}</span>
+          ))}
+        </div>
+        <div style={{ background:ACC, color:BG, padding:"6px 12px", borderRadius:6, fontSize:9, fontWeight:700, letterSpacing:".2em" }}>FIELD ACCESS</div>
+      </div>
+      {/* body */}
+      <div style={{ position:"relative", padding:"48px 32px", display:"grid", gridTemplateColumns:"1fr 260px", gap:32, alignItems:"center" }}>
+        <div>
+          <div style={{ display:"inline-flex", alignItems:"center", gap:8, fontSize:9, fontWeight:700, letterSpacing:".2em", color:"#4A6A80", marginBottom:14 }}>
+            <span style={{ width:6, height:6, borderRadius:"50%", background:"#10B981" }}/>
+            LIVE · 14 UNITS ONLINE
+          </div>
+          <div style={{ fontSize:40, lineHeight:0.95, fontWeight:800, letterSpacing:"-0.01em", textTransform:"uppercase", color:INK, marginBottom:12 }}>
+            The pool,<br/><span style={{ color:ACC }}>as a console.</span>
+          </div>
+          <div style={{ fontSize:12, color:DIM, lineHeight:1.5, maxWidth:360, marginBottom:18 }}>
+            Field telemetry, LSI saturation, and AI-generated dosing protocols in the palm of your hand.
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <div style={{ background:ACC, color:BG, padding:"10px 14px", borderRadius:6, fontSize:9, fontWeight:700, letterSpacing:".2em" }}>START A READING</div>
+            <div style={{ border:"1px solid #1E3A5F", color:DIM, padding:"10px 14px", borderRadius:6, fontSize:9, fontWeight:700, letterSpacing:".2em" }}>WATCH DEMO</div>
+          </div>
+        </div>
+        <div style={{ background:"rgba(79,195,247,.04)", border:"1px solid rgba(79,195,247,.3)", borderRadius:10, padding:16 }}>
+          <div style={{ fontSize:9, fontWeight:700, letterSpacing:".2em", color:"#4A6A80", marginBottom:8 }}>SATURATION · LSI</div>
+          <div style={{ fontFamily:'"Space Mono", monospace', fontSize:44, fontWeight:700, color:ACC, lineHeight:1 }}>+0.02</div>
+          <div style={{ fontSize:9, fontWeight:700, letterSpacing:".2em", color:ACC, marginTop:6 }}>BALANCED</div>
+          <div style={{ borderTop:"1px solid #1E3A5F", marginTop:12, paddingTop:10, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+            {[["pH","7.42"],["FC","1.5"],["TA","100"]].map(([k,v])=>(
+              <div key={k}>
+                <div style={{ fontSize:8, fontWeight:700, letterSpacing:".2em", color:"#4A6A80" }}>{k}</div>
+                <div style={{ fontFamily:'"Space Mono", monospace', fontSize:14, fontWeight:700, color:INK }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ position:"absolute", bottom:14, right:18, fontSize:8, fontWeight:700, letterSpacing:".2em", color:"#4A6A80" }}>
+        ◀ {name}
+      </div>
+    </div>
+  );
+}
+
+// Footer preview
+function FooterPreview({ Comp, name }) {
+  return (
+    <div style={{ width:"100%", height:"100%", background:BG, padding:24, display:"flex", flexDirection:"column", justifyContent:"center" }}>
+      <div style={{ borderTop:"1px solid #1E3A5F", paddingTop:20, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+          <div style={{ width:22, height:22 }}><Comp /></div>
+          <Wordmark size={13} />
+          <span style={{ fontFamily:'"Space Mono", monospace', fontSize:9, color:"#4A6A80" }}>v2.0.4 · BUILD #184</span>
+        </div>
+        <div style={{ display:"flex", gap:14 }}>
+          {["DOCS","API","COMPLIANCE","STATUS","PRIVACY"].map(l => (
+            <span key={l} style={{ fontSize:9, fontWeight:700, letterSpacing:".2em", color:"#8AB4CC" }}>{l}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{ fontSize:8, fontWeight:700, letterSpacing:".2em", color:"#4A6A80", marginTop:18 }}>
+        ◀ {name} · FOOTER LOCKUP
+      </div>
+    </div>
+  );
+}
+
+// Mobile/phone preview — nav in device
+function PhoneNavPreview({ Comp, name }) {
+  return (
+    <div style={{ width:"100%", height:"100%", background:"#0A1628", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{
+        width:180, height:340,
+        background:BG, border:"6px solid #1E3A5F", borderRadius:24, padding:8,
+        position:"relative", overflow:"hidden",
+      }}>
+        <div style={{ position:"absolute", top:12, left:"50%", transform:"translateX(-50%)", width:48, height:12, background:BG, borderRadius:8, zIndex:2 }}/>
+        <div style={{ paddingTop:28, height:"100%" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 10px 8px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ width:20, height:20 }}><Comp /></div>
+              <Wordmark size={10} />
+            </div>
+            <div style={{ width:14, height:14, border:"1px solid #1E3A5F", borderRadius:3 }}/>
+          </div>
+          <div style={{ background:"rgba(79,195,247,.04)", border:"1px solid rgba(79,195,247,.3)", borderRadius:8, padding:10, margin:"6px 8px" }}>
+            <div style={{ fontSize:7, fontWeight:700, letterSpacing:".2em", color:ACC }}>LSI · BALANCED</div>
+            <div style={{ fontFamily:'"Space Mono", monospace', fontSize:28, fontWeight:700, color:ACC, lineHeight:1, marginTop:4 }}>+0.02</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, padding:"0 8px" }}>
+            {[["FC","1.5"],["pH","7.42"],["TA","100"],["TEMP","26"]].map(([k,v])=>(
+              <div key={k} style={{ border:"1px solid #1E3A5F", borderRadius:6, padding:"6px 8px" }}>
+                <div style={{ fontSize:6, fontWeight:700, letterSpacing:".2em", color:"#4A6A80" }}>{k}</div>
+                <div style={{ fontFamily:'"Space Mono", monospace', fontSize:12, fontWeight:700, color:INK }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DIRECTIONS = [
+  { id:"01", name:"Ripple",          variants:[{k:"A", Comp:R01A, note:"Original · 3 rings"}, {k:"B", Comp:R01B, note:"Tight · 2 rings, bigger droplet"}, {k:"C", Comp:R01C, note:"Off-center impact"}] },
+  { id:"02", name:"Reticle",         variants:[{k:"A", Comp:R02A, note:"Original · round reticle"}, {k:"B", Comp:R02B, note:"Corner brackets · square crop"}, {k:"C", Comp:R02C, note:"Dotted range · locked waveform"}] },
+  { id:"03", name:"Hex",             variants:[{k:"A", Comp:R03A, note:"Outlined · waterline fill"}, {k:"B", Comp:R03B, note:"Filled hex · negative water"}, {k:"C", Comp:R03C, note:"Half-fill vessel · bubbles"}] },
+  { id:"04", name:"Saturation Dial", variants:[{k:"A", Comp:R04A, note:"Original · needle at 60%"}, {k:"B", Comp:R04B, note:"Ring gauge · LSI readout"}, {k:"C", Comp:R04C, note:"Segmented · 11 ticks"}] },
+];
+
+function App() {
+  return (
+    <DesignCanvas>
+      <div style={{ padding:"0 60px 24px" }}>
+        <div style={{ fontSize:28, fontWeight:700, color:"rgba(40,30,20,0.85)", letterSpacing:-0.4, marginBottom:6 }}>
+          Logo Refinement & In-Context Previews
+        </div>
+        <div style={{ fontSize:14, color:"rgba(60,50,40,0.6)", maxWidth:760 }}>
+          Four surviving directions, each with 3 variations (A/B/C) and a full in-context sweep — hero, footer, mobile nav.
+          Down-select by variant letter when you reply.
+        </div>
+      </div>
+
+      {DIRECTIONS.map(d => (
+        <React.Fragment key={d.id}>
+          <DCSection title={`${d.id} · ${d.name}`} subtitle="Variations A · B · C — then the chosen pick shown in context (hero / footer / mobile)">
+            {d.variants.map(v => (
+              <DCArtboard key={v.k} label={`${d.id}${v.k} — ${v.note}`} width={260} height={260}>
+                <BigMark Comp={v.Comp} />
+              </DCArtboard>
+            ))}
+            {d.variants.map(v => (
+              <DCArtboard key={"h"+v.k} label={`${d.id}${v.k} · lockup`} width={280} height={140}>
+                <HorizontalLockup Comp={v.Comp} />
+              </DCArtboard>
+            ))}
+          </DCSection>
+
+          <DCSection title={`${d.id} · ${d.name} — in context (variant A)`} subtitle="The 'A' variant dropped into hero / footer / mobile — swap variants once you pick one">
+            <DCArtboard label="Marketing hero section" width={760} height={380}>
+              <HeroPreview Comp={d.variants[0].Comp} name={`${d.id}A`} />
+            </DCArtboard>
+            <DCArtboard label="Marketing footer" width={520} height={140}>
+              <FooterPreview Comp={d.variants[0].Comp} name={`${d.id}A`} />
+            </DCArtboard>
+            <DCArtboard label="Mobile app nav" width={260} height={380}>
+              <PhoneNavPreview Comp={d.variants[0].Comp} name={`${d.id}A`} />
+            </DCArtboard>
+          </DCSection>
+        </React.Fragment>
+      ))}
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

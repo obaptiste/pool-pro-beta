@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoolStatus AI — Telemetry for Commercial Pool Ops</title>
+<link rel="icon" href="assets/mark.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap">
+<style>
+  @font-face {
+    font-family: "Exo 2";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("fonts/Exo2-VariableFont_wght.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "Exo 2";
+    font-style: italic;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("fonts/Exo2-Italic-VariableFont_wght.ttf") format("truetype");
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  html,body{margin:0;background:#060E1A;color:#fff;font-family:"Exo 2",sans-serif;-webkit-font-smoothing:antialiased}
+  #root{min-height:100vh}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-thumb{background:#1E3A5F;border-radius:9999px}
+  ::-webkit-scrollbar-track{background:#060E1A}
+  *{box-sizing:border-box}
+  a{color:inherit;text-decoration:none}
+
+  .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:#4A6A80}
+  .lbl-accent{color:#4FC3F7}
+  .mono{font-family:"Space Mono",monospace}
+  .wordmark{font-weight:800;text-transform:uppercase;letter-spacing:.18em}
+  .wordmark .acc{color:#4FC3F7}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;cursor:pointer;font-family:inherit;font-weight:700;text-transform:uppercase;letter-spacing:.2em;font-size:10px;transition:filter .15s,transform .1s,background .15s,color .15s,border-color .15s}
+  .btn-primary{background:#4FC3F7;color:#060E1A;padding:14px 20px;border-radius:8px;box-shadow:0 20px 40px rgba(79,195,247,.2)}
+  .btn-primary:hover{filter:brightness(1.1)}
+  .btn-primary:active{transform:scale(.97)}
+  .btn-ghost{background:transparent;color:#8AB4CC;padding:14px 18px;border-radius:8px;border:1px solid #1E3A5F}
+  .btn-ghost:hover{color:#fff;border-color:#4FC3F7;background:rgba(79,195,247,.05)}
+  .btn-sm{padding:8px 14px;font-size:9px}
+
+  .card{background:#0D1F38;border:1px solid #1E3A5F;border-radius:12px;padding:20px;transition:border-color .2s,transform .2s}
+  .hairline{border-top:1px solid #1E3A5F}
+
+  /* Subtle grid bg */
+  .grid-bg{
+    background-image:
+      linear-gradient(rgba(30,58,95,.25) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30,58,95,.25) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: -1px -1px;
+  }
+
+  /* Scanline overlay for "telemetry console" vibe */
+  .scan{
+    position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(79,195,247,.03) 0 1px, transparent 1px 3px);
+    mix-blend-mode:screen;
+  }
+
+  /* Ripple for live telemetry ticks */
+  @keyframes tick {0%{opacity:1}100%{opacity:0}}
+  .tick{animation:tick 1.2s ease-out forwards}
+
+  @keyframes pulse {0%,100%{opacity:.55}50%{opacity:1}}
+  .pulse{animation:pulse 1.6s ease-in-out infinite}
+
+  @keyframes scanSweep {0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}
+  .sweep{animation:scanSweep 4s linear infinite}
+
+  @keyframes waveMove { from{background-position-x:0} to{background-position-x:-200px} }
+
+  /* fade-in on mount */
+  @keyframes fadeUp {from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  .anim-in{animation:fadeUp .4s ease-out both}
+
+  /* marquee ticker */
+  @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+  .marquee-track{display:inline-flex;animation:marquee 48s linear infinite;white-space:nowrap}
+
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+
+  /* responsive */
+  .container{max-width:1200px;margin:0 auto;padding:0 24px}
+  @media (max-width:720px){
+    .container{padding:0 16px}
+    .hide-sm{display:none !important}
+  }
+
+  /* focus rings */
+  button:focus-visible, a:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(79,195,247,.5)}
+
+  /* accent color bindings (for Tweaks) */
+  .acc-c{color:var(--acc,#4FC3F7)}
+  .acc-bg{background:var(--acc,#4FC3F7)}
+  .acc-bd{border-color:var(--acc,#4FC3F7)}
+</style>
+<script>
+// Suppress benign ResizeObserver warning
+(() => {
+  const re = /ResizeObserver loop/;
+  window.addEventListener('error', (e) => {
+    if (e.message && re.test(e.message)) { e.stopImmediatePropagation(); e.preventDefault(); return false; }
+  }, true);
+  const origError = window.console.error;
+  window.console.error = function(...a) {
+    if (a[0] && typeof a[0] === 'string' && re.test(a[0])) return;
+    return origError.apply(this, a);
+  };
+})();
+</script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+// Shared sprites / primitives for PoolStatus AI landing page
+// Exported on window for cross-file usage.
+const { useState, useEffect, useMemo, useRef } = React;
+
+function Icon({ name, size = 16, color, style, className = "" }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = "";
+    const el = document.createElement("i");
+    el.setAttribute("data-lucide", name);
+    ref.current.appendChild(el);
+    if (window.lucide) window.lucide.createIcons({ nameAttr: "data-lucide" });
+    // Force icon size
+    requestAnimationFrame(() => {
+      const svg = ref.current && ref.current.querySelector("svg");
+      if (svg) {
+        svg.setAttribute("width", size);
+        svg.setAttribute("height", size);
+        if (color) svg.setAttribute("stroke", color);
+      }
+    });
+  }, [name, size, color]);
+  return (
+    <span
+      ref={ref}
+      className={className}
+      style={{ display: "inline-flex", width: size, height: size, color, lineHeight: 0, ...style }}
+    />
+  );
+}
+
+// Label in ALL CAPS tracking
+function Label({ children, accent, style }) {
+  return (
+    <span
+      className={"lbl" + (accent ? " lbl-accent" : "")}
+      style={style}
+    >
+      {children}
+    </span>
+  );
+}
+
+// Wordmark with cyan "Status"
+function Wordmark({ size = 16 }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <img src="assets/mark.svg" alt="" style={{ width: size + 8, height: size + 8 }} />
+      <div className="wordmark" style={{ fontSize: size }}>
+        Pool<span className="acc">Status</span>
+      </div>
+    </div>
+  );
+}
+
+// Sparkline SVG
+function Sparkline({ values, color = "#4FC3F7", width = 80, height = 28 }) {
+  if (!values || values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - ((v - min) / range) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const last = values[values.length - 1];
+  const ly = height - ((last - min) / range) * height;
+  return (
+    <svg width={width} height={height} style={{ overflow: "visible" }}>
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity="0.65"
+      />
+      <circle cx={width} cy={ly} r="2.5" fill={color} />
+      <circle cx={width} cy={ly} r="5" fill={color} opacity="0.25" />
+    </svg>
+  );
+}
+
+// Animated number (counts while simulating live telemetry)
+function Ticker({ value, decimals = 1, unit, className = "" }) {
+  const [display, setDisplay] = useState(value);
+  useEffect(() => {
+    let raf;
+    const start = display;
+    const delta = value - start;
+    const duration = 500;
+    const t0 = performance.now();
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisplay(start + delta * eased);
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return (
+    <span className={"mono " + className} style={{ fontVariantNumeric: "tabular-nums" }}>
+      {display.toFixed(decimals)}
+      {unit ? <span style={{ fontSize: ".55em", color: "#4A6A80", marginLeft: 4 }}>{unit}</span> : null}
+    </span>
+  );
+}
+
+// Status chip
+function StatusChip({ status }) {
+  const map = {
+    ok: { bg: "rgba(16,185,129,.1)", bd: "rgba(16,185,129,.3)", fg: "#34D399", t: "✓ NOMINAL" },
+    watch: { bg: "rgba(245,158,11,.1)", bd: "rgba(245,158,11,.3)", fg: "#FBBF24", t: "⚠ WATCH" },
+    action: { bg: "rgba(239,68,68,.1)", bd: "rgba(239,68,68,.3)", fg: "#F87171", t: "✕ ACTION" },
+  };
+  const s = map[status] || map.ok;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 8px",
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: ".2em",
+        background: s.bg,
+        border: `1px solid ${s.bd}`,
+        color: s.fg,
+        borderRadius: 6,
+      }}
+    >
+      {s.t}
+    </span>
+  );
+}
+
+// Big metric tile
+function MetricTile({ label, value, unit, decimals = 1, status = "ok", trend, ideal, accentVar }) {
+  const style = {
+    ok: { fg: "#34D399", dot: "#10B981" },
+    watch: { fg: "#FBBF24", dot: "#F59E0B" },
+    action: { fg: "#F87171", dot: "#EF4444" },
+  }[status];
+  return (
+    <div
+      className="card"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Label>{label}</Label>
+        <Sparkline values={trend} color={style.dot} width={60} height={20} />
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        <Ticker value={value} decimals={decimals} unit={unit} className="" />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span className="lbl" style={{ fontSize: 9 }}>
+          IDEAL {ideal}
+        </span>
+        <StatusChip status={status} />
+      </div>
+    </div>
+  );
+}
+
+// Pool-water wave SVG backdrop
+function WaveBackdrop({ opacity = 0.14 }) {
+  return (
+    <svg
+      viewBox="0 0 1200 300"
+      preserveAspectRatio="none"
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        opacity,
+        pointerEvents: "none",
+      }}
+    >
+      <defs>
+        <linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#4FC3F7" stopOpacity="0" />
+          <stop offset="100%" stopColor="#4FC3F7" stopOpacity="0.5" />
+        </linearGradient>
+      </defs>
+      <path d="M0,180 Q150,140 300,180 T600,180 T900,180 T1200,180 L1200,300 L0,300 Z" fill="url(#wg)" />
+      <path
+        d="M0,210 Q150,170 300,210 T600,210 T900,210 T1200,210"
+        fill="none"
+        stroke="#4FC3F7"
+        strokeWidth="1"
+        opacity="0.4"
+      />
+      <path
+        d="M0,150 Q150,110 300,150 T600,150 T900,150 T1200,150"
+        fill="none"
+        stroke="#4FC3F7"
+        strokeWidth="1"
+        opacity="0.2"
+      />
+    </svg>
+  );
+}
+
+// Crosshair / coordinates stamp (console aesthetic)
+function Coords({ x = "42.3601°N", y = "71.0589°W", id = "POOL-07A" }) {
+  return (
+    <div
+      className="mono"
+      style={{ fontSize: 9, color: "#4A6A80", letterSpacing: ".1em", display: "flex", gap: 14 }}
+    >
+      <span>
+        <Icon name="map-pin" size={10} style={{ marginRight: 4, verticalAlign: "-2px" }} />
+        {x} · {y}
+      </span>
+      <span>UNIT {id}</span>
+    </div>
+  );
+}
+
+// Export
+Object.assign(window, {
+  Icon,
+  Label,
+  Wordmark,
+  Sparkline,
+  Ticker,
+  StatusChip,
+  MetricTile,
+  WaveBackdrop,
+  Coords,
+});
+
+// Sections for the PoolStatus AI landing page
+const { useState: useStateS, useEffect: useEffectS, useMemo: useMemoS, useRef: useRefS } = React;
+
+// ---------- NAV ----------
+function Nav({ onCta }) {
+  const [scrolled, setScrolled] = useStateS(false);
+  useEffectS(() => {
+    const onScroll = () => setScrolled(window.scrollY > 12);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return (
+    <nav
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 50,
+        background: scrolled ? "rgba(6,14,26,.82)" : "transparent",
+        backdropFilter: scrolled ? "blur(12px)" : "none",
+        borderBottom: scrolled ? "1px solid #1E3A5F" : "1px solid transparent",
+        transition: "all .25s",
+        padding: "14px 0",
+      }}
+    >
+      <div
+        className="container"
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+      >
+        <Wordmark size={15} />
+        <div className="hide-sm" style={{ display: "flex", gap: 28, alignItems: "center" }}>
+          {["Field Ops", "Telemetry", "AI Protocols", "Pricing", "Docs"].map((t) => (
+            <a key={t} href="#" className="lbl" style={{ color: "#8AB4CC", fontSize: 10 }}>
+              {t}
+            </a>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <a href="#" className="lbl hide-sm" style={{ color: "#8AB4CC" }}>
+            Sign In
+          </a>
+          <button className="btn btn-primary btn-sm" onClick={onCta}>
+            <Icon name="log-in" size={12} /> Field Access
+          </button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+// ---------- HERO: LSI Metric Variant ----------
+function HeroMetric({ tele }) {
+  const lsi = useMemoS(() => {
+    // pH + TF + CF + AF - 12.1, simplified
+    return +(tele.ph + 0.4 + 2.0 + 2.0 - 12.1).toFixed(2);
+  }, [tele.ph]);
+  const lsiStatus =
+    Math.abs(lsi) > 0.3 ? "action" : Math.abs(lsi) > 0.1 ? "watch" : "ok";
+  const lsiLabel = lsi < -0.3 ? "CORROSIVE" : lsi > 0.3 ? "SCALE FORMING" : "BALANCED";
+
+  return (
+    <section style={{ position: "relative", padding: "140px 0 80px", overflow: "hidden" }}>
+      <div className="grid-bg" style={{ position: "absolute", inset: 0, opacity: 0.5 }} />
+      <WaveBackdrop opacity={0.18} />
+      <div className="container" style={{ position: "relative" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,420px)", gap: 48, alignItems: "center" }} className="hero-grid">
+          <div className="anim-in">
+            <Label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span className="dot pulse" style={{ background: "#10B981" }} /> LIVE · 14 UNITS ONLINE
+            </Label>
+            <h1
+              style={{
+                fontSize: "clamp(40px, 6vw, 72px)",
+                lineHeight: 0.95,
+                fontWeight: 800,
+                letterSpacing: "-0.01em",
+                textTransform: "uppercase",
+                margin: "18px 0 22px",
+                textWrap: "balance",
+              }}
+            >
+              The pool, <br />
+              <span style={{ color: "var(--acc,#4FC3F7)" }}>as a console.</span>
+            </h1>
+            <p
+              style={{
+                color: "#8AB4CC",
+                fontSize: 16,
+                lineHeight: 1.55,
+                maxWidth: 480,
+                margin: "0 0 28px",
+                textWrap: "pretty",
+              }}
+            >
+              Field telemetry, LSI saturation, and AI-generated dosing protocols
+              in the palm of your hand. Built for commercial operators working
+              shift-based, skimmer-deep, clipboard-out.
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <button className="btn btn-primary">
+                <Icon name="log-in" size={12} /> Start A Reading
+              </button>
+              <button className="btn btn-ghost">
+                <Icon name="play" size={12} /> Watch 90-sec Demo
+              </button>
+            </div>
+            <div style={{ marginTop: 36 }}>
+              <Coords />
+            </div>
+          </div>
+
+          {/* LSI HERO CARD */}
+          <div className="anim-in" style={{ animationDelay: ".1s" }}>
+            <div
+              className="card"
+              style={{
+                background: "rgba(79,195,247,.04)",
+                borderColor: "rgba(79,195,247,.3)",
+                padding: 24,
+                position: "relative",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "40%", overflow: "hidden" }}>
+                <div className="sweep" style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(79,195,247,.12), transparent)" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <Label>Saturation Index · LSI</Label>
+                <Icon name="sparkles" size={14} color="#4FC3F7" />
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 88,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    color: lsiStatus === "action" ? "#F87171" : lsiStatus === "watch" ? "#FBBF24" : "#4FC3F7",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {lsi >= 0 ? "+" : ""}
+                  {lsi.toFixed(2)}
+                </span>
+              </div>
+              <div style={{ marginTop: 4, marginBottom: 18 }}>
+                <Label accent>{lsiLabel}</Label>
+              </div>
+              <div className="hairline" style={{ paddingTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                {[
+                  { k: "pH", v: tele.ph.toFixed(2), unit: "" },
+                  { k: "FC", v: tele.fc.toFixed(1), unit: "ppm" },
+                  { k: "TA", v: Math.round(tele.ta), unit: "ppm" },
+                ].map((m) => (
+                  <div key={m.k}>
+                    <div className="lbl" style={{ marginBottom: 6 }}>{m.k}</div>
+                    <div className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
+                      {m.v}
+                      {m.unit && <span style={{ fontSize: 9, color: "#4A6A80", marginLeft: 4 }}>{m.unit}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hairline" style={{ marginTop: 14, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon name="terminal" size={12} color="#4A6A80" />
+                <span className="mono" style={{ fontSize: 10, color: "#8AB4CC", letterSpacing: ".06em" }}>
+                  AI: Dose 68g Cl · Re-test 14:00
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <style>{`
+        @media (max-width:880px){
+          .hero-grid{grid-template-columns:minmax(0,1fr) !important;}
+        }
+      `}</style>
+    </section>
+  );
+}
+
+// ---------- HERO: Split (Alert → AI Protocol) ----------
+function HeroSplit({ tele }) {
+  return (
+    <section style={{ position: "relative", padding: "140px 0 80px", overflow: "hidden" }}>
+      <div className="grid-bg" style={{ position: "absolute", inset: 0, opacity: 0.4 }} />
+      <div className="container" style={{ position: "relative" }}>
+        <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 48px" }}>
+          <Label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span className="dot pulse" style={{ background: "#EF4444" }} /> INCIDENT · 07:12 · POOL-07A
+          </Label>
+          <h1
+            style={{
+              fontSize: "clamp(36px, 5.2vw, 64px)",
+              lineHeight: 0.98,
+              fontWeight: 800,
+              letterSpacing: "-0.01em",
+              textTransform: "uppercase",
+              margin: "18px 0 18px",
+              textWrap: "balance",
+            }}
+          >
+            From alert <span style={{ color: "var(--acc,#4FC3F7)" }}>to protocol</span><br />
+            in eleven seconds.
+          </h1>
+          <p style={{ color: "#8AB4CC", fontSize: 16, lineHeight: 1.55, margin: 0, textWrap: "pretty" }}>
+            PoolStatus AI watches the chemistry. When something drifts, it doesn't
+            just alert — it writes the shift protocol, weighs your inventory,
+            and schedules the re-test.
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 40px 1fr", gap: 16, alignItems: "stretch" }} className="split-grid">
+          <div className="card anim-in" style={{ background: "rgba(239,68,68,.05)", borderColor: "rgba(239,68,68,.3)", padding: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <Label style={{ color: "#F87171" }}>Alert · Critical</Label>
+              <span className="mono" style={{ fontSize: 10, color: "#4A6A80" }}>T+00:00</span>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <Icon name="alert-triangle" size={22} color="#F87171" />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Free chlorine below safe threshold.</div>
+                <div className="mono" style={{ fontSize: 12, color: "#8AB4CC", lineHeight: 1.5 }}>
+                  FC 0.4 ppm · target 1.0–3.0 ppm<br />
+                  Pool classified UNSAFE. Restrict bathing.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }} className="hide-sm">
+            <Icon name="chevron-right" size={28} color="#4FC3F7" />
+          </div>
+
+          <div className="card anim-in" style={{ background: "rgba(79,195,247,.05)", borderColor: "rgba(79,195,247,.3)", padding: 20, animationDelay: ".15s" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <Label accent>AI Protocol · Active</Label>
+              <span className="mono" style={{ fontSize: 10, color: "#4A6A80" }}>T+00:11</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[
+                { t: "Dose 68g granular chlorine", meta: "Inventory: 10 kg · OK" },
+                { t: "Run filter 8h continuous", meta: "Pump 72 kPa · nominal" },
+                { t: "Re-test at 14:00", meta: "Auto-queued in shift plan" },
+              ].map((it, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderTop: i ? "1px solid #1E3A5F" : "none" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: 4, background: "rgba(79,195,247,.15)", border: "1px solid rgba(79,195,247,.4)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                    <span className="mono" style={{ fontSize: 9, color: "#4FC3F7" }}>{i + 1}</span>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{it.t}</div>
+                    <div className="mono" style={{ fontSize: 10, color: "#4A6A80", marginTop: 2 }}>{it.meta}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 40, display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary"><Icon name="log-in" size={12} /> Field Access</button>
+          <button className="btn btn-ghost"><Icon name="book-open" size={12} /> Read The Spec</button>
+        </div>
+      </div>
+      <style>{`
+        @media (max-width:720px){
+          .split-grid{grid-template-columns:minmax(0,1fr) !important;}
+        }
+      `}</style>
+    </section>
+  );
+}
+
+// ---------- HERO: Dashboard Screenshot ----------
+function HeroScreenshot({ tele }) {
+  return (
+    <section style={{ position: "relative", padding: "140px 0 40px", overflow: "hidden" }}>
+      <div className="grid-bg" style={{ position: "absolute", inset: 0, opacity: 0.4 }} />
+      <div className="container" style={{ position: "relative" }}>
+        <div style={{ textAlign: "center", maxWidth: 820, margin: "0 auto 48px" }} className="anim-in">
+          <Label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span className="dot pulse" style={{ background: "#4FC3F7" }} /> POOLSTATUS AI · V2.0
+          </Label>
+          <h1
+            style={{
+              fontSize: "clamp(40px, 6vw, 76px)",
+              lineHeight: 0.95,
+              fontWeight: 800,
+              letterSpacing: "-0.01em",
+              textTransform: "uppercase",
+              margin: "18px 0 18px",
+              textWrap: "balance",
+            }}
+          >
+            Shift-grade telemetry.<br />
+            <span style={{ color: "var(--acc,#4FC3F7)" }}>Field-grade UI.</span>
+          </h1>
+          <p style={{ color: "#8AB4CC", fontSize: 17, lineHeight: 1.55, margin: "0 auto", maxWidth: 620, textWrap: "pretty" }}>
+            Commercial pool operations, instrumented. Readings in under 40 seconds.
+            Protocols in under a minute. No guessing with the test strips.
+          </p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 28 }}>
+            <button className="btn btn-primary"><Icon name="log-in" size={12} /> Field Access</button>
+            <button className="btn btn-ghost"><Icon name="play" size={12} /> Watch Demo</button>
+          </div>
+        </div>
+
+        {/* Phone screenshot mock */}
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 40 }} className="anim-in">
+          <div
+            style={{
+              width: 340,
+              height: 680,
+              background: "#060E1A",
+              border: "8px solid #1E3A5F",
+              borderRadius: 40,
+              padding: 12,
+              boxShadow: "0 40px 80px rgba(0,0,0,.6), 0 20px 40px rgba(79,195,247,.15)",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ position: "absolute", top: 18, left: "50%", transform: "translateX(-50%)", width: 90, height: 22, background: "#060E1A", borderRadius: 12, zIndex: 10 }} />
+            <div style={{ paddingTop: 38, height: "100%", overflow: "hidden" }}>
+              <MiniDashboard tele={tele} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MiniDashboard({ tele }) {
+  return (
+    <div style={{ padding: "8px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Wordmark size={11} />
+        <Icon name="bell" size={14} color="#8AB4CC" />
+      </div>
+      <div
+        className="card"
+        style={{ background: "rgba(79,195,247,.04)", borderColor: "rgba(79,195,247,.3)", padding: 14 }}
+      >
+        <Label accent>LSI · BALANCED</Label>
+        <div className="mono" style={{ fontSize: 44, fontWeight: 700, color: "#4FC3F7", lineHeight: 1, marginTop: 6 }}>
+          +0.02
+        </div>
+        <div className="mono" style={{ fontSize: 9, color: "#8AB4CC", marginTop: 10, lineHeight: 1.4 }}>
+          Chemistry within nominal. No action required this shift.
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {[
+          { l: "FC", v: tele.fc.toFixed(1), u: "ppm", s: "ok" },
+          { l: "pH", v: tele.ph.toFixed(2), u: "", s: "ok" },
+          { l: "TA", v: Math.round(tele.ta), u: "ppm", s: "ok" },
+          { l: "TEMP", v: tele.temp.toFixed(0), u: "°C", s: "ok" },
+        ].map((m) => (
+          <div key={m.l} className="card" style={{ padding: 10, gap: 4, display: "flex", flexDirection: "column" }}>
+            <div className="lbl" style={{ fontSize: 8 }}>{m.l}</div>
+            <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>
+              {m.v}
+              <span style={{ fontSize: 8, color: "#4A6A80", marginLeft: 3 }}>{m.u}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button className="btn btn-primary" style={{ width: "100%", marginTop: 4 }}>
+        <Icon name="plus" size={10} /> Log Reading
+      </button>
+    </div>
+  );
+}
+
+// ---------- TICKER STRIP ----------
+function TickerStrip() {
+  const items = [
+    "FC 1.5 ppm", "pH 7.42", "TA 100 ppm", "CYA 40 ppm", "TEMP 26°C", "PRESSURE 72 kPa",
+    "LSI +0.02 · BALANCED", "FILTER 14 DAYS TO BACKWASH", "NEXT SHIFT 16:00", "14 UNITS ONLINE",
+  ];
+  const content = [...items, ...items];
+  return (
+    <div style={{ borderTop: "1px solid #1E3A5F", borderBottom: "1px solid #1E3A5F", padding: "14px 0", overflow: "hidden", background: "#0A1628" }}>
+      <div className="marquee-track">
+        {content.map((t, i) => (
+          <span key={i} className="mono" style={{ fontSize: 11, color: "#8AB4CC", letterSpacing: ".1em", padding: "0 24px", borderRight: "1px solid #1E3A5F" }}>
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- FEATURES ----------
+function Features() {
+  const items = [
+    { icon: "gauge", t: "LSI Saturation Analysis", d: "Langelier index computed live from seven chemistry inputs. Corrosive or scale-forming pools flagged before the deck etches.", m: "pH + TF + CF + AF − 12.1" },
+    { icon: "sparkles", t: "AI Protocols, Not Guesses", d: "Gemini-backed shift plans that weigh inventory, bather load, and filter state. With Claude and OpenAI as fall-through.", m: "Median protocol time: 11s" },
+    { icon: "package", t: "Inventory That Closes The Loop", d: "Dosing recommendations check stock before they fire. 'Add 68g chlorine' only if 68g exists in the cage.", m: "Min-threshold alerts built in" },
+    { icon: "wrench", t: "Equipment Service Scheduler", d: "Pump pressure deltas auto-queue backwash. GFCI and strainer jobs ladder into your shift calendar.", m: "Recurrence: D / W / M / 6M" },
+    { icon: "mic", t: "Voice-First Field Entry", d: "Read numbers aloud, wet-gloved. Speech captured, parsed, and committed without unlocking a keyboard.", m: "'Chlorine one point five'" },
+    { icon: "printer", t: "End-Of-Shift Photo & PDF", d: "Every shift ends with a timestamped photo of the pool deck, auto-bound to the reading and exportable for inspection.", m: "Mandatory · auditor-ready" },
+  ];
+  return (
+    <section style={{ padding: "96px 0", position: "relative" }}>
+      <div className="container">
+        <div style={{ maxWidth: 680, marginBottom: 56 }}>
+          <Label>§01 · Capabilities</Label>
+          <h2
+            style={{
+              fontSize: "clamp(28px, 3.6vw, 44px)",
+              lineHeight: 1,
+              fontWeight: 800,
+              letterSpacing: "-0.01em",
+              textTransform: "uppercase",
+              margin: "14px 0 14px",
+              textWrap: "balance",
+            }}
+          >
+            Every shift,<br />accounted for.
+          </h2>
+          <p style={{ color: "#8AB4CC", fontSize: 16, lineHeight: 1.55, margin: 0, maxWidth: 560 }}>
+            Six instruments your crew actually uses. Nothing you don't.
+          </p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+          {items.map((it, i) => (
+            <div
+              key={it.t}
+              className="card"
+              style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, minHeight: 240 }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(79,195,247,.08)", border: "1px solid rgba(79,195,247,.2)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon name={it.icon} size={16} color="#4FC3F7" />
+                </div>
+                <span className="mono" style={{ fontSize: 10, color: "#4A6A80" }}>0{i + 1}</span>
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" }}>
+                {it.t}
+              </div>
+              <div style={{ color: "#8AB4CC", fontSize: 13, lineHeight: 1.55, textWrap: "pretty", flex: 1 }}>{it.d}</div>
+              <div style={{ borderTop: "1px solid #1E3A5F", paddingTop: 10 }}>
+                <span className="mono" style={{ fontSize: 10, color: "#4A6A80", letterSpacing: ".08em" }}>
+                  {it.m}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- LIVE TELEMETRY SECTION ----------
+function LiveTelemetry({ tele }) {
+  return (
+    <section style={{ padding: "96px 0", position: "relative", background: "#0A1628", borderTop: "1px solid #1E3A5F", borderBottom: "1px solid #1E3A5F" }}>
+      <div className="container">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 40, flexWrap: "wrap", gap: 16 }}>
+          <div>
+            <Label>§02 · Live Telemetry</Label>
+            <h2 style={{ fontSize: "clamp(28px, 3.6vw, 44px)", lineHeight: 1, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase", margin: "14px 0 14px", textWrap: "balance" }}>
+              What the deck sees,<br />you see.
+            </h2>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span className="dot pulse" style={{ background: "#10B981" }} />
+            <span className="mono" style={{ fontSize: 11, color: "#8AB4CC", letterSpacing: ".1em" }}>
+              STREAMING · 1.2s
+            </span>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+          <MetricTile label="Free Chlorine" value={tele.fc} decimals={1} unit="ppm" ideal="1.0–3.0" status={tele.fc < 1 ? "action" : tele.fc > 3 ? "watch" : "ok"} trend={tele.fcHist} />
+          <MetricTile label="pH" value={tele.ph} decimals={2} unit="" ideal="7.2–7.6" status={tele.ph < 7.2 || tele.ph > 7.6 ? "watch" : "ok"} trend={tele.phHist} />
+          <MetricTile label="Total Alkalinity" value={tele.ta} decimals={0} unit="ppm" ideal="80–120" status="ok" trend={tele.taHist} />
+          <MetricTile label="Water Temp" value={tele.temp} decimals={1} unit="°C" ideal="24–30" status="ok" trend={tele.tempHist} />
+          <MetricTile label="Filter Pressure" value={tele.pr} decimals={0} unit="kPa" ideal="55–140" status="ok" trend={tele.prHist} />
+          <MetricTile label="Cyanuric Acid" value={tele.cya} decimals={0} unit="ppm" ideal="30–50" status="ok" trend={tele.cyaHist} />
+        </div>
+        <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <Coords />
+          <span className="mono" style={{ fontSize: 10, color: "#4A6A80", letterSpacing: ".1em" }}>
+            LAST TICK · {new Date(tele.ts).toLocaleTimeString("en-US", { hour12: false })}
+          </span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- HOW IT WORKS ----------
+function HowItWorks() {
+  const steps = [
+    { n: "01", t: "Read", d: "Tap or speak the seven values. 40 seconds. Test kit, meter, or probe — doesn't matter." },
+    { n: "02", t: "Analyse", d: "LSI + AI protocol generated the instant your last number hits the buffer." },
+    { n: "03", t: "Act", d: "Dose from the scripted shift plan. Inventory ticks down as you go." },
+    { n: "04", t: "Commit", d: "End-of-shift photo. PDF export. Signed, timestamped, auditor-ready." },
+  ];
+  return (
+    <section style={{ padding: "96px 0" }}>
+      <div className="container">
+        <div style={{ maxWidth: 680, marginBottom: 56 }}>
+          <Label>§03 · Shift Loop</Label>
+          <h2 style={{ fontSize: "clamp(28px, 3.6vw, 44px)", lineHeight: 1, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase", margin: "14px 0 14px" }}>
+            Four steps, one shift.
+          </h2>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 0, border: "1px solid #1E3A5F", borderRadius: 12, overflow: "hidden" }}>
+          {steps.map((s, i) => (
+            <div
+              key={s.n}
+              style={{
+                padding: 28,
+                borderRight: i < steps.length - 1 ? "1px solid #1E3A5F" : "none",
+                background: "#0D1F38",
+                position: "relative",
+                minHeight: 220,
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              <div className="mono" style={{ fontSize: 36, color: "rgba(79,195,247,.3)", lineHeight: 1, fontWeight: 700 }}>
+                {s.n}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em" }}>
+                {s.t}
+              </div>
+              <div style={{ color: "#8AB4CC", fontSize: 13, lineHeight: 1.55, textWrap: "pretty" }}>{s.d}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- TESTIMONIAL / PROOF ----------
+function Proof() {
+  return (
+    <section style={{ padding: "96px 0", position: "relative" }}>
+      <div className="container">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 48 }}>
+          {[
+            { k: "FC 1.5", l: "Median free chlorine across fleet" },
+            { k: "11s", l: "Protocol generation time" },
+            { k: "0.3%", l: "Reading rejection rate after voice capture" },
+            { k: "14 UNITS", l: "Live across three counties" },
+          ].map((s) => (
+            <div key={s.l} className="card" style={{ padding: 24 }}>
+              <div className="mono" style={{ fontSize: 32, fontWeight: 700, color: "#4FC3F7", letterSpacing: "-0.01em" }}>
+                {s.k}
+              </div>
+              <div className="lbl" style={{ marginTop: 8 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+        <div
+          className="card"
+          style={{ padding: 40, background: "rgba(79,195,247,.03)", borderColor: "rgba(79,195,247,.25)", display: "grid", gridTemplateColumns: "auto 1fr", gap: 24, alignItems: "start" }}
+        >
+          <div style={{ width: 56, height: 56, borderRadius: 12, background: "#1E3A5F", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon name="user" size={24} color="#4FC3F7" />
+          </div>
+          <div>
+            <div style={{ fontSize: 20, lineHeight: 1.4, textWrap: "pretty", color: "#fff", fontWeight: 500 }}>
+              "We stopped printing test logs. PoolStatus logs itself, signs itself, and hands the inspector a PDF before they ask. My shift starts and ends with one phone."
+            </div>
+            <div style={{ marginTop: 18, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <span className="mono" style={{ fontSize: 12, color: "#fff", fontWeight: 700 }}>M. Calderón</span>
+              <span style={{ width: 3, height: 3, borderRadius: "50%", background: "#4A6A80" }} />
+              <span className="lbl">Head Operator · Marina Aquatic Center</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- PRICING ----------
+function Pricing() {
+  const [annual, setAnnual] = useStateS(true);
+  const tiers = [
+    {
+      name: "Shift",
+      price: annual ? 29 : 36,
+      tag: "Single operator",
+      items: ["1 active unit", "LSI + AI protocols", "Voice capture", "PDF export"],
+      cta: "Start Trial",
+      featured: false,
+    },
+    {
+      name: "Fleet",
+      price: annual ? 89 : 109,
+      tag: "Multi-site crews",
+      items: ["Up to 14 units", "Inventory & equipment scheduler", "Shift photos + auditor PDF", "Team roles, RBAC", "Integrations: Firebase, Gemini"],
+      cta: "Field Access",
+      featured: true,
+    },
+    {
+      name: "Municipal",
+      price: "Custom",
+      tag: "Regulated facilities",
+      items: ["Unlimited units", "Compliance exports (EN 15288)", "On-prem LLM fallback", "Dedicated deployment lead", "99.9% SLA"],
+      cta: "Talk To Ops",
+      featured: false,
+    },
+  ];
+  return (
+    <section style={{ padding: "96px 0", background: "#0A1628", borderTop: "1px solid #1E3A5F" }}>
+      <div className="container">
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <Label>§04 · Pricing</Label>
+          <h2 style={{ fontSize: "clamp(28px, 3.6vw, 44px)", lineHeight: 1, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase", margin: "14px 0 18px" }}>
+            Priced per unit.<br />Not per feature.
+          </h2>
+          <div style={{ display: "inline-flex", padding: 4, border: "1px solid #1E3A5F", borderRadius: 999, background: "#0D1F38" }}>
+            {[
+              { k: true, l: "Annual · -20%" },
+              { k: false, l: "Monthly" },
+            ].map((o) => (
+              <button
+                key={String(o.k)}
+                onClick={() => setAnnual(o.k)}
+                className="lbl"
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 999,
+                  background: annual === o.k ? "#4FC3F7" : "transparent",
+                  color: annual === o.k ? "#060E1A" : "#8AB4CC",
+                  border: 0,
+                  cursor: "pointer",
+                  transition: "all .15s",
+                }}
+              >
+                {o.l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+          {tiers.map((t) => (
+            <div
+              key={t.name}
+              className="card"
+              style={{
+                padding: 28,
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+                background: t.featured ? "rgba(79,195,247,.04)" : "#0D1F38",
+                borderColor: t.featured ? "rgba(79,195,247,.4)" : "#1E3A5F",
+                position: "relative",
+              }}
+            >
+              {t.featured && (
+                <div style={{ position: "absolute", top: -10, right: 20 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".2em", background: "#4FC3F7", color: "#060E1A", padding: "4px 10px", borderRadius: 4, textTransform: "uppercase" }}>
+                    Recommended
+                  </span>
+                </div>
+              )}
+              <div>
+                <Label accent={t.featured}>{t.name}</Label>
+                <div style={{ fontSize: 11, color: "#8AB4CC", marginTop: 4 }}>{t.tag}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                {typeof t.price === "number" ? (
+                  <>
+                    <span className="mono" style={{ fontSize: 40, fontWeight: 700, lineHeight: 1 }}>${t.price}</span>
+                    <span className="lbl">/ unit / mo</span>
+                  </>
+                ) : (
+                  <span className="mono" style={{ fontSize: 36, fontWeight: 700, lineHeight: 1 }}>{t.price}</span>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid #1E3A5F", paddingTop: 16 }}>
+                {t.items.map((it) => (
+                  <div key={it} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, color: "#8AB4CC" }}>
+                    <Icon name="check" size={14} color="#4FC3F7" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <span>{it}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                className={"btn " + (t.featured ? "btn-primary" : "btn-ghost")}
+                style={{ marginTop: 4, width: "100%" }}
+              >
+                {t.cta} <Icon name="chevron-right" size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- CTA / FOOTER ----------
+function CtaFooter() {
+  return (
+    <section style={{ padding: "96px 0 48px" }}>
+      <div className="container">
+        <div
+          className="card"
+          style={{
+            padding: "56px 40px",
+            textAlign: "center",
+            background: "radial-gradient(ellipse at top, rgba(79,195,247,.08), transparent 70%), #0D1F38",
+            borderColor: "rgba(79,195,247,.3)",
+            position: "relative",
+            overflow: "hidden",
+          }}
+        >
+          <WaveBackdrop opacity={0.1} />
+          <div style={{ position: "relative" }}>
+            <Label>§ END OF SHIFT</Label>
+            <h2
+              style={{
+                fontSize: "clamp(32px, 4.4vw, 56px)",
+                lineHeight: 0.98,
+                fontWeight: 800,
+                letterSpacing: "-0.01em",
+                textTransform: "uppercase",
+                margin: "14px auto 18px",
+                textWrap: "balance",
+                maxWidth: 720,
+              }}
+            >
+              Put the clipboard down.<br />
+              <span style={{ color: "var(--acc,#4FC3F7)" }}>Pick up the console.</span>
+            </h2>
+            <p style={{ color: "#8AB4CC", fontSize: 15, margin: "0 auto 32px", maxWidth: 520, lineHeight: 1.55, textWrap: "pretty" }}>
+              Deploys on one pool, scales to a fleet. Free for your first 14 days, no card,
+              no unit commitment.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="btn btn-primary"><Icon name="log-in" size={12} /> Field Access</button>
+              <button className="btn btn-ghost"><Icon name="calendar" size={12} /> Book Deployment Call</button>
+            </div>
+          </div>
+        </div>
+
+        <footer style={{ marginTop: 64, borderTop: "1px solid #1E3A5F", paddingTop: 32, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <Wordmark size={13} />
+            <span className="mono" style={{ fontSize: 10, color: "#4A6A80" }}>v2.0.4 · BUILD #184</span>
+          </div>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            {["Docs", "API", "Compliance", "Status", "Privacy"].map((l) => (
+              <a key={l} href="#" className="lbl" style={{ color: "#8AB4CC" }}>{l}</a>
+            ))}
+          </div>
+        </footer>
+      </div>
+    </section>
+  );
+}
+
+// Export
+Object.assign(window, {
+  Nav, HeroMetric, HeroSplit, HeroScreenshot, TickerStrip,
+  Features, LiveTelemetry, HowItWorks, Proof, Pricing, CtaFooter,
+});
+
+// App — wires sections, simulates live telemetry, exposes Tweaks
+const { useState: useStateA, useEffect: useEffectA, useMemo: useMemoA } = React;
+
+const DEFAULTS = /*EDITMODE-BEGIN*/{
+  "hero": "metric",
+  "accent": "#4FC3F7",
+  "showLiveTelemetry": true,
+  "density": "comfortable"
+}/*EDITMODE-END*/;
+
+function clampHist(arr, v) {
+  const next = [...arr.slice(-11), v];
+  return next;
+}
+
+function useTelemetry() {
+  const [tele, setTele] = useStateA(() => ({
+    fc: 1.5, ph: 7.42, ta: 100, temp: 26, pr: 72, cya: 40, ts: Date.now(),
+    fcHist: [1.2, 1.3, 1.1, 1.4, 1.5, 1.4, 1.5, 1.6, 1.5],
+    phHist: [7.5, 7.48, 7.46, 7.44, 7.42, 7.44, 7.42, 7.4, 7.42],
+    taHist: [98, 100, 99, 101, 100, 102, 100, 99, 100],
+    tempHist: [25.5, 25.8, 26, 26.1, 26.2, 26, 26.1, 26, 26],
+    prHist: [70, 71, 72, 72, 71, 73, 72, 72, 72],
+    cyaHist: [40, 40, 40, 40, 40, 40, 40, 40, 40],
+  }));
+  useEffectA(() => {
+    const id = setInterval(() => {
+      setTele((t) => {
+        const jitter = (c, amp, lo, hi) => {
+          const n = c + (Math.random() - 0.5) * amp;
+          return Math.max(lo, Math.min(hi, n));
+        };
+        const fc = jitter(t.fc, 0.2, 1.1, 1.9);
+        const ph = jitter(t.ph, 0.04, 7.35, 7.5);
+        const ta = jitter(t.ta, 2, 95, 105);
+        const temp = jitter(t.temp, 0.2, 25.5, 26.5);
+        const pr = jitter(t.pr, 1.5, 68, 76);
+        const cya = jitter(t.cya, 0.4, 39, 41);
+        return {
+          fc, ph, ta, temp, pr, cya, ts: Date.now(),
+          fcHist: clampHist(t.fcHist, fc),
+          phHist: clampHist(t.phHist, ph),
+          taHist: clampHist(t.taHist, ta),
+          tempHist: clampHist(t.tempHist, temp),
+          prHist: clampHist(t.prHist, pr),
+          cyaHist: clampHist(t.cyaHist, cya),
+        };
+      });
+    }, 1600);
+    return () => clearInterval(id);
+  }, []);
+  return tele;
+}
+
+function TweaksPanel({ state, setState, visible }) {
+  if (!visible) return null;
+  const heroOptions = [
+    { k: "metric", l: "LSI Metric" },
+    { k: "split", l: "Alert → Protocol" },
+    { k: "screenshot", l: "Dashboard Mock" },
+  ];
+  const accentOptions = [
+    { k: "#4FC3F7", l: "Cyan" },
+    { k: "#10B981", l: "Emerald" },
+    { k: "#F59E0B", l: "Amber" },
+  ];
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 20,
+        right: 20,
+        zIndex: 100,
+        width: 260,
+        background: "rgba(13,31,56,.96)",
+        backdropFilter: "blur(10px)",
+        border: "1px solid #1E3A5F",
+        borderRadius: 12,
+        boxShadow: "0 20px 40px rgba(0,0,0,.6)",
+        padding: 16,
+        color: "#fff",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <span className="lbl" style={{ color: "#4FC3F7" }}>Tweaks</span>
+        <span className="mono" style={{ fontSize: 9, color: "#4A6A80" }}>LIVE</span>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="lbl" style={{ marginBottom: 8 }}>Hero Style</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {heroOptions.map((o) => (
+            <button
+              key={o.k}
+              onClick={() => setState({ ...state, hero: o.k })}
+              className="lbl"
+              style={{
+                textAlign: "left",
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: "1px solid " + (state.hero === o.k ? "rgba(79,195,247,.5)" : "#1E3A5F"),
+                background: state.hero === o.k ? "rgba(79,195,247,.1)" : "transparent",
+                color: state.hero === o.k ? "#4FC3F7" : "#8AB4CC",
+                cursor: "pointer",
+                fontSize: 10,
+              }}
+            >
+              {o.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="lbl" style={{ marginBottom: 8 }}>Accent</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {accentOptions.map((o) => (
+            <button
+              key={o.k}
+              onClick={() => setState({ ...state, accent: o.k })}
+              style={{
+                flex: 1,
+                padding: "8px 0",
+                borderRadius: 6,
+                border: "1px solid " + (state.accent === o.k ? o.k : "#1E3A5F"),
+                background: state.accent === o.k ? o.k + "22" : "transparent",
+                color: state.accent === o.k ? "#fff" : "#8AB4CC",
+                cursor: "pointer",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: ".2em",
+                textTransform: "uppercase",
+              }}
+            >
+              <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: o.k, marginRight: 6, verticalAlign: "-1px" }} />
+              {o.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="lbl" style={{ marginBottom: 8 }}>Live Telemetry Band</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={state.showLiveTelemetry}
+            onChange={(e) => setState({ ...state, showLiveTelemetry: e.target.checked })}
+            style={{ accentColor: "#4FC3F7" }}
+          />
+          <span style={{ fontSize: 11, color: "#8AB4CC" }}>Show streaming telemetry section</span>
+        </label>
+      </div>
+
+      <div>
+        <div className="lbl" style={{ marginBottom: 8 }}>Density</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {["compact", "comfortable"].map((d) => (
+            <button
+              key={d}
+              onClick={() => setState({ ...state, density: d })}
+              className="lbl"
+              style={{
+                flex: 1,
+                padding: "8px 0",
+                borderRadius: 6,
+                border: "1px solid " + (state.density === d ? "rgba(79,195,247,.5)" : "#1E3A5F"),
+                background: state.density === d ? "rgba(79,195,247,.1)" : "transparent",
+                color: state.density === d ? "#4FC3F7" : "#8AB4CC",
+                cursor: "pointer",
+                fontSize: 9,
+              }}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [state, setStateRaw] = useStateA(DEFAULTS);
+  const [tweaksVisible, setTweaksVisible] = useStateA(false);
+  const tele = useTelemetry();
+
+  // Edit mode wiring
+  useEffectA(() => {
+    const handler = (e) => {
+      if (!e.data || typeof e.data !== "object") return;
+      if (e.data.type === "__activate_edit_mode") setTweaksVisible(true);
+      if (e.data.type === "__deactivate_edit_mode") setTweaksVisible(false);
+    };
+    window.addEventListener("message", handler);
+    try { window.parent.postMessage({ type: "__edit_mode_available" }, "*"); } catch {}
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
+  const setState = (next) => {
+    setStateRaw(next);
+    const edits = {};
+    Object.keys(next).forEach((k) => { if (next[k] !== state[k]) edits[k] = next[k]; });
+    try { window.parent.postMessage({ type: "__edit_mode_set_keys", edits: next }, "*"); } catch {}
+  };
+
+  // Apply accent as CSS var
+  useEffectA(() => {
+    document.documentElement.style.setProperty("--acc", state.accent);
+  }, [state.accent]);
+
+  const Hero = state.hero === "split" ? HeroSplit : state.hero === "screenshot" ? HeroScreenshot : HeroMetric;
+
+  const densityScale = state.density === "compact" ? 0.86 : 1;
+
+  return (
+    <div style={{ fontSize: `${densityScale * 100}%` }}>
+      <Nav />
+      <Hero tele={tele} />
+      <TickerStrip />
+      <Features />
+      {state.showLiveTelemetry && <LiveTelemetry tele={tele} />}
+      <HowItWorks />
+      <Proof />
+      <Pricing />
+      <CtaFooter />
+      <TweaksPanel state={state} setState={setState} visible={tweaksVisible} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+</body>
+</html>

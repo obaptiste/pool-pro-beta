@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoolStatus — Logo Exploration</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap">
+<style>
+  @font-face {
+    font-family: "Exo 2";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("design/fonts/Exo2-VariableFont_wght.ttf") format("truetype");
+  }
+  html,body{margin:0;font-family:"Exo 2",sans-serif;-webkit-font-smoothing:antialiased}
+  *{box-sizing:border-box}
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+// --- Inlined design-canvas helpers (avoid async babel-src race) ---
+const DC = {
+  bg: '#f0eee9', grid: 'rgba(0,0,0,0.06)',
+  label: 'rgba(60,50,40,0.7)', title: 'rgba(40,30,20,0.85)', subtitle: 'rgba(60,50,40,0.6)',
+  postitBg: '#fef4a8', postitText: '#5a4a2a',
+  font: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+};
+function DesignCanvas({ children, minScale = 0.1, maxScale = 8, style = {} }) {
+  const vpRef = React.useRef(null);
+  const worldRef = React.useRef(null);
+  const tf = React.useRef({ x: 0, y: 0, scale: 1 });
+  const apply = React.useCallback(() => {
+    const { x, y, scale } = tf.current;
+    const el = worldRef.current;
+    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  }, []);
+  React.useEffect(() => {
+    const vp = vpRef.current; if (!vp) return;
+    const zoomAt = (cx, cy, factor) => {
+      const r = vp.getBoundingClientRect();
+      const px = cx - r.left, py = cy - r.top;
+      const t = tf.current;
+      const next = Math.min(maxScale, Math.max(minScale, t.scale * factor));
+      const k = next / t.scale;
+      t.x = px - (px - t.x) * k; t.y = py - (py - t.y) * k; t.scale = next; apply();
+    };
+    const isMouseWheel = (e) => e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 40);
+    let isGesturing = false;
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (isGesturing) return;
+      if (e.ctrlKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+      else if (isMouseWheel(e)) zoomAt(e.clientX, e.clientY, Math.exp(-Math.sign(e.deltaY) * 0.18));
+      else { tf.current.x -= e.deltaX; tf.current.y -= e.deltaY; apply(); }
+    };
+    let gsBase = 1;
+    const onGestureStart = (e) => { e.preventDefault(); isGesturing = true; gsBase = tf.current.scale; };
+    const onGestureChange = (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, (gsBase * e.scale) / tf.current.scale); };
+    const onGestureEnd = (e) => { e.preventDefault(); isGesturing = false; };
+    let drag = null;
+    const onPointerDown = (e) => {
+      const onBg = e.target === vp || e.target === worldRef.current;
+      if (!(e.button === 1 || (e.button === 0 && onBg))) return;
+      e.preventDefault(); vp.setPointerCapture(e.pointerId);
+      drag = { id: e.pointerId, lx: e.clientX, ly: e.clientY }; vp.style.cursor = 'grabbing';
+    };
+    const onPointerMove = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      tf.current.x += e.clientX - drag.lx; tf.current.y += e.clientY - drag.ly;
+      drag.lx = e.clientX; drag.ly = e.clientY; apply();
+    };
+    const onPointerUp = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      vp.releasePointerCapture(e.pointerId); drag = null; vp.style.cursor = '';
+    };
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    vp.addEventListener('gesturestart', onGestureStart, { passive: false });
+    vp.addEventListener('gesturechange', onGestureChange, { passive: false });
+    vp.addEventListener('gestureend', onGestureEnd, { passive: false });
+    vp.addEventListener('pointerdown', onPointerDown);
+    vp.addEventListener('pointermove', onPointerMove);
+    vp.addEventListener('pointerup', onPointerUp);
+    vp.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('gesturestart', onGestureStart);
+      vp.removeEventListener('gesturechange', onGestureChange);
+      vp.removeEventListener('gestureend', onGestureEnd);
+      vp.removeEventListener('pointerdown', onPointerDown);
+      vp.removeEventListener('pointermove', onPointerMove);
+      vp.removeEventListener('pointerup', onPointerUp);
+      vp.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [apply, minScale, maxScale]);
+  const gridSvg = `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M120 0H0v120' fill='none' stroke='${encodeURIComponent(DC.grid)}' stroke-width='1'/%3E%3C/svg%3E")`;
+  return (
+    <div ref={vpRef} style={{ height: '100vh', width: '100vw', background: DC.bg, overflow: 'hidden', overscrollBehavior: 'none', touchAction: 'none', position: 'relative', fontFamily: DC.font, boxSizing: 'border-box', ...style }}>
+      <div ref={worldRef} style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0', willChange: 'transform', width: 'max-content', minWidth: '100%', minHeight: '100%', padding: '60px 0 80px', backgroundImage: gridSvg, backgroundSize: '120px 120px' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function DCSection({ title, subtitle, children, gap = 48 }) {
+  return (
+    <div style={{ marginBottom: 80, position: 'relative' }}>
+      <div style={{ padding: '0 60px 36px' }}>
+        <div style={{ fontSize: 22, fontWeight: 600, color: DC.title, letterSpacing: -0.3, marginBottom: 4 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 14, fontWeight: 400, color: DC.subtitle }}>{subtitle}</div>}
+      </div>
+      <div style={{ display: 'flex', gap, padding: '0 60px', alignItems: 'flex-start', width: 'max-content' }}>{children}</div>
+    </div>
+  );
+}
+function DCArtboard({ label, children, width, height, style = {} }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      {label && <div style={{ position: 'absolute', bottom: '100%', left: 0, paddingBottom: 8, fontSize: 12, fontWeight: 500, color: DC.label, whiteSpace: 'nowrap' }}>{label}</div>}
+      <div style={{ borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)', overflow: 'hidden', width, height, background: '#fff', ...style }}>{children}</div>
+    </div>
+  );
+}
+function DCPostIt({ children, top, left, right, bottom, rotate = -2, width = 180 }) {
+  return (
+    <div style={{ position: 'absolute', top, left, right, bottom, width, background: DC.postitBg, padding: '14px 16px', fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive', fontSize: 14, lineHeight: 1.4, color: DC.postitText, boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)', transform: `rotate(${rotate}deg)`, zIndex: 5 }}>{children}</div>
+  );
+}
+
+const ACC = "#4FC3F7";
+const BG = "#060E1A";
+const INK = "#fff";
+const DIM = "#8AB4CC";
+
+// ─── 5 marks as React components (same as SVG files, inlined for color variants) ───
+
+function Mark01Ripple({ bg = BG, fg = ACC, counter = BG, r = 14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="34" r="22" fill="none" stroke={fg} strokeWidth="1.2" opacity="0.25"/>
+      <circle cx="32" cy="34" r="15" fill="none" stroke={fg} strokeWidth="1.4" opacity="0.5"/>
+      <circle cx="32" cy="34" r="8" fill="none" stroke={fg} strokeWidth="1.6" opacity="0.85"/>
+      <path d="M32 20 C 28 27, 26 30, 26 33 A 6 6 0 0 0 38 33 C 38 30, 36 27, 32 20 Z" fill={fg}/>
+      <circle cx="32" cy="34" r="1.8" fill={counter}/>
+    </svg>
+  );
+}
+
+function Mark02Reticle({ bg = BG, fg = ACC, r = 14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="32" r="20" fill="none" stroke={fg} strokeWidth="1.2" opacity="0.35"/>
+      <circle cx="32" cy="32" r="13" fill="none" stroke={fg} strokeWidth="1.4" opacity="0.6"/>
+      <line x1="32" y1="6" x2="32" y2="14" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="32" y1="50" x2="32" y2="58" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="6" y1="32" x2="14" y2="32" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <line x1="50" y1="32" x2="58" y2="32" stroke={fg} strokeWidth="1.6" strokeLinecap="round"/>
+      <path d="M20 34 Q 24 28, 28 34 T 36 34 T 44 34" fill="none" stroke={fg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="32" cy="32" r="2.5" fill={fg}/>
+    </svg>
+  );
+}
+
+function Mark03Hex({ bg = BG, fg = ACC, r = 14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <path d="M32 8 L 54 20 L 54 44 L 32 56 L 10 44 L 10 20 Z" fill="none" stroke={fg} strokeWidth="1.6" strokeLinejoin="round" opacity="0.85"/>
+      <path d="M14 34 Q 20 30, 26 34 T 38 34 T 50 34" fill="none" stroke={fg} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M14 34 Q 20 30, 26 34 T 38 34 T 50 34 L 50 46 L 32 56 L 14 46 Z" fill={fg} opacity="0.15"/>
+      <circle cx="32" cy="20" r="2" fill={fg}/>
+    </svg>
+  );
+}
+
+function Mark04Dial({ bg = BG, fg = ACC, track = "#1E3A5F", hub = BG, r = 14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <path d="M 12 44 A 20 20 0 1 1 52 44" fill="none" stroke={track} strokeWidth="3" strokeLinecap="round"/>
+      <path d="M 12 44 A 20 20 0 0 1 42.9 14.4" fill="none" stroke={fg} strokeWidth="3" strokeLinecap="round"/>
+      <g stroke={fg} strokeWidth="1.4" strokeLinecap="round" opacity="0.6">
+        <line x1="10" y1="38" x2="14" y2="38.5"/>
+        <line x1="20" y1="18" x2="22.5" y2="21"/>
+        <line x1="32" y1="10" x2="32" y2="14"/>
+        <line x1="44" y1="18" x2="41.5" y2="21"/>
+        <line x1="54" y1="38" x2="50" y2="38.5"/>
+      </g>
+      <line x1="32" y1="44" x2="42" y2="22" stroke={fg} strokeWidth="2.2" strokeLinecap="round"/>
+      <circle cx="32" cy="44" r="3" fill={fg}/>
+      <circle cx="32" cy="44" r="1.3" fill={hub}/>
+    </svg>
+  );
+}
+
+function Mark05Monogram({ bg = BG, fg = ACC, r = 14 }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%">
+      <rect width="64" height="64" rx={r} fill={bg}/>
+      <circle cx="32" cy="32" r="22" fill="none" stroke={fg} strokeWidth="1.4" opacity="0.4"/>
+      <g stroke={fg} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none">
+        <line x1="22" y1="18" x2="22" y2="46"/>
+        <path d="M22 20 Q 30 16, 34 22 Q 40 28, 34 32 Q 28 34, 22 32"/>
+      </g>
+      <circle cx="22" cy="46" r="2.2" fill={fg}/>
+      <path d="M14 50 Q 18 48, 22 50 T 30 50 T 38 50 T 46 50 T 50 50" fill="none" stroke={fg} strokeWidth="1.2" strokeLinecap="round" opacity="0.55"/>
+    </svg>
+  );
+}
+
+const MARKS = [
+  { id: "01", name: "Ripple", sub: "Concentric propagation + droplet core", Comp: Mark01Ripple },
+  { id: "02", name: "Reticle", sub: "Telemetry crosshair + waveform lock", Comp: Mark02Reticle },
+  { id: "03", name: "Hex", sub: "Geometric vessel with waterline fill", Comp: Mark03Hex },
+  { id: "04", name: "Saturation Dial", sub: "Industrial gauge at 60% read", Comp: Mark04Dial },
+  { id: "05", name: "P-Wave", sub: "Monogram P as stacked waveform", Comp: Mark05Monogram },
+];
+
+// ─── Wordmark lockup ───
+function Wordmark({ size = 22, color = INK, accent = ACC }) {
+  return (
+    <div style={{
+      fontFamily: '"Exo 2", sans-serif',
+      fontWeight: 800,
+      fontSize: size,
+      letterSpacing: ".18em",
+      textTransform: "uppercase",
+      color,
+      lineHeight: 1,
+      whiteSpace: "nowrap",
+    }}>
+      Pool<span style={{ color: accent }}>Status</span>
+    </div>
+  );
+}
+
+// ─── Artboard content frames ───
+
+function ArtboardMark({ Comp, bg = BG }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+      <div style={{ width: 140, height: 140 }}><Comp /></div>
+    </div>
+  );
+}
+
+function ArtboardHorizontal({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: BG, display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: 32 }}>
+      <div style={{ width: 54, height: 54, flexShrink: 0 }}><Comp /></div>
+      <Wordmark size={22} />
+    </div>
+  );
+}
+
+function ArtboardStacked({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: BG, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 28 }}>
+      <div style={{ width: 72, height: 72 }}><Comp /></div>
+      <Wordmark size={16} />
+    </div>
+  );
+}
+
+function ArtboardMono({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+      <div style={{ width: 140, height: 140 }}>
+        <Comp bg="#fff" fg="#060E1A" counter="#fff" track="rgba(6,14,26,.15)" hub="#fff" />
+      </div>
+    </div>
+  );
+}
+
+function ArtboardInverse({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: 32 }}>
+      <div style={{ width: 54, height: 54, flexShrink: 0 }}>
+        <Comp bg="#fff" fg="#060E1A" counter="#fff" track="rgba(6,14,26,.15)" hub="#fff" />
+      </div>
+      <Wordmark size={22} color="#060E1A" accent="#060E1A" />
+    </div>
+  );
+}
+
+// Nav preview — how it looks on the real site
+function ArtboardNav({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: BG, padding: "0", position: "relative" }}>
+      <div style={{
+        background: "rgba(6,14,26,.82)",
+        backdropFilter: "blur(12px)",
+        borderBottom: "1px solid #1E3A5F",
+        padding: "14px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 26, height: 26 }}><Comp /></div>
+          <div style={{
+            fontFamily: '"Exo 2", sans-serif',
+            fontWeight: 800, fontSize: 15,
+            letterSpacing: ".18em", textTransform: "uppercase",
+            color: "#fff",
+          }}>Pool<span style={{ color: ACC }}>Status</span></div>
+        </div>
+        <div style={{ display: "flex", gap: 20 }}>
+          {["FIELD OPS", "TELEMETRY", "PRICING"].map(t => (
+            <span key={t} style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".2em", color: "#8AB4CC" }}>{t}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{ padding: "36px 24px", color: DIM, fontSize: 11, fontFamily: '"Space Mono", monospace', letterSpacing: ".1em" }}>
+        <div style={{ color: ACC, fontSize: 9, fontWeight: 700, letterSpacing: ".2em", marginBottom: 8 }}>■ LIVE · 14 UNITS</div>
+        IN-SITU NAV PREVIEW
+      </div>
+    </div>
+  );
+}
+
+// Favicon strip — tiny sizes
+function ArtboardFavicon({ Comp }) {
+  const sizes = [16, 24, 32, 48];
+  return (
+    <div style={{ width: "100%", height: "100%", background: "#f0eee9", display: "flex", alignItems: "center", justifyContent: "center", gap: 20, padding: 24 }}>
+      {sizes.map(s => (
+        <div key={s} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <div style={{ width: s, height: s }}><Comp /></div>
+          <span style={{ fontSize: 10, color: "#8a7a6a", fontFamily: '"Space Mono", monospace' }}>{s}px</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Mark on light surface (for docs/PDFs)
+function ArtboardLightCard({ Comp }) {
+  return (
+    <div style={{ width: "100%", height: "100%", background: "#0A1628", padding: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{
+        background: "#0D1F38",
+        border: "1px solid #1E3A5F",
+        borderRadius: 12,
+        padding: 24,
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        justifyContent: "space-between",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ width: 36, height: 36 }}><Comp /></div>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".2em", color: "#4A6A80" }}>APP ICON</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".2em", color: "#4A6A80", marginBottom: 6 }}>LSI · BALANCED</div>
+          <div style={{ fontFamily: '"Space Mono", monospace', fontSize: 32, fontWeight: 700, color: ACC, lineHeight: 1 }}>+0.02</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ───
+function App() {
+  return (
+    <DesignCanvas>
+      <div style={{ padding: "0 60px 24px" }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "rgba(40,30,20,0.85)", letterSpacing: -0.4, marginBottom: 6 }}>
+          PoolStatus — Logo Exploration
+        </div>
+        <div style={{ fontSize: 14, color: "rgba(60,50,40,0.6)", maxWidth: 720 }}>
+          Five directions × five applications. Dark-mode primary, monochrome, inverse, and in-product previews. Scroll horizontally per row. Individual SVG files in <code style={{ background: "rgba(0,0,0,.06)", padding: "2px 6px", borderRadius: 3, fontSize: 12 }}>design/assets/logo-0N-*.svg</code>.
+        </div>
+      </div>
+
+      <DCPostIt top={30} left={920} rotate={3} width={220}>
+        Telemetry voice wants the reticle or dial. Ripple is the safest; P-Wave is the most brand-able.
+      </DCPostIt>
+
+      {MARKS.map((m) => (
+        <DCSection
+          key={m.id}
+          title={`${m.id} · ${m.name}`}
+          subtitle={m.sub}
+          gap={32}
+        >
+          <DCArtboard label="Mark · primary (dark)" width={280} height={280}>
+            <ArtboardMark Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Horizontal lockup" width={340} height={180}>
+            <ArtboardHorizontal Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Stacked lockup" width={240} height={240}>
+            <ArtboardStacked Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Inverse (light surface)" width={340} height={180}>
+            <ArtboardInverse Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Monochrome (print)" width={240} height={240}>
+            <ArtboardMono Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="In-product nav" width={420} height={200}>
+            <ArtboardNav Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Favicon sweep" width={340} height={160}>
+            <ArtboardFavicon Comp={m.Comp} />
+          </DCArtboard>
+          <DCArtboard label="Dashboard tile" width={260} height={200}>
+            <ArtboardLightCard Comp={m.Comp} />
+          </DCArtboard>
+        </DCSection>
+      ))}
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
