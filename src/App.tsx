@@ -347,7 +347,7 @@ export default function App() {
 
   if (!isAuthReady) {
     return (
-      <div className="min-h-screen bg-[#060e1a] flex items-center justify-center">
+      <div className="min-h-screen bg-bg flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent"></div>
       </div>
     );
@@ -355,17 +355,17 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#060e1a] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-bg grid-bg flex items-center justify-center p-4">
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-[#0d1f38] p-8 rounded-3xl border border-border-dim text-center space-y-6"
+          className="max-w-md w-full panel p-8 rounded-3xl text-center space-y-6"
         >
           <div className="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto text-accent">
             <UserIcon size={40} />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+            <h1 className="wordmark text-2xl text-white">
               Pool<span className="text-accent">Status</span>
             </h1>
             <p className="text-ink-dim text-sm">Sign in to sync your pool data across devices securely.</p>
@@ -383,12 +383,12 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#060e1a] text-ink selection:bg-accent/30 selection:text-white">
+    <div className="min-h-screen bg-bg text-ink selection:bg-accent/30 selection:text-white">
       <OfflineIndicator isOnline={isOnline} lastSaved={lastSaved} />
       
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#060e1a]/80 backdrop-blur-md border-b border-border-dim px-4 py-3 flex items-center justify-between">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-bg/80 backdrop-blur-md border-b border-border-dim px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+          <h1 className="wordmark text-lg text-white">
             Pool<span className="text-accent">Status</span>
           </h1>
         </div>
@@ -418,7 +418,7 @@ export default function App() {
         </div>
       </nav>
 
-      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28">
+      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28 grid-bg">
         <Dashboard 
           readings={readings} 
           tasks={tasks}

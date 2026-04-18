@@ -16,7 +16,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
-      className="fixed inset-0 z-50 bg-[#060e1a] overflow-y-auto"
+      className="fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up"
     >
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
@@ -35,16 +35,16 @@ export default function History({ readings, onBack, onDelete }: Props) {
 
         <div className="space-y-4">
           {readings.length === 0 ? (
-            <div className="card bg-[#0a1628] border-border-dim p-12 text-center space-y-4">
+            <div className="card bg-bg/40 border-border-dim p-12 text-center space-y-4">
               <div className="text-4xl opacity-20">⬡</div>
               <p className="text-sm font-bold uppercase tracking-widest text-ink-muted">No Logs Found</p>
             </div>
           ) : (
             readings.map((reading) => (
-              <div key={reading.id} className="card bg-[#0d1f38] border-border-dim p-0 overflow-hidden group">
+              <div key={reading.id} className="card anim-scan bg-surface border-border-dim p-0 overflow-hidden group">
                 <div className="grid grid-cols-1 md:grid-cols-4">
                   {/* Date/Time Sidebar */}
-                  <div className="bg-[#060e1a] p-4 flex flex-col justify-center border-r border-border-dim md:col-span-1">
+                  <div className="bg-bg p-4 flex flex-col justify-center border-r border-border-dim md:col-span-1">
                     <div className="flex items-center gap-2 text-accent mb-1">
                       <Calendar size={14} />
                       <span className="text-xs font-bold font-mono">{format(reading.timestamp, 'MMM d, yyyy')}</span>
@@ -68,7 +68,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
                     </div>
 
                     {reading.notes && (
-                      <div className="flex gap-2 p-3 bg-[#060e1a]/50 rounded-lg border border-border-dim/30">
+                      <div className="flex gap-2 p-3 bg-bg/60 rounded-lg border border-border-dim/30">
                         <FileText size={14} className="text-ink-dim shrink-0 mt-0.5" />
                         <p className="text-[11px] text-ink-muted italic leading-relaxed">{reading.notes}</p>
                       </div>

@@ -215,14 +215,14 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
   };
 
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-6 pb-24 anim-fade-up">
       {/* Header Section */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-wider uppercase" style={{ fontFamily: "'Exo 2', sans-serif" }}>
+          <h1 className="wordmark text-2xl text-white">
             Pool<span className="text-accent">Status</span>
           </h1>
-          <p className="text-[10px] font-mono text-ink-dim uppercase tracking-widest">
+          <p className="text-[10px] font-mono text-ink-dim uppercase tracking-[0.2em]">
             Last reading: {latest ? latest.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data'}
           </p>
         </div>
@@ -345,7 +345,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
 
             {/* Status Grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div className={`card border col-span-2 md:col-span-1 flex flex-col justify-between p-4 ${
+              <div className={`card anim-scan border col-span-2 md:col-span-1 flex flex-col justify-between p-4 ${
                 lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' : 
                 lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' : 
                 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
@@ -617,7 +617,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
       {/* Quick Action FAB */}
       <button 
         onClick={onLogReading}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print"
+        className="fixed bottom-6 right-6 w-14 h-14 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print anim-fab-pulse"
       >
         <Plus size={28} />
       </button>
@@ -673,7 +673,7 @@ function StatusCard({ label, value, unit, status, trend, ideal }: { label: strin
   };
 
   return (
-    <div className={`card border ${statusColors[status]} flex flex-col gap-2 p-4`}>
+    <div className={`card anim-scan border ${statusColors[status]} flex flex-col gap-2 p-4`}>
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
         <Sparkline values={trend} color={sparklineColors[status]} />
