@@ -152,7 +152,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 z-50 bg-bg overflow-y-auto"
+      className="fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up"
     >
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">

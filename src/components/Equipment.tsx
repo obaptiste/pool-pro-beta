@@ -58,7 +58,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-2xl panel rounded-3xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-2xl panel rounded-3xl overflow-hidden flex flex-col max-h-[90vh] anim-fade-up"
       >
         <div className="panel-header p-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -139,7 +139,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
               const due = isServiceDue(item);
               
               return (
-                <div key={item.id} className="p-4 rounded-2xl bg-surface border border-border-dim flex flex-col gap-4 group">
+                <div key={item.id} className="p-4 rounded-2xl bg-surface border border-border-dim flex flex-col gap-4 group anim-scan">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${due ? 'bg-red-500/10 text-red-500' : 'bg-accent/10 text-accent'}`}>

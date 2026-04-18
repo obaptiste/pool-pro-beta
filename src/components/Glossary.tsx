@@ -91,7 +91,7 @@ export default function Glossary({ isOpen, onClose }: Props) {
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed inset-4 md:inset-10 lg:inset-20 panel z-[100] rounded-3xl flex flex-col overflow-hidden no-print"
+            className="fixed inset-4 md:inset-10 lg:inset-20 panel z-[100] rounded-3xl flex flex-col overflow-hidden no-print anim-fade-up"
           >
             <header className="panel-header p-6 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -132,7 +132,7 @@ export default function Glossary({ isOpen, onClose }: Props) {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.05 }}
-                    className="card bg-bg/30 border-border-dim p-5 space-y-3 group hover:border-accent/30 transition-all"
+                    className="card anim-scan bg-bg/30 border-border-dim p-5 space-y-3 group hover:border-accent/30 transition-all"
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-[9px] font-bold uppercase tracking-widest text-accent bg-accent/10 px-2 py-0.5 rounded border border-accent/20">

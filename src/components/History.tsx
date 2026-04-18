@@ -16,7 +16,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
-      className="fixed inset-0 z-50 bg-bg overflow-y-auto"
+      className="fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up"
     >
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
@@ -41,7 +41,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
             </div>
           ) : (
             readings.map((reading) => (
-              <div key={reading.id} className="card bg-surface border-border-dim p-0 overflow-hidden group">
+              <div key={reading.id} className="card anim-scan bg-surface border-border-dim p-0 overflow-hidden group">
                 <div className="grid grid-cols-1 md:grid-cols-4">
                   {/* Date/Time Sidebar */}
                   <div className="bg-bg p-4 flex flex-col justify-center border-r border-border-dim md:col-span-1">

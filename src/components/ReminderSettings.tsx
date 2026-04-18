@@ -55,7 +55,7 @@ export default function ReminderSettings({ isOpen, onClose, schedule, onUpdateSc
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="w-full max-w-md panel rounded-2xl overflow-hidden"
+            className="w-full max-w-md panel rounded-2xl overflow-hidden anim-fade-up"
           >
             <header className="panel-header p-4 flex items-center justify-between">
               <div className="flex items-center gap-3 text-accent font-bold text-[10px] uppercase tracking-widest">
@@ -109,7 +109,7 @@ export default function ReminderSettings({ isOpen, onClose, schedule, onUpdateSc
                 </div>
 
                 {schedule.nextTestDate && (
-                  <div className="p-4 bg-surface rounded-xl border border-border-dim flex items-center gap-4">
+                  <div className="p-4 bg-surface rounded-xl border border-border-dim flex items-center gap-4 anim-scan">
                     <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
                       <Calendar size={20} />
                     </div>

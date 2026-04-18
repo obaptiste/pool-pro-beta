@@ -78,7 +78,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="fixed top-0 right-0 bottom-0 w-full max-w-md panel z-[70] border-l border-border-dim flex flex-col no-print rounded-none"
+            className="fixed top-0 right-0 bottom-0 w-full max-w-md panel z-[70] border-l border-border-dim flex flex-col no-print rounded-none anim-fade-up"
           >
             <header className="panel-header p-6 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -123,7 +123,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
                   </div>
                   <div className="grid gap-3">
                     {section.items.map((item, j) => (
-                        <div key={j} className="card bg-bg/30 border-border-dim p-4 flex items-center justify-between group hover:border-accent/50 transition-all">
+                        <div key={j} className="card anim-scan bg-bg/30 border-border-dim p-4 flex items-center justify-between group hover:border-accent/50 transition-all">
                         <div className="space-y-1">
                           <p className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">{item.label}</p>
                           <p className="text-sm font-bold text-white font-mono">{item.value}</p>
