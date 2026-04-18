@@ -88,6 +88,60 @@
     background-size: 48px 48px;
     background-position: -1px -1px;
   }
+
+  .anim-fade-up {
+    animation: fade-up 480ms cubic-bezier(.2,.8,.2,1) both;
+  }
+
+  .anim-fab-pulse {
+    animation: fab-pulse 2.8s ease-in-out infinite;
+  }
+
+  .anim-scan {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .anim-scan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.06) 45%, transparent 100%);
+    transform: translateX(-120%);
+    animation: scan-pass 3.4s ease-in-out infinite;
+    pointer-events: none;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fab-pulse {
+  0%, 100% {
+    box-shadow: 0 12px 30px rgba(79, 195, 247, 0.22);
+    transform: translateZ(0);
+  }
+  50% {
+    box-shadow: 0 16px 36px rgba(79, 195, 247, 0.36);
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes scan-pass {
+  0%, 15% {
+    transform: translateX(-120%);
+  }
+  45%, 100% {
+    transform: translateX(120%);
+  }
 }
 
 /* Custom scrollbar for better mobile feel */
@@ -127,5 +181,13 @@
   main {
     padding-top: 0 !important;
     max-width: 100% !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up,
+  .anim-fab-pulse,
+  .anim-scan::after {
+    animation: none !important;
   }
 }
