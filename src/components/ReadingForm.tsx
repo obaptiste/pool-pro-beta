@@ -24,23 +24,32 @@ interface Props {
   onCancel: () => void;
 }
 
+const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
+type NumericField = typeof NUMERIC_FIELDS[number];
+
+const INITIAL_NUMERIC: Record<NumericField, number> = {
+  chlorine: 1.5,
+  ph: 7.4,
+  alkalinity: 100,
+  temperature: 26,
+  differentialPressure: 12,
+  calciumHardness: 300,
+  cyanuricAcid: 40,
+};
+
 export default function ReadingForm({ onSave, onCancel }: Props) {
   const [formData, setFormData] = useState({
-    chlorine: 1.5,
-    ph: 7.4,
-    alkalinity: 100,
-    temperature: 26,
-    differentialPressure: 12,
-    calciumHardness: 300,
-    cyanuricAcid: 40,
+    ...INITIAL_NUMERIC,
     notes: '',
     uid: '',
   });
 
   const [isTranscribing, setIsTranscribing] = useState(false);
-
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>(
+    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
+  );
 
   const validate = (name: string, value: number) => {
     const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
@@ -52,24 +61,42 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
-    let val: string | number = value;
-    
+
     if (type === 'number') {
-      const parsed = parseFloat(value);
-      val = isNaN(parsed) ? 0 : parsed;
+      setRawInputs(prev => ({ ...prev, [name]: value }));
+      if (value === '' || value.endsWith('.')) {
+        // Mid-entry — clear stale error so UI doesn't show an outdated state
+        setErrors(prev => ({ ...prev, [name]: '' }));
+      } else {
+        const parsed = parseFloat(value);
+        if (!isNaN(parsed)) {
+          setFormData(prev => ({ ...prev, [name]: parsed }));
+          setErrors(prev => ({ ...prev, [name]: validate(name, parsed) }));
+        }
+      }
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
     }
-    
-    setFormData(prev => ({ ...prev, [name]: val }));
-    
-    if (type === 'number') {
-      const error = validate(name, val as number);
-      setErrors(prev => ({ ...prev, [name]: error }));
-    }
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    const parsed = parseFloat(value);
+    const num = isNaN(parsed) ? 0 : parsed;
+    setRawInputs(prev => ({ ...prev, [name]: String(num) }));
+    setFormData(prev => ({ ...prev, [name]: num }));
+    setErrors(prev => ({ ...prev, [name]: validate(name, num) }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    // Flush any rawInputs that are still mid-edit (e.g. focused field ending with ".")
+    const flushed = { ...formData };
+    for (const field of NUMERIC_FIELDS) {
+      const parsed = parseFloat(rawInputs[field] ?? '');
+      if (!isNaN(parsed)) flushed[field] = parsed;
+    }
+    onSave(flushed);
   };
 
   const handleVoiceInput = async (targetField: 'all' | 'notes' = 'all') => {
@@ -129,6 +156,14 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
                 ...result,
                 notes: result.notes || prev.notes
               }));
+              // Keep rawInputs in sync so displayed fields reflect transcribed values
+              setRawInputs(prev => {
+                const updates: Record<string, string> = {};
+                for (const field of NUMERIC_FIELDS) {
+                  if (result[field] !== undefined) updates[field] = String(result[field]);
+                }
+                return { ...prev, ...updates };
+              });
             }
           } catch (e) {
             console.error("Failed to process transcription", e);
@@ -171,89 +206,96 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
         <form onSubmit={handleSubmit} className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <InputField 
-              label="Free Chlorine" 
-              name="chlorine" 
-              value={formData.chlorine} 
-              unit="ppm" 
+            <InputField
+              label="Free Chlorine"
+              name="chlorine"
+              value={rawInputs.chlorine}
+              unit="ppm"
               icon={<Droplets size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.chlorine}
               min={0}
               max={10}
-              step={0.1}
+              step="any"
             />
-            <InputField 
-              label="pH Level" 
-              name="ph" 
-              value={formData.ph} 
-              unit="" 
+            <InputField
+              label="pH Level"
+              name="ph"
+              value={rawInputs.ph}
+              unit=""
               icon={<Activity size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.ph}
               min={0}
               max={14}
-              step={0.1}
+              step="any"
             />
-            <InputField 
-              label="Total Alkalinity" 
-              name="alkalinity" 
-              value={formData.alkalinity} 
-              unit="ppm" 
+            <InputField
+              label="Total Alkalinity"
+              name="alkalinity"
+              value={rawInputs.alkalinity}
+              unit="ppm"
               icon={<TrendingUp size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.alkalinity}
               min={0}
               max={300}
-              step={1}
+              step="any"
             />
-            <InputField 
-              label="Temperature" 
-              name="temperature" 
-              value={formData.temperature} 
-              unit="°C" 
+            <InputField
+              label="Temperature"
+              name="temperature"
+              value={rawInputs.temperature}
+              unit="°C"
               icon={<Thermometer size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.temperature}
               min={0}
               max={50}
-              step={0.5}
+              step="any"
             />
-            <InputField 
-              label="Diff Pressure" 
-              name="differentialPressure" 
-              value={formData.differentialPressure} 
-              unit="kPa" 
+            <InputField
+              label="Diff Pressure"
+              name="differentialPressure"
+              value={rawInputs.differentialPressure}
+              unit="kPa"
               icon={<Gauge size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.differentialPressure}
               min={0}
               max={500}
-              step={1}
+              step="any"
             />
-            <InputField 
-              label="Calcium Hardness" 
-              name="calciumHardness" 
-              value={formData.calciumHardness} 
-              unit="ppm" 
+            <InputField
+              label="Calcium Hardness"
+              name="calciumHardness"
+              value={rawInputs.calciumHardness}
+              unit="ppm"
               icon={<Waves size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.calciumHardness}
               min={0}
               max={1000}
-              step={10}
+              step="any"
             />
-            <InputField 
-              label="Cyanuric Acid" 
-              name="cyanuricAcid" 
-              value={formData.cyanuricAcid} 
-              unit="ppm" 
+            <InputField
+              label="Cyanuric Acid"
+              name="cyanuricAcid"
+              value={rawInputs.cyanuricAcid}
+              unit="ppm"
               icon={<Sun size={16} />}
               onChange={handleChange}
+              onBlur={handleBlur}
               error={errors.cyanuricAcid}
               min={0}
               max={200}
-              step={5}
+              step="any"
             />
           </div>
 
@@ -318,7 +360,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, error, min, max, step }: any) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step }: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -337,11 +379,12 @@ function InputField({ label, name, value, unit, icon, onChange, error, min, max,
         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-ink-dim group-focus-within:text-accent transition-colors">
           {icon}
         </div>
-        <input 
-          type="number" 
+        <input
+          type="number"
           name={name}
           value={value}
           onChange={onChange}
+          onBlur={onBlur}
           min={min}
           max={max}
           step={step}
