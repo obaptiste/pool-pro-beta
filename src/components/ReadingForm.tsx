@@ -24,32 +24,32 @@ interface Props {
   onCancel: () => void;
 }
 
+const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
+type NumericField = typeof NUMERIC_FIELDS[number];
+
+const INITIAL_NUMERIC: Record<NumericField, number> = {
+  chlorine: 1.5,
+  ph: 7.4,
+  alkalinity: 100,
+  temperature: 26,
+  differentialPressure: 12,
+  calciumHardness: 300,
+  cyanuricAcid: 40,
+};
+
 export default function ReadingForm({ onSave, onCancel }: Props) {
   const [formData, setFormData] = useState({
-    chlorine: 1.5,
-    ph: 7.4,
-    alkalinity: 100,
-    temperature: 26,
-    differentialPressure: 12,
-    calciumHardness: 300,
-    cyanuricAcid: 40,
+    ...INITIAL_NUMERIC,
     notes: '',
     uid: '',
   });
 
   const [isTranscribing, setIsTranscribing] = useState(false);
-
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [rawInputs, setRawInputs] = useState<Record<string, string>>({
-    chlorine: '1.5',
-    ph: '7.4',
-    alkalinity: '100',
-    temperature: '26',
-    differentialPressure: '12',
-    calciumHardness: '300',
-    cyanuricAcid: '40',
-  });
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>(
+    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
+  );
 
   const validate = (name: string, value: number) => {
     const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
@@ -64,8 +64,10 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
     if (type === 'number') {
       setRawInputs(prev => ({ ...prev, [name]: value }));
-      // Only sync to formData when we have a complete number (not mid-decimal like "29.")
-      if (value !== '' && !value.endsWith('.')) {
+      if (value === '' || value.endsWith('.')) {
+        // Mid-entry — clear stale error so UI doesn't show an outdated state
+        setErrors(prev => ({ ...prev, [name]: '' }));
+      } else {
         const parsed = parseFloat(value);
         if (!isNaN(parsed)) {
           setFormData(prev => ({ ...prev, [name]: parsed }));
@@ -88,7 +90,13 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    // Flush any rawInputs that are still mid-edit (e.g. focused field ending with ".")
+    const flushed = { ...formData };
+    for (const field of NUMERIC_FIELDS) {
+      const parsed = parseFloat(rawInputs[field] ?? '');
+      if (!isNaN(parsed)) flushed[field] = parsed;
+    }
+    onSave(flushed);
   };
 
   const handleVoiceInput = async (targetField: 'all' | 'notes' = 'all') => {
@@ -148,6 +156,14 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
                 ...result,
                 notes: result.notes || prev.notes
               }));
+              // Keep rawInputs in sync so displayed fields reflect transcribed values
+              setRawInputs(prev => {
+                const updates: Record<string, string> = {};
+                for (const field of NUMERIC_FIELDS) {
+                  if (result[field] !== undefined) updates[field] = String(result[field]);
+                }
+                return { ...prev, ...updates };
+              });
             }
           } catch (e) {
             console.error("Failed to process transcription", e);
