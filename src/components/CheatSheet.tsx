@@ -71,16 +71,16 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-[#060e1a]/80 backdrop-blur-md z-[60]"
+            className="overlay z-[60]"
           />
           <motion.div 
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="fixed top-0 right-0 bottom-0 w-full max-w-md bg-[#0d1f38] z-[70] shadow-2xl border-l border-border-dim flex flex-col no-print"
+            className="fixed top-0 right-0 bottom-0 w-full max-w-md panel z-[70] border-l border-border-dim flex flex-col no-print rounded-none anim-fade-up"
           >
-            <header className="p-6 border-b border-border-dim flex items-center justify-between bg-[#060e1a]">
+            <header className="panel-header p-6 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl bg-accent/10 text-accent flex items-center justify-center border border-accent/20">
                   <BookOpen size={20} />
@@ -92,14 +92,14 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
               </div>
               <button 
                 onClick={onClose} 
-                className="p-2 rounded-lg hover:bg-surface text-ink-dim hover:text-white transition-colors"
+                className="icon-btn border-transparent bg-transparent hover:bg-surface"
               >
                 <X size={20} />
               </button>
             </header>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
-              <div className="flex items-center justify-between p-4 bg-[#060e1a] rounded-xl border border-border-dim">
+              <div className="flex items-center justify-between p-4 bg-bg/70 rounded-xl border border-border-dim">
                 <div className="flex items-center gap-3">
                   <Sparkles size={14} className="text-accent" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Simplified View</span>
@@ -123,7 +123,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
                   </div>
                   <div className="grid gap-3">
                     {section.items.map((item, j) => (
-                      <div key={j} className="card bg-[#0a1628] border-border-dim p-4 flex items-center justify-between group hover:border-accent/50 transition-all">
+                        <div key={j} className="card anim-scan bg-bg/30 border-border-dim p-4 flex items-center justify-between group hover:border-accent/50 transition-all">
                         <div className="space-y-1">
                           <p className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">{item.label}</p>
                           <p className="text-sm font-bold text-white font-mono">{item.value}</p>
@@ -137,7 +137,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
               ))}
             </div>
 
-            <footer className="p-6 border-t border-border-dim bg-[#060e1a]">
+            <footer className="panel-footer p-6">
               <button className="flex items-center justify-center gap-2 w-full py-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all">
                 <Volume2 size={16} />
                 Audio Protocol Summary

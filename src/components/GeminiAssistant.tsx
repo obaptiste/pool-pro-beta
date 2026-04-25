@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Loader2, X, ChevronRight, Terminal, MapPin, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Loader2, X, ChevronRight, Terminal, MapPin, CheckCircle2, FileText, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
@@ -11,6 +11,7 @@ interface Props {
   latestReading?: Reading;
   history: Reading[];
   onExecuteProtocol: (tasks: MaintenanceTask[]) => void;
+  onAddToReport?: (entry: { timestamp: string; summary: string }) => void;
 }
 
 interface AIResponse {
@@ -147,7 +148,7 @@ If the user gives you a current reading and a target, calculate the exact dose n
 - Keep answers concise unless the user asks for detail
 `;
 
-export default function GeminiAssistant({ latestReading, history, onExecuteProtocol }: Props) {
+export default function GeminiAssistant({ latestReading, history, onExecuteProtocol, onAddToReport }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [insight, setInsight] = useState<AIResponse | null>(null);
@@ -156,6 +157,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   const [isMapsMode, setIsMapsMode] = useState(false);
   const [mapsContent, setMapsContent] = useState<string | null>(null);
   const [protocolStaged, setProtocolStaged] = useState(false);
+  const [addedToReport, setAddedToReport] = useState(false);
 
   const getInsight = async () => {
     if (!latestReading) return;
@@ -258,6 +260,62 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       setProtocolStaged(false);
       setIsOpen(false);
     }, 2500);
+  };
+
+  const buildReportSummary = () => {
+    if (!insight || !latestReading) return '';
+    const checklist = insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
+    return [
+      `AI Analysis (${new Date().toLocaleString()})`,
+      `Reading: Cl ${latestReading.chlorine} ppm, pH ${latestReading.ph}, TA ${latestReading.alkalinity} ppm, Temp ${latestReading.temperature}°C`,
+      `Assessment: ${insight.analysis.replace(/\n+/g, ' ').trim()}`,
+      `Checklist: ${checklist}`,
+      `Target Outcome: ${insight.expectedOutcome.replace(/\n+/g, ' ').trim()}`
+    ].join(' — ');
+  };
+
+  const addToReport = () => {
+    if (!insight || !onAddToReport) return;
+    onAddToReport({
+      timestamp: new Date().toISOString(),
+      summary: buildReportSummary(),
+    });
+    setAddedToReport(true);
+    setTimeout(() => setAddedToReport(false), 2200);
+  };
+
+  const exportSnapshot = () => {
+    if (!insight || !latestReading) return;
+    const report = [
+      '# PoolStatus AI Telemetry Snapshot',
+      `Generated: ${new Date().toLocaleString()}`,
+      '',
+      '## Current Reading',
+      `- Free Chlorine: ${latestReading.chlorine} ppm`,
+      `- pH: ${latestReading.ph}`,
+      `- Alkalinity: ${latestReading.alkalinity} ppm`,
+      `- Temperature: ${latestReading.temperature}°C`,
+      `- Differential Pressure: ${latestReading.differentialPressure} kPa`,
+      '',
+      '## Health Assessment',
+      insight.analysis,
+      '',
+      '## Suggested Checklist',
+      ...insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`),
+      '',
+      '## Target Telemetry',
+      insight.expectedOutcome,
+    ].join('\n');
+
+    const blob = new Blob([report], { type: 'text/markdown;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `pool_ai_snapshot_${new Date().toISOString().replace(/[:.]/g, '-')}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const findPoolSupplies = async () => {
@@ -374,6 +432,11 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     <CheckCircle2 size={14} />
                     Protocol Staged — Log new reading in 4–6 hours
                   </div>
+                ) : addedToReport ? (
+                  <div className="flex-1 py-3 px-4 rounded-xl bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                    <CheckCircle2 size={14} />
+                    Added To Report Queue
+                  </div>
                 ) : (
                   <>
                     <button
@@ -382,6 +445,22 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     >
                       <MapPin size={14} />
                       Find Supplies
+                    </button>
+                    <button
+                      onClick={addToReport}
+                      disabled={!insight || isMapsMode}
+                      className="flex-1 py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <FileText size={14} />
+                      Add To Report
+                    </button>
+                    <button
+                      onClick={exportSnapshot}
+                      disabled={!insight || isMapsMode}
+                      className="py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Export AI snapshot as markdown"
+                    >
+                      <Download size={14} />
                     </button>
                     <button
                       onClick={executeProtocol}

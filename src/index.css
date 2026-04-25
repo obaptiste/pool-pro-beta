@@ -7,11 +7,13 @@
 
   --color-primary: #060e1a;
   --color-accent: #4fc3f7;
+  --color-accent-hover: #38b2f0;
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-critical: #ef4444;
   --color-bg: #060e1a;
   --color-surface: #0d1f38;
+  --color-surface-2: #0a1628;
   --color-ink: #ffffff;
   --color-ink-muted: #8ab4cc;
   --color-ink-dim: #4a6a80;
@@ -21,25 +23,46 @@
 @layer base {
   body {
     @apply bg-bg text-ink font-sans;
+    -webkit-font-smoothing: antialiased;
     -webkit-tap-highlight-color: transparent;
   }
 }
 
 @layer components {
   .card {
-    @apply bg-surface rounded-xl border border-border-dim shadow-lg p-4;
+    @apply bg-surface rounded-xl border border-border-dim p-5 transition-[border-color,transform];
+  }
+
+  .panel {
+    @apply bg-surface border border-border-dim rounded-2xl shadow-xl;
+  }
+
+  .panel-header {
+    @apply bg-bg/70 border-b border-border-dim;
+  }
+
+  .panel-footer {
+    @apply bg-bg/70 border-t border-border-dim;
+  }
+
+  .overlay {
+    @apply fixed inset-0 bg-bg/85 backdrop-blur-md;
   }
   
   .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-bold transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border-0 cursor-pointer font-bold uppercase text-[10px] tracking-[0.2em] transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95;
   }
   
   .btn-primary {
-    @apply bg-accent text-primary hover:bg-[#38b2f0];
+    @apply bg-accent text-primary px-5 py-3.5 shadow-[0_20px_40px_rgba(79,195,247,0.2)] hover:bg-accent-hover;
   }
   
   .btn-secondary {
-    @apply bg-surface text-ink-muted border border-border-dim hover:text-white hover:bg-[#1e3a5f];
+    @apply bg-transparent text-ink-muted px-[18px] py-3.5 border border-border-dim hover:text-white hover:border-accent hover:bg-accent/5;
+  }
+
+  .icon-btn {
+    @apply p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors;
   }
   
   .input {
@@ -47,13 +70,84 @@
   }
   
   .label {
-    @apply block text-xs font-bold text-ink-dim mb-1.5 uppercase tracking-widest;
+    @apply block text-[10px] font-bold text-ink-dim mb-1.5 uppercase tracking-[0.2em];
+  }
+
+  .wordmark {
+    @apply font-extrabold uppercase tracking-[0.18em];
+  }
+
+  .hairline {
+    @apply border-t border-border-dim;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(30, 58, 95, 0.25) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30, 58, 95, 0.25) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: -1px -1px;
+  }
+
+  .anim-fade-up {
+    animation: fade-up 480ms cubic-bezier(.2,.8,.2,1) both;
+  }
+
+  .anim-fab-pulse {
+    animation: fab-pulse 2.8s ease-in-out infinite;
+  }
+
+  .anim-scan {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .anim-scan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.06) 45%, transparent 100%);
+    transform: translateX(-120%);
+    animation: scan-pass 3.4s ease-in-out infinite;
+    pointer-events: none;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fab-pulse {
+  0%, 100% {
+    box-shadow: 0 12px 30px rgba(79, 195, 247, 0.22);
+    transform: translateZ(0);
+  }
+  50% {
+    box-shadow: 0 16px 36px rgba(79, 195, 247, 0.36);
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes scan-pass {
+  0%, 15% {
+    transform: translateX(-120%);
+  }
+  45%, 100% {
+    transform: translateX(120%);
   }
 }
 
 /* Custom scrollbar for better mobile feel */
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -65,7 +159,7 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 
 @media print {
@@ -87,5 +181,13 @@
   main {
     padding-top: 0 !important;
     max-width: 100% !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up,
+  .anim-fab-pulse,
+  .anim-scan::after {
+    animation: none !important;
   }
 }
