@@ -41,6 +41,7 @@ export default function App() {
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
+  const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
 
   // Auth listener
   useEffect(() => {
@@ -332,8 +333,20 @@ export default function App() {
       r.cyanuricAcid,
       r.notes || '',
     ]);
+
+    const reportRows = reportEntries.map(entry => [
+      entry.timestamp,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      entry.summary
+    ]);
     
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const csvContent = [headers, ...rows, ...reportRows].map(e => e.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -343,6 +356,10 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleAddToReport = (entry: { timestamp: string; summary: string }) => {
+    setReportEntries(prev => [entry, ...prev].slice(0, 30));
   };
 
   if (!isAuthReady) {
@@ -491,6 +508,7 @@ export default function App() {
         latestReading={readings[0]} 
         history={readings} 
         onExecuteProtocol={handleExecuteProtocol}
+        onAddToReport={handleAddToReport}
       />
     </div>
   );
