@@ -518,8 +518,6 @@ export default function App() {
         onClose={() => setIsWeeklyReportOpen(false)}
         readings={readings}
         inventory={inventory}
-        equipment={equipment}
-        tasks={tasks}
         user={user}
       />
 

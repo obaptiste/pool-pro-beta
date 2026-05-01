@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Printer, FileText } from 'lucide-react';
 import type { User } from 'firebase/auth';
-import { Reading, InventoryItem, EquipmentItem, MaintenanceTask, DEFAULT_RANGES } from '../types';
+import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
 import { calculateLSI } from '../lib/lsi';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ interface TelemetryMetric {
 
 interface DayStatus {
   date: string;
-  status: 'good' | 'watch' | 'warning' | 'critical';
+  status: 'good' | 'watch' | 'warning' | 'critical' | 'unknown';
   note: string;
 }
 
@@ -124,12 +124,23 @@ function fmtTrendLabel(d: Date) {
   return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${String(d.getHours()).padStart(2, '0')}`;
 }
 
+function isoWeek(d: Date): number {
+  const date = new Date(d.getTime());
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+}
+
 function deriveReportData(readings: Reading[], inventory: InventoryItem[], user: User | null): ReportData {
   const now = new Date();
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - 7);
 
-  const weekReadings = readings.filter(r => r.timestamp >= cutoff).slice().reverse();
+  const weekReadings = readings
+    .filter(r => r.timestamp >= cutoff)
+    .slice()
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
   const METRICS = [
     { key: 'chlorine', label: 'Free Chlorine',    unit: 'ppm', target: [DEFAULT_RANGES.chlorine.min,             DEFAULT_RANGES.chlorine.max]             as [number, number], get: (r: Reading) => r.chlorine },
@@ -152,8 +163,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const max = parseFloat(Math.max(...vals).toFixed(1));
     const [lo, hi] = m.target;
     const status: TelemetryMetric['status'] =
-      (avg < lo * 0.9 || avg > hi * 1.1) ? 'warning' :
-      (avg < lo || avg > hi)             ? 'watch'   : 'good';
+      (avg < lo * 0.8 || avg > hi * 1.2) ? 'critical' :
+      (avg < lo * 0.9 || avg > hi * 1.1) ? 'warning'  :
+      (avg < lo || avg > hi)             ? 'watch'    : 'good';
     return { key: m.key, label: m.label, unit: m.unit, avg, min, max, target: m.target, status };
   });
 
@@ -165,20 +177,24 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const end = new Date(d);
     end.setDate(end.getDate() + 1);
     const dayR = weekReadings.filter(r => r.timestamp >= d && r.timestamp < end);
-    let worst: DayStatus['status'] = 'good';
+    if (dayR.length === 0) {
+      return { date: fmtDate(d), status: 'unknown' as const, note: 'No readings' };
+    }
+    let worst: 'good' | 'watch' | 'warning' | 'critical' = 'good';
     const notes: string[] = [];
     dayR.forEach(r => {
       METRICS.forEach(m => {
         const v = m.get(r);
         const [lo, hi] = m.target;
-        if (v < lo * 0.9 || v > hi * 1.1) { worst = 'warning'; notes.push(`${m.label} off`); }
-        else if (v < lo || v > hi)         { if (worst === 'good') worst = 'watch'; notes.push(`${m.label} watch`); }
+        if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
+        else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
+        else if (v < lo || v > hi)               { if (worst === 'good') worst = 'watch'; notes.push(`${m.label} watch`); }
       });
     });
     return {
       date: fmtDate(d),
-      status: dayR.length === 0 ? 'good' : worst,
-      note: dayR.length === 0 ? 'No readings' : notes.length === 0 ? 'All nominal' : [...new Set(notes)].slice(0, 2).join(', '),
+      status: worst,
+      note: notes.length === 0 ? 'All nominal' : [...new Set(notes)].slice(0, 2).join(', '),
     };
   });
 
@@ -190,13 +206,16 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     press: r.differentialPressure,
   }));
 
-  const latestR = readings[0];
-  const lsi = latestR ? calculateLSI(latestR) : 0;
-  const lsiLabel = Math.abs(lsi) > 0.3 ? 'Critical' : Math.abs(lsi) > 0.1 ? 'Drifting' : 'Balanced';
+  // Use the latest in-window reading for LSI; fall back to global latest only for the gauge snapshot
+  const latestWeekR = weekReadings.length > 0 ? weekReadings[weekReadings.length - 1] : null;
+  const latestR = latestWeekR ?? readings[0] ?? null;
+  const lsi = latestWeekR ? calculateLSI(latestWeekR) : 0;
+  const lsiAbs = Math.abs(lsi);
+  const lsiLabel = lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
-  const hasCritical = telemetry.some(m => m.status === 'critical');
-  const hasWarning  = telemetry.some(m => m.status === 'warning');
-  const hasWatch    = telemetry.some(m => m.status === 'watch') || Math.abs(lsi) > 0.1;
+  const hasCritical = telemetry.some(m => m.status === 'critical') || lsiAbs > 0.3;
+  const hasWarning  = telemetry.some(m => m.status === 'warning')  || (lsiAbs > 0.1 && lsiAbs <= 0.3);
+  const hasWatch    = telemetry.some(m => m.status === 'watch');
   const overall: ReportData['status']['overall'] =
     hasCritical ? 'critical' : hasWarning ? 'warning' : hasWatch ? 'watch' : 'good';
 
@@ -243,8 +262,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
 
   const inventoryBurn: InventoryBurnItem[] = inventory.map(item => {
     const needsReorder = item.quantity <= item.minThreshold;
-    const start = parseFloat((Math.max(item.quantity * 1.5, item.minThreshold * 4)).toFixed(1));
-    return { name: item.name, unit: item.unit, current: item.quantity, start, burn: 0, weeks: needsReorder ? 0 : 99, action: needsReorder ? 'REORDER' : 'OK' };
+    // start is estimated as enough to show relative fill on the bar; no time-series data available
+    const start = parseFloat((Math.max(item.quantity * 2, item.minThreshold * 4)).toFixed(1));
+    return { name: item.name, unit: item.unit, current: item.quantity, start, burn: -1, weeks: -1, action: needsReorder ? 'REORDER' : 'OK' };
   });
 
   const required: RequiredItem[] = [
@@ -266,7 +286,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       location: 'PoolStatus AI',
       period: periodStr,
       generatedAt: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      reportId: `PS-${now.getFullYear()}-W${Math.ceil((now.getDate()) / 7)}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      reportId: `PS-${now.getFullYear()}-W${String(isoWeek(now)).padStart(2, '0')}`,
     },
     status: { overall, headline, lsi, lsiLabel, uptime: 100, readings: weekReadings.length, swimmerHours: 0 },
     telemetry, days,
@@ -274,6 +294,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     advisories, nextSteps, inventory: inventoryBurn, required,
     endOfShiftPhoto: {
       url: null,
+      // prefer the latest in-window reading; latestR is null only when there are no readings at all
       timestamp: latestR ? `${fmtDate(latestR.timestamp)} · ${latestR.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : 'No data',
       operator: operatorName,
       gauges: {
@@ -374,6 +395,7 @@ const STATUS_COLOR = {
   watch:    { fg: '#F59E0B', bg: 'rgba(245,158,11,.20)' },
   warning:  { fg: '#FB923C', bg: 'rgba(251,146,60,.22)' },
   critical: { fg: '#EF4444', bg: 'rgba(239,68,68,.22)' },
+  unknown:  { fg: '#4A6A80', bg: 'rgba(74,106,128,.12)' },
 };
 
 function DayHeatmap({ days, theme = 'dark', height = 110 }: { days: DayStatus[]; theme?: 'dark' | 'light'; height?: number }) {
@@ -388,7 +410,7 @@ function DayHeatmap({ days, theme = 'dark', height = 110 }: { days: DayStatus[];
             <div>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.16em', textTransform: 'uppercase', color: dim }}>{d.date}</div>
               <div style={{ fontSize: 10, fontWeight: 700, color: c.fg, textTransform: 'uppercase', marginTop: 4, letterSpacing: '.1em' }}>
-                {d.status === 'good' ? '✓ OK' : d.status === 'watch' ? '⚠ Watch' : '✕ Action'}
+                {d.status === 'good' ? '✓ OK' : d.status === 'watch' ? '⚠ Watch' : d.status === 'unknown' ? '— No data' : '✕ Action'}
               </div>
             </div>
             <div style={{ fontSize: 10, color: ink, opacity: .85, lineHeight: 1.3 }}>{d.note}</div>
@@ -464,6 +486,9 @@ function InventoryBurn({ items, theme = 'dark' }: { items: InventoryBurnItem[]; 
             </div>
             {it.action === 'REORDER' && (
               <div style={{ fontSize: 9, fontFamily: '"Space Mono",monospace', color: '#EF4444', letterSpacing: '.1em' }}>BELOW MINIMUM — REORDER NOW</div>
+            )}
+            {it.burn < 0 && (
+              <div style={{ fontSize: 9, fontFamily: '"Space Mono",monospace', color: dim, letterSpacing: '.1em' }}>NO BURN HISTORY AVAILABLE</div>
             )}
           </div>
         );
@@ -1006,8 +1031,6 @@ interface WeeklyReportProps {
   onClose: () => void;
   readings: Reading[];
   inventory: InventoryItem[];
-  equipment: EquipmentItem[];
-  tasks: MaintenanceTask[];
   user: User | null;
 }
 
