@@ -383,12 +383,17 @@ export default function App() {
   };
 
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
       setReportTemplate(content.slice(0, 5000));
+      input.value = '';
+    };
+    reader.onerror = () => {
+      input.value = '';
     };
     reader.readAsText(file);
   };
