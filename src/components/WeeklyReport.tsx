@@ -139,7 +139,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   cutoff.setHours(0, 0, 0, 0);
 
   const weekReadings = readings
-    .filter(r => r.timestamp >= cutoff)
+    .filter(r => r.timestamp >= cutoff && r.timestamp <= now)
     .slice()
     .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
