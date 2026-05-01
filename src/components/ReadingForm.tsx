@@ -204,7 +204,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
           </div>
         </header>
 
-        <form onSubmit={handleSubmit} className="space-y-10 pb-32">
+        <form onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField
               label="Free Chlorine"

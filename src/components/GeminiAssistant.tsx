@@ -158,6 +158,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   const [mapsContent, setMapsContent] = useState<string | null>(null);
   const [protocolStaged, setProtocolStaged] = useState(false);
   const [addedToReport, setAddedToReport] = useState(false);
+  const [question, setQuestion] = useState('');
 
   const getInsight = async () => {
     if (!latestReading) return;
@@ -342,6 +343,38 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     }
   };
 
+  const askGeneralQuestion = async () => {
+    if (!question.trim()) return;
+    setIsOpen(true);
+    setLoading(true);
+    setError(null);
+    setIsMapsMode(false);
+
+    try {
+      const context = latestReading
+        ? `Latest reading context: FC ${latestReading.chlorine} ppm, pH ${latestReading.ph}, TA ${latestReading.alkalinity} ppm, Temp ${latestReading.temperature}°C, CYA ${latestReading.cyanuricAcid} ppm.`
+        : 'No latest reading is currently available.';
+      const response = await callAiWithFallback({
+        model: "gemini-3-flash-preview",
+        contents: `${context}\n\nUser question: ${question.trim()}\n\nProvide a direct practical answer. If diagnostics are needed, include specific checks in order.`,
+        config: {
+          systemInstruction: POOL_SYSTEM_PROMPT,
+        }
+      }, process.env.GEMINI_API_KEY!);
+
+      setInsight({
+        analysis: response.text || 'No response generated.',
+        checklist: [],
+        expectedOutcome: 'N/A',
+      });
+    } catch (err) {
+      console.error('General QA Error:', err);
+      setError('ERR_QUESTION_FAILED: Unable to answer your question right now.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <>
       <button 
@@ -374,6 +407,22 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
               </header>
               
               <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                <div className="mb-5 p-4 rounded-xl border border-border-dim bg-[#08162a] space-y-3">
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-ink-dim">Ask a general pool question</label>
+                  <textarea
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder="e.g. Why does pH keep rising even after adding acid?"
+                    className="input bg-[#0d1f38] border-border-dim min-h-[78px] resize-none py-3 text-sm"
+                  />
+                  <button
+                    onClick={askGeneralQuestion}
+                    disabled={loading || !question.trim()}
+                    className="w-full py-2.5 px-4 rounded-lg bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Ask Pool AI
+                  </button>
+                </div>
                 {loading ? (
                   <div className="flex flex-col items-center justify-center py-16 space-y-6">
                     <div className="relative">
@@ -404,24 +453,30 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
 
                     <section>
                       <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-3">Suggested Checklist</h3>
-                      <div className="space-y-2">
-                        {insight.checklist.map((item, idx) => (
-                          <div key={item.id} className="flex items-start gap-3 p-3 bg-surface rounded-xl border border-border-dim/50">
-                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-[10px] font-bold flex items-center justify-center border border-accent/20">
-                              {idx + 1}
-                            </span>
-                            <span className="text-sm text-ink">{item.title}</span>
-                          </div>
-                        ))}
-                      </div>
+                      {insight.checklist.length > 0 ? (
+                        <div className="space-y-2">
+                          {insight.checklist.map((item, idx) => (
+                            <div key={item.id} className="flex items-start gap-3 p-3 bg-surface rounded-xl border border-border-dim/50">
+                              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-[10px] font-bold flex items-center justify-center border border-accent/20">
+                                {idx + 1}
+                              </span>
+                              <span className="text-sm text-ink">{item.title}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-ink-dim">No action checklist generated for this response.</p>
+                      )}
                     </section>
 
-                    <section className="p-4 bg-accent/5 rounded-xl border border-accent/10">
-                      <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Target Telemetry (Post-Protocol)</h3>
-                      <div className="markdown-body text-ink-muted text-xs leading-relaxed font-sans italic">
-                        <ReactMarkdown>{insight.expectedOutcome}</ReactMarkdown>
-                      </div>
-                    </section>
+                    {insight.expectedOutcome !== 'N/A' && (
+                      <section className="p-4 bg-accent/5 rounded-xl border border-accent/10">
+                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Target Telemetry (Post-Protocol)</h3>
+                        <div className="markdown-body text-ink-muted text-xs leading-relaxed font-sans italic">
+                          <ReactMarkdown>{insight.expectedOutcome}</ReactMarkdown>
+                        </div>
+                      </section>
+                    )}
                   </div>
                 ) : null}
               </div>
