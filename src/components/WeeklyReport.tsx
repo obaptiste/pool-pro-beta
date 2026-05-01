@@ -135,7 +135,8 @@ function isoWeek(d: Date): number {
 function deriveReportData(readings: Reading[], inventory: InventoryItem[], user: User | null): ReportData {
   const now = new Date();
   const cutoff = new Date(now);
-  cutoff.setDate(cutoff.getDate() - 7);
+  cutoff.setDate(cutoff.getDate() - 6);
+  cutoff.setHours(0, 0, 0, 0);
 
   const weekReadings = readings
     .filter(r => r.timestamp >= cutoff)
@@ -805,7 +806,7 @@ function ReportA({ d }: { d: ReportData }) {
       <section style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24 }}>
         <div style={{ background: '#0D1F38', border: '1px solid #1E3A5F', borderRadius: 14, padding: 20 }}>
           <SectionLabel theme="dark" title="Equipment Loop" sub="filter status" />
-          <EquipmentFlow theme="dark" flagFilter={d.telemetry.find(m => m.key === 'press')?.status !== 'good'} />
+          <EquipmentFlow theme="dark" flagFilter={(['watch','warning','critical'] as const).includes((d.telemetry.find(m => m.key === 'press')?.status ?? 'unknown') as 'watch'|'warning'|'critical')} />
         </div>
         <div style={{ background: '#0D1F38', border: '1px solid #1E3A5F', borderRadius: 14, padding: 20 }}>
           <SectionLabel theme="dark" title="End-of-Shift Photo" sub={d.endOfShiftPhoto.timestamp} />
@@ -871,7 +872,7 @@ function ReportB({ d }: { d: ReportData }) {
       <section style={{ marginTop: 48, display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 40, alignItems: 'center' }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3', marginBottom: 8 }}>Pool Profile</div>
-          <PoolDiagram width={420} height={200} theme="light" indicators={{ chlorine: d.telemetry.find(m => m.key === 'chlorine')?.status === 'good', pressure: d.telemetry.find(m => m.key === 'press')?.status !== 'good' }} />
+          <PoolDiagram width={420} height={200} theme="light" indicators={{ chlorine: d.telemetry.find(m => m.key === 'chlorine')?.status === 'good', pressure: (['watch','warning','critical'] as const).includes((d.telemetry.find(m => m.key === 'press')?.status ?? 'unknown') as 'watch'|'warning'|'critical') }} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 28px' }}>
           {d.telemetry.slice(0, 6).map(m => (
@@ -1018,7 +1019,7 @@ function ReportC({ d }: { d: ReportData }) {
       <section style={{ marginTop: 32, display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr', gap: 24 }}>
         <div style={{ background: '#0D1F38', border: '1px solid #1E3A5F', borderRadius: 14, padding: 20 }}>
           <SectionLabel theme="dark" title="Equipment Loop" />
-          <EquipmentFlow theme="dark" flagFilter={d.telemetry.find(m => m.key === 'press')?.status !== 'good'} />
+          <EquipmentFlow theme="dark" flagFilter={(['watch','warning','critical'] as const).includes((d.telemetry.find(m => m.key === 'press')?.status ?? 'unknown') as 'watch'|'warning'|'critical')} />
           <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {d.required.map((r, i) => (
               <span key={i} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.15em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: 9999, border: `1px solid ${r.urgency === 'high' ? 'rgba(239,68,68,.4)' : '#1E3A5F'}`, color: r.urgency === 'high' ? '#EF4444' : '#8AB4CC' }}>{r.name}</span>
