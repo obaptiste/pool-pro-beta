@@ -132,6 +132,15 @@ function isoWeek(d: Date): number {
   return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
 }
 
+// Returns the ISO week-year (the year that contains the Thursday of the given date's week),
+// which can differ from the calendar year around New Year.
+function isoWeekYear(d: Date): number {
+  const date = new Date(d.getTime());
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+  return date.getFullYear();
+}
+
 function deriveReportData(readings: Reading[], inventory: InventoryItem[], user: User | null): ReportData {
   const now = new Date();
   const cutoff = new Date(now);
@@ -300,7 +309,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       location: 'PoolStatus AI',
       period: periodStr,
       generatedAt: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      reportId: `PS-${now.getFullYear()}-W${String(isoWeek(now)).padStart(2, '0')}`,
+      reportId: `PS-${isoWeekYear(now)}-W${String(isoWeek(now)).padStart(2, '0')}`,
     },
     status: { overall, headline, lsi, lsiLabel, uptime: Math.round((days.filter(d => d.status !== 'unknown').length / 7) * 100), readings: weekReadings.length, swimmerHours: 0 },
     telemetry, days,
