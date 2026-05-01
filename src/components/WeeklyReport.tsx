@@ -254,9 +254,15 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       msg: `FC dropped to ${clM.min} ppm — below target of ${DEFAULT_RANGES.chlorine.min} ppm.`,
       action: 'Check chlorine supply and dosing schedule.' });
   }
-  advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
-    msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi >= 0 ? '+' : ''}${lsi} (${lsiLabel}).`,
-    action: 'Continue current monitoring cadence.' });
+  if (weekReadings.length > 0) {
+    advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
+      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi >= 0 ? '+' : ''}${lsi} (${lsiLabel}).`,
+      action: 'Continue current monitoring cadence.' });
+  } else {
+    advisories.push({ tier: 'watch', title: 'No data this period', time: 'Week',
+      msg: 'No readings were recorded during this 7-day window.',
+      action: 'Verify data entry cadence and log a reading to resume monitoring.' });
+  }
 
   const nextSteps: NextStep[] = [];
   const lowStock = inventory.filter(i => i.quantity <= i.minThreshold);
@@ -296,7 +302,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       generatedAt: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       reportId: `PS-${now.getFullYear()}-W${String(isoWeek(now)).padStart(2, '0')}`,
     },
-    status: { overall, headline, lsi, lsiLabel, uptime: 100, readings: weekReadings.length, swimmerHours: 0 },
+    status: { overall, headline, lsi, lsiLabel, uptime: Math.round((days.filter(d => d.status !== 'unknown').length / 7) * 100), readings: weekReadings.length, swimmerHours: 0 },
     telemetry, days,
     trend,
     advisories, nextSteps, inventory: inventoryBurn, required,
