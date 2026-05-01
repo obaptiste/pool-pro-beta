@@ -15,7 +15,7 @@ interface TelemetryMetric {
   min: number;
   max: number;
   target: [number, number];
-  status: 'good' | 'watch' | 'warning' | 'critical';
+  status: 'good' | 'watch' | 'warning' | 'critical' | 'unknown';
 }
 
 interface DayStatus {
@@ -156,7 +156,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const vals = weekReadings.map(m.get).filter((v): v is number => v != null);
     if (vals.length === 0) {
       const mid = parseFloat(((m.target[0] + m.target[1]) / 2).toFixed(1));
-      return { key: m.key, label: m.label, unit: m.unit, avg: mid, min: mid, max: mid, target: m.target, status: 'good' };
+      return { key: m.key, label: m.label, unit: m.unit, avg: mid, min: mid, max: mid, target: m.target, status: 'unknown' };
     }
     const avg = parseFloat((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
     const min = parseFloat(Math.min(...vals).toFixed(1));
@@ -213,14 +213,21 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   const lsiAbs = Math.abs(lsi);
   const lsiLabel = lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
-  const hasCritical = telemetry.some(m => m.status === 'critical') || lsiAbs > 0.3;
-  const hasWarning  = telemetry.some(m => m.status === 'warning')  || (lsiAbs > 0.1 && lsiAbs <= 0.3);
-  const hasWatch    = telemetry.some(m => m.status === 'watch');
+  const allUnknown = weekReadings.length === 0;
+  const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || lsiAbs > 0.3);
+  const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs > 0.1 && lsiAbs <= 0.3));
+  const hasWatch    = !allUnknown && telemetry.some(m => m.status === 'watch');
   const overall: ReportData['status']['overall'] =
-    hasCritical ? 'critical' : hasWarning ? 'warning' : hasWatch ? 'watch' : 'good';
+    allUnknown    ? 'watch' :
+    hasCritical   ? 'critical' :
+    hasWarning    ? 'warning'  :
+    hasWatch      ? 'watch'    : 'good';
 
-  const badMetrics = telemetry.filter(m => m.status !== 'good').map(m => m.label.toLowerCase());
-  const headline = badMetrics.length === 0
+  // Only flag metrics that have actual data (exclude unknown placeholders)
+  const badMetrics = telemetry.filter(m => m.status !== 'good' && m.status !== 'unknown').map(m => m.label.toLowerCase());
+  const headline = allUnknown
+    ? 'No readings recorded this week — monitoring gap'
+    : badMetrics.length === 0
     ? 'All parameters within specification this week'
     : badMetrics.length === 1
     ? `${badMetrics[0]} requires attention this week`
@@ -290,7 +297,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     },
     status: { overall, headline, lsi, lsiLabel, uptime: 100, readings: weekReadings.length, swimmerHours: 0 },
     telemetry, days,
-    trend: trend.length > 0 ? trend : [{ d: 'No data', chlorine: 2.0, ph: 7.4, alk: 100, press: 75 }],
+    trend,
     advisories, nextSteps, inventory: inventoryBurn, required,
     endOfShiftPhoto: {
       url: null,
@@ -427,6 +434,14 @@ function TrendLines({ trend, metrics, theme = 'dark', height = 220 }: { trend: T
   const grid  = theme === 'light' ? '#e9eef5' : '#1E3A5F';
   const W = 600, H = height, padL = 40, padR = 16, padT = 12, padB = 28;
   const innerW = W - padL - padR, innerH = H - padT - padB;
+  if (trend.length === 0) {
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={height}>
+        {[0, 1, 2, 3].map(i => <line key={i} x1={padL} x2={W - padR} y1={padT + (innerH / 3) * i} y2={padT + (innerH / 3) * i} stroke={grid} strokeWidth="1" strokeDasharray="2 4" />)}
+        <text x={W / 2} y={H / 2} textAnchor="middle" fontSize="11" fontFamily="Space Mono, monospace" fill={dim} style={{ textTransform: 'uppercase', letterSpacing: '.15em' }}>No readings this week</text>
+      </svg>
+    );
+  }
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={height}>
       {[0, 1, 2, 3].map(i => <line key={i} x1={padL} x2={W - padR} y1={padT + (innerH / 3) * i} y2={padT + (innerH / 3) * i} stroke={grid} strokeWidth="1" strokeDasharray="2 4" />)}
@@ -765,7 +780,7 @@ function ReportA({ d }: { d: ReportData }) {
 
       <section style={{ marginTop: 28, background: '#0D1F38', border: '1px solid #1E3A5F', borderRadius: 14, padding: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <SectionLabel theme="dark" title="Telemetry Trend" sub={`${d.trend.length} readings · normalized`} />
+          <SectionLabel theme="dark" title="Telemetry Trend" sub={`${d.status.readings} readings · normalized`} />
           <span style={{ fontSize: 9, fontFamily: '"Space Mono",monospace', color: '#4A6A80', letterSpacing: '.15em' }}>SCALE: PER-METRIC</span>
         </div>
         <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#4FC3F7' }, { key: 'ph', label: 'pH', color: '#F59E0B' }, { key: 'press', label: 'Pressure', color: '#10B981' }]} theme="dark" height={220} />
@@ -899,14 +914,14 @@ function ReportB({ d }: { d: ReportData }) {
       <Rule />
 
       <section>
-        <SectionLabel theme="light" title="Trend Insights" sub={`${d.trend.length} readings`} />
+        <SectionLabel theme="light" title="Trend Insights" sub={`${d.status.readings} readings`} />
         <div style={{ background: '#fff', border: '1px solid #dbe2ed', borderRadius: 14, padding: 24 }}>
           <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#0EA5E9' }, { key: 'ph', label: 'pH', color: '#D97706' }, { key: 'press', label: 'Pressure', color: '#059669' }]} theme="light" height={220} />
         </div>
         <p style={{ fontSize: 13, color: '#3a4a66', lineHeight: 1.7, margin: '18px 0 0', columnCount: 2, columnGap: 32 }}>
           {d.status.readings === 0
             ? 'No readings recorded for this week. Start logging readings to see trend analysis here.'
-            : `${d.trend.length} data point${d.trend.length !== 1 ? 's' : ''} recorded across ${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} this week. LSI held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
+            : `${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} recorded this week. LSI held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
         </p>
       </section>
 
@@ -965,7 +980,7 @@ function ReportC({ d }: { d: ReportData }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>Telemetry — full week</div>
-            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{d.trend.length} readings, 3 metrics tracked</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{d.status.readings} readings, 3 metrics tracked</div>
           </div>
           <div style={{ display: 'flex', gap: 14 }}>
             {[{ label: 'FC', color: '#4FC3F7' }, { label: 'pH', color: '#F59E0B' }, { label: 'PRESS', color: '#10B981' }].map(m => (
