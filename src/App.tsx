@@ -42,6 +42,7 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
+  const [reportTemplate, setReportTemplate] = useState<string>('');
 
   // Auth listener
   useEffect(() => {
@@ -334,6 +335,18 @@ export default function App() {
       r.notes || '',
     ]);
 
+    const missingInventory = inventory
+      .filter(item => item.quantity <= item.minThreshold)
+      .map(item => `${item.name} (${item.quantity}${item.unit}, min ${item.minThreshold}${item.unit})`);
+    const missingEquipment = equipment
+      .filter(item => {
+        if (!item.lastServiceDate || !item.serviceIntervalMonths) return false;
+        const next = new Date(item.lastServiceDate);
+        next.setMonth(next.getMonth() + item.serviceIntervalMonths);
+        return new Date() >= next;
+      })
+      .map(item => item.name);
+
     const reportRows = reportEntries.map(entry => [
       entry.timestamp,
       '',
@@ -345,8 +358,15 @@ export default function App() {
       '',
       entry.summary
     ]);
+    const templateRows = reportTemplate
+      ? [[new Date().toISOString(), '', '', '', '', '', '', '', `Template: ${reportTemplate.replace(/\n+/g, ' ').trim()}`]]
+      : [];
+    const missingRows = [
+      [new Date().toISOString(), '', '', '', '', '', '', '', `Missing Inventory: ${missingInventory.length ? missingInventory.join('; ') : 'None'}`],
+      [new Date().toISOString(), '', '', '', '', '', '', '', `Missing Equipment Service: ${missingEquipment.length ? missingEquipment.join('; ') : 'None'}`]
+    ];
     
-    const csvContent = [headers, ...rows, ...reportRows].map(e => e.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csvContent = [headers, ...rows, ...templateRows, ...missingRows, ...reportRows].map(e => e.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -360,6 +380,17 @@ export default function App() {
 
   const handleAddToReport = (entry: { timestamp: string; summary: string }) => {
     setReportEntries(prev => [entry, ...prev].slice(0, 30));
+  };
+
+  const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = typeof reader.result === 'string' ? reader.result : '';
+      setReportTemplate(content.slice(0, 5000));
+    };
+    reader.readAsText(file);
   };
 
   if (!isAuthReady) {
@@ -410,6 +441,10 @@ export default function App() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
+          <label className="px-3 py-1.5 rounded-lg bg-surface border border-border-dim text-ink-dim hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest cursor-pointer">
+            Report Template
+            <input type="file" accept=".txt,.md,.csv" onChange={handleTemplateUpload} className="hidden" />
+          </label>
           <button 
             onClick={() => setIsInventoryOpen(true)}
             className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
