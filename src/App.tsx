@@ -10,11 +10,12 @@ import Glossary from './components/Glossary';
 import ReminderSettings from './components/ReminderSettings';
 import Inventory from './components/Inventory';
 import Equipment from './components/Equipment';
+import WeeklyReport from './components/WeeklyReport';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
-import { LogIn, LogOut, User as UserIcon, Package, Wrench } from 'lucide-react';
+import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
+  const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
@@ -410,19 +412,26 @@ export default function App() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={() => setIsInventoryOpen(true)}
             className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
             title="Inventory"
           >
             <Package size={18} />
           </button>
-          <button 
+          <button
             onClick={() => setIsEquipmentOpen(true)}
             className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
             title="Equipment"
           >
             <Wrench size={18} />
+          </button>
+          <button
+            onClick={() => setIsWeeklyReportOpen(true)}
+            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-accent transition-colors"
+            title="Weekly Report"
+          >
+            <FileText size={18} />
           </button>
           <div className="h-8 w-[1px] bg-border-dim mx-1" />
           <button 
@@ -504,9 +513,19 @@ export default function App() {
         onClose={() => setIsGlossaryOpen(false)}
       />
 
-      <GeminiAssistant 
-        latestReading={readings[0]} 
-        history={readings} 
+      <WeeklyReport
+        isOpen={isWeeklyReportOpen}
+        onClose={() => setIsWeeklyReportOpen(false)}
+        readings={readings}
+        inventory={inventory}
+        equipment={equipment}
+        tasks={tasks}
+        user={user}
+      />
+
+      <GeminiAssistant
+        latestReading={readings[0]}
+        history={readings}
         onExecuteProtocol={handleExecuteProtocol}
         onAddToReport={handleAddToReport}
       />
