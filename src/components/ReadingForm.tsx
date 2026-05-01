@@ -174,25 +174,20 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
               }));
             } else {
               const result = JSON.parse(response.text || '{}');
-              setFormData(prev => ({
+              // Only accept fields where transcription returned a parseable finite number
+              const validFields: Partial<Record<NumericField, number>> = {};
+              for (const field of NUMERIC_FIELDS) {
+                const parsed = parseFloat(String(result[field]));
+                if (!isNaN(parsed) && isFinite(parsed)) validFields[field] = parsed;
+              }
+              setFormData(prev => ({ ...prev, ...validFields, notes: result.notes || prev.notes }));
+              setRawInputs(prev => ({
                 ...prev,
-                ...result,
-                notes: result.notes || prev.notes
+                ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
               }));
-              // Keep rawInputs in sync so displayed fields reflect transcribed values
-              setRawInputs(prev => {
-                const updates: Record<string, string> = {};
-                for (const field of NUMERIC_FIELDS) {
-                  if (result[field] !== undefined) updates[field] = String(result[field]);
-                }
-                return { ...prev, ...updates };
-              });
-              // Mark only the fields returned by transcription as touched
               setTouched(prev => {
                 const n = new Set(prev);
-                for (const field of NUMERIC_FIELDS) {
-                  if (result[field] !== undefined) n.add(field);
-                }
+                for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
                 return n;
               });
             }

@@ -156,8 +156,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   const telemetry: TelemetryMetric[] = METRICS.map(m => {
     const vals = weekReadings.map(m.get).filter((v): v is number => v != null);
     if (vals.length === 0) {
-      const mid = parseFloat(((m.target[0] + m.target[1]) / 2).toFixed(1));
-      return { key: m.key, label: m.label, unit: m.unit, avg: mid, min: mid, max: mid, target: m.target, status: 'unknown' };
+      return { key: m.key, label: m.label, unit: m.unit, avg: NaN, min: NaN, max: NaN, target: m.target, status: 'unknown' };
     }
     const avg = parseFloat((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
     const min = parseFloat(Math.min(...vals).toFixed(1));
@@ -370,12 +369,16 @@ function LsiGauge({ value = 0, size = 220, theme = 'dark' }: { value?: number; s
   );
 }
 
-function RangeBand({ label, unit, min, max, lo, hi, value, theme = 'dark' }: { label: string; unit: string; min: number; max: number; lo: number; hi: number; value: number; theme?: 'dark' | 'light' }) {
+function RangeBand({ label, unit, min: rawMin, max: rawMax, lo, hi, value, theme = 'dark' }: { label: string; unit: string; min: number; max: number; lo: number; hi: number; value: number; theme?: 'dark' | 'light' }) {
+  const noData = isNaN(value);
+  // Fall back to target bounds when no readings exist so the scale is still sensible
+  const min = isNaN(rawMin) ? lo * 0.6 : rawMin;
+  const max = isNaN(rawMax) ? hi * 1.4 : rawMax;
   const span = max - min || 1;
   const loPct  = ((lo - min) / span) * 100;
   const hiPct  = ((hi - min) / span) * 100;
-  const vPct   = Math.min(100, Math.max(0, ((value - min) / span) * 100));
-  const ok     = value >= lo && value <= hi;
+  const vPct   = noData ? 0 : Math.min(100, Math.max(0, ((value - min) / span) * 100));
+  const ok     = !noData && value >= lo && value <= hi;
   const accent = ok ? '#10B981' : '#F59E0B';
   const ink    = theme === 'light' ? '#1a2740' : '#fff';
   const dim    = theme === 'light' ? '#7d8aa3' : '#4A6A80';
@@ -384,16 +387,19 @@ function RangeBand({ label, unit, min, max, lo, hi, value, theme = 'dark' }: { l
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.16em', textTransform: 'uppercase', color: dim }}>{label}</span>
-        <span style={{ fontFamily: '"Space Mono",monospace', fontSize: 18, fontWeight: 700, color: ink }}>{value}<span style={{ fontSize: 10, color: dim, marginLeft: 4 }}>{unit}</span></span>
+        {noData
+          ? <span style={{ fontFamily: '"Space Mono",monospace', fontSize: 14, fontWeight: 700, color: dim, letterSpacing: '.1em' }}>— NO DATA</span>
+          : <span style={{ fontFamily: '"Space Mono",monospace', fontSize: 18, fontWeight: 700, color: ink }}>{value}<span style={{ fontSize: 10, color: dim, marginLeft: 4 }}>{unit}</span></span>
+        }
       </div>
       <div style={{ position: 'relative', height: 14, background: trackBg, borderRadius: 9999, overflow: 'visible' }}>
         <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${loPct}%`, width: `${hiPct - loPct}%`, background: 'rgba(16,185,129,.25)', borderLeft: '1px dashed rgba(16,185,129,.6)', borderRight: '1px dashed rgba(16,185,129,.6)' }} />
-        <div style={{ position: 'absolute', top: -3, bottom: -3, left: `calc(${vPct}% - 4px)`, width: 8, background: accent, borderRadius: 2, boxShadow: `0 0 0 2px ${theme === 'light' ? '#fff' : '#0D1F38'}` }} />
+        {!noData && <div style={{ position: 'absolute', top: -3, bottom: -3, left: `calc(${vPct}% - 4px)`, width: 8, background: accent, borderRadius: 2, boxShadow: `0 0 0 2px ${theme === 'light' ? '#fff' : '#0D1F38'}` }} />}
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: '"Space Mono",monospace', fontSize: 9, color: dim, letterSpacing: '.1em' }}>
-        <span>{min}{unit}</span>
+        <span>{noData ? '—' : `${min}${unit}`}</span>
         <span>Target {lo}–{hi}</span>
-        <span>{max}{unit}</span>
+        <span>{noData ? '—' : `${max}${unit}`}</span>
       </div>
     </div>
   );
