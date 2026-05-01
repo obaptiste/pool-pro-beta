@@ -162,10 +162,11 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const min = parseFloat(Math.min(...vals).toFixed(1));
     const max = parseFloat(Math.max(...vals).toFixed(1));
     const [lo, hi] = m.target;
+    // Use worst single reading so short dangerous excursions aren't diluted by the average
     const status: TelemetryMetric['status'] =
-      (avg < lo * 0.8 || avg > hi * 1.2) ? 'critical' :
-      (avg < lo * 0.9 || avg > hi * 1.1) ? 'warning'  :
-      (avg < lo || avg > hi)             ? 'watch'    : 'good';
+      (min < lo * 0.8 || max > hi * 1.2) ? 'critical' :
+      (min < lo * 0.9 || max > hi * 1.1) ? 'warning'  :
+      (min < lo       || max > hi)        ? 'watch'    : 'good';
     return { key: m.key, label: m.label, unit: m.unit, avg, min, max, target: m.target, status };
   });
 
@@ -870,7 +871,7 @@ function ReportB({ d }: { d: ReportData }) {
       <section style={{ marginTop: 48, display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 40, alignItems: 'center' }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3', marginBottom: 8 }}>Pool Profile</div>
-          <PoolDiagram width={420} height={200} theme="light" indicators={{ chlorine: true, pressure: d.telemetry.find(m => m.key === 'press')?.status !== 'good' }} />
+          <PoolDiagram width={420} height={200} theme="light" indicators={{ chlorine: d.telemetry.find(m => m.key === 'chlorine')?.status === 'good', pressure: d.telemetry.find(m => m.key === 'press')?.status !== 'good' }} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 28px' }}>
           {d.telemetry.slice(0, 6).map(m => (
