@@ -58,9 +58,10 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  // Tracks fields explicitly modified by the user (manual entry or voice transcription)
+  // Tracks fields explicitly modified by the user (manual entry, voice transcription, or image upload)
   const [touched, setTouched] = useState<Set<NumericField>>(new Set());
   const [showDefaultsWarning, setShowDefaultsWarning] = useState(false);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [rawInputs, setRawInputs] = useState<Record<string, string>>(
     () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
   );
@@ -208,6 +209,69 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
     }
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsAnalyzingImage(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1];
+      const response = await generateContentWithRetry({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            inlineData: {
+              mimeType: file.type || 'image/jpeg',
+              data: base64
+            }
+          },
+          {
+            text: `Extract pool report details from this image. Return ONLY a JSON object with keys:
+chlorine, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
+missingInventory and missingEquipment should be arrays of strings when identifiable.`
+          }
+        ],
+        config: { responseMimeType: "application/json" }
+      }, process.env.GEMINI_API_KEY!);
+      const parsed = JSON.parse(response.text || '{}');
+      // Only accept fields where the image extraction returned a parseable finite number
+      const validFields: Partial<Record<NumericField, number>> = {};
+      for (const field of NUMERIC_FIELDS) {
+        const v = parseFloat(String(parsed[field]));
+        if (!isNaN(v) && isFinite(v)) validFields[field] = v;
+      }
+      const noteParts = [
+        parsed.notes,
+        parsed.missingInventory?.length ? `Missing Inventory: ${parsed.missingInventory.join(', ')}` : '',
+        parsed.missingEquipment?.length ? `Missing Equipment: ${parsed.missingEquipment.join(', ')}` : ''
+      ].filter(Boolean);
+      setFormData(prev => ({
+        ...prev,
+        ...validFields,
+        notes: noteParts.length ? `${prev.notes ? `${prev.notes}\n` : ''}${noteParts.join('\n')}` : prev.notes
+      }));
+      setRawInputs(prev => ({
+        ...prev,
+        ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
+      }));
+      setTouched(prev => {
+        const n = new Set(prev);
+        for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
+        return n;
+      });
+    } catch (error) {
+      console.error('Image analysis failed', error);
+    } finally {
+      setIsAnalyzingImage(false);
+      e.target.value = '';
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.95 }}
@@ -347,6 +411,13 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
             <p className="text-[9px] text-ink-dim italic">
               {isTranscribing ? 'Listening for readings...' : 'Speak your readings (e.g., "Chlorine 1.5, pH 7.4")'}
             </p>
+          </div>
+          <div className="flex items-center justify-between p-4 bg-bg/40 rounded-xl border border-border-dim">
+            <p className="text-[9px] text-ink-dim italic">Upload a photo of a report sheet/equipment room and auto-extract values.</p>
+            <label className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest cursor-pointer transition-all ${isAnalyzingImage ? 'bg-critical text-white' : 'bg-accent/10 text-accent hover:bg-accent/20'}`}>
+              {isAnalyzingImage ? 'Analyzing…' : 'Upload Image'}
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={isAnalyzingImage} />
+            </label>
           </div>
 
           <div className="space-y-3">
