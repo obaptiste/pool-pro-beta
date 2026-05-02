@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  Check, 
-  AlertCircle, 
-  Thermometer, 
-  Droplets, 
-  Activity, 
+import {
+  Check,
+  AlertCircle,
+  Thermometer,
+  Droplets,
+  Activity,
   TrendingUp,
   Save,
   ChevronLeft,
@@ -12,7 +12,8 @@ import {
   Mic,
   MicOff,
   Waves,
-  Sun
+  Sun,
+  MinusCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -26,6 +27,16 @@ interface Props {
 
 const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
 type NumericField = typeof NUMERIC_FIELDS[number];
+
+const FIELD_LABELS: Record<NumericField, string> = {
+  chlorine: 'Free Chlorine',
+  ph: 'pH Level',
+  alkalinity: 'Total Alkalinity',
+  temperature: 'Temperature',
+  differentialPressure: 'Diff. Pressure',
+  calciumHardness: 'Calcium Hardness',
+  cyanuricAcid: 'Cyanuric Acid',
+};
 
 const INITIAL_NUMERIC: Record<NumericField, number> = {
   chlorine: 1.5,
@@ -47,6 +58,9 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Tracks fields explicitly modified by the user (manual entry, voice transcription, or image upload)
+  const [touched, setTouched] = useState<Set<NumericField>>(new Set());
+  const [showDefaultsWarning, setShowDefaultsWarning] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [rawInputs, setRawInputs] = useState<Record<string, string>>(
     () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
@@ -65,6 +79,8 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
     if (type === 'number') {
       setRawInputs(prev => ({ ...prev, [name]: value }));
+      setTouched(prev => { const n = new Set(prev); n.add(name as NumericField); return n; });
+      setShowDefaultsWarning(false);
       if (value === '' || value.endsWith('.')) {
         // Mid-entry — clear stale error so UI doesn't show an outdated state
         setErrors(prev => ({ ...prev, [name]: '' }));
@@ -97,6 +113,13 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
       const parsed = parseFloat(rawInputs[field] ?? '');
       if (!isNaN(parsed)) flushed[field] = parsed;
     }
+    // Warn if any measurement fields are still at their pre-filled defaults
+    const untouched = NUMERIC_FIELDS.filter(f => !touched.has(f));
+    if (untouched.length > 0 && !showDefaultsWarning) {
+      setShowDefaultsWarning(true);
+      return;
+    }
+    setShowDefaultsWarning(false);
     onSave(flushed);
   };
 
@@ -152,18 +175,21 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
               }));
             } else {
               const result = JSON.parse(response.text || '{}');
-              setFormData(prev => ({
+              // Only accept fields where transcription returned a parseable finite number
+              const validFields: Partial<Record<NumericField, number>> = {};
+              for (const field of NUMERIC_FIELDS) {
+                const parsed = parseFloat(String(result[field]));
+                if (!isNaN(parsed) && isFinite(parsed)) validFields[field] = parsed;
+              }
+              setFormData(prev => ({ ...prev, ...validFields, notes: result.notes || prev.notes }));
+              setRawInputs(prev => ({
                 ...prev,
-                ...result,
-                notes: result.notes || prev.notes
+                ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
               }));
-              // Keep rawInputs in sync so displayed fields reflect transcribed values
-              setRawInputs(prev => {
-                const updates: Record<string, string> = {};
-                for (const field of NUMERIC_FIELDS) {
-                  if (result[field] !== undefined) updates[field] = String(result[field]);
-                }
-                return { ...prev, ...updates };
+              setTouched(prev => {
+                const n = new Set(prev);
+                for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
+                return n;
               });
             }
           } catch (e) {
@@ -213,6 +239,12 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         config: { responseMimeType: "application/json" }
       }, process.env.GEMINI_API_KEY!);
       const parsed = JSON.parse(response.text || '{}');
+      // Only accept fields where the image extraction returned a parseable finite number
+      const validFields: Partial<Record<NumericField, number>> = {};
+      for (const field of NUMERIC_FIELDS) {
+        const v = parseFloat(String(parsed[field]));
+        if (!isNaN(v) && isFinite(v)) validFields[field] = v;
+      }
       const noteParts = [
         parsed.notes,
         parsed.missingInventory?.length ? `Missing Inventory: ${parsed.missingInventory.join(', ')}` : '',
@@ -220,15 +252,17 @@ missingInventory and missingEquipment should be arrays of strings when identifia
       ].filter(Boolean);
       setFormData(prev => ({
         ...prev,
-        ...parsed,
+        ...validFields,
         notes: noteParts.length ? `${prev.notes ? `${prev.notes}\n` : ''}${noteParts.join('\n')}` : prev.notes
       }));
-      setRawInputs(prev => {
-        const updates: Record<string, string> = {};
-        for (const field of NUMERIC_FIELDS) {
-          if (parsed[field] !== undefined && parsed[field] !== null) updates[field] = String(parsed[field]);
-        }
-        return { ...prev, ...updates };
+      setRawInputs(prev => ({
+        ...prev,
+        ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
+      }));
+      setTouched(prev => {
+        const n = new Set(prev);
+        for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
+        return n;
       });
     } catch (error) {
       console.error('Image analysis failed', error);
@@ -274,6 +308,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={10}
               step="any"
+              isDefault={!touched.has('chlorine')}
             />
             <InputField
               label="pH Level"
@@ -287,6 +322,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={14}
               step="any"
+              isDefault={!touched.has('ph')}
             />
             <InputField
               label="Total Alkalinity"
@@ -300,6 +336,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={300}
               step="any"
+              isDefault={!touched.has('alkalinity')}
             />
             <InputField
               label="Temperature"
@@ -313,6 +350,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={50}
               step="any"
+              isDefault={!touched.has('temperature')}
             />
             <InputField
               label="Diff Pressure"
@@ -326,6 +364,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={500}
               step="any"
+              isDefault={!touched.has('differentialPressure')}
             />
             <InputField
               label="Calcium Hardness"
@@ -339,6 +378,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={1000}
               step="any"
+              isDefault={!touched.has('calciumHardness')}
             />
             <InputField
               label="Cyanuric Acid"
@@ -352,6 +392,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               min={0}
               max={200}
               step="any"
+              isDefault={!touched.has('cyanuricAcid')}
             />
           </div>
 
@@ -407,14 +448,46 @@ missingInventory and missingEquipment should be arrays of strings when identifia
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-6 bg-[#060e1a]/95 backdrop-blur-xl border-t border-border-dim">
-            <div className="max-w-2xl mx-auto">
-              <button 
-                type="submit" 
-                className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
-              >
-                <Save size={18} />
-                Commit to Database
-              </button>
+            <div className="max-w-2xl mx-auto space-y-3">
+              {showDefaultsWarning && (() => {
+                const untouched = NUMERIC_FIELDS.filter(f => !touched.has(f));
+                return (
+                  <div className="p-4 rounded-xl bg-warning/10 border border-warning/40">
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertCircle size={14} className="text-warning flex-shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">Unsaved field defaults detected</span>
+                    </div>
+                    <p className="text-xs text-ink-muted mb-3">
+                      <strong className="text-ink">{untouched.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouched.length === 1 ? 'was' : 'were'} not entered — the pre-filled estimate{untouched.length === 1 ? '' : 's'} will be saved and may affect report accuracy.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowDefaultsWarning(false)}
+                        className="btn btn-secondary py-2 flex-1"
+                      >
+                        Review Fields
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-primary py-2 flex-1"
+                      >
+                        <Save size={14} />
+                        Save Anyway
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+              {!showDefaultsWarning && (
+                <button
+                  type="submit"
+                  className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
+                >
+                  <Save size={18} />
+                  Commit to Database
+                </button>
+              )}
             </div>
           </div>
         </form>
@@ -423,7 +496,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step }: any) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault }: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -431,6 +504,10 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
         {error ? (
           <span className="text-[9px] font-bold text-critical uppercase tracking-widest flex items-center gap-1.5">
             <AlertCircle size={10} /> {error}
+          </span>
+        ) : isDefault ? (
+          <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
+            <MinusCircle size={10} /> Default
           </span>
         ) : (
           <span className="text-[9px] font-bold text-success uppercase tracking-widest flex items-center gap-1.5">
