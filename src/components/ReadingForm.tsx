@@ -79,7 +79,6 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
     if (type === 'number') {
       setRawInputs(prev => ({ ...prev, [name]: value }));
-      setTouched(prev => { const n = new Set(prev); n.add(name as NumericField); return n; });
       setShowDefaultsWarning(false);
       if (value === '' || value.endsWith('.')) {
         // Mid-entry — clear stale error so UI doesn't show an outdated state
@@ -89,6 +88,9 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
         if (!isNaN(parsed)) {
           setFormData(prev => ({ ...prev, [name]: parsed }));
           setErrors(prev => ({ ...prev, [name]: validate(name, parsed) }));
+          // Only mark touched once a valid number is entered — clearing or partial
+          // input must not bypass the untouched-default warning on submit
+          setTouched(prev => { const n = new Set(prev); n.add(name as NumericField); return n; });
         }
       }
     } else {
