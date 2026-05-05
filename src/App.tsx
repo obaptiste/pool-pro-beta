@@ -73,7 +73,7 @@ export default function App() {
     const tasksQuery = query(collection(db, 'tasks'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
     const inventoryQuery = query(collection(db, 'inventory'), where('uid', '==', user.uid));
     const equipmentQuery = query(collection(db, 'equipment'), where('uid', '==', user.uid));
-    const wishlistQuery = query(collection(db, 'wishlist'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
+    const wishlistQuery = query(collection(db, 'wishlist'), where('uid', '==', user.uid));
     const scheduleDoc = doc(db, 'schedules', user.uid);
 
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
@@ -137,7 +137,7 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'equipment'));
 
     const unsubWishlist = onSnapshot(wishlistQuery, (snapshot) => {
-      setWishlist(snapshot.docs.map(doc => {
+      const items = snapshot.docs.map(doc => {
         const data = doc.data();
         const rawOptions = Array.isArray(data.purchaseOptions) ? data.purchaseOptions : [];
         const purchaseOptions = rawOptions
@@ -166,7 +166,9 @@ export default function App() {
           uid: typeof data.uid === 'string' ? data.uid : '',
           createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
         } as WishlistItem;
-      }));
+      });
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      setWishlist(items);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'wishlist'));
 
     const unsubSchedule = onSnapshot(scheduleDoc, (doc) => {
