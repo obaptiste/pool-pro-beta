@@ -111,6 +111,15 @@ export interface MaintenanceSchedule {
   remindersEnabled: boolean;
 }
 
+export interface WorkSession {
+  id: string;
+  uid: string;
+  startTime: Date;
+  endTime: Date | null;
+  source: 'manual' | 'geo';
+  locationLabel?: string;
+}
+
 export interface Ranges {
   chlorine: { min: number; max: number; unit: string };
   ph: { min: number; max: number; unit: string };
