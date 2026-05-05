@@ -622,9 +622,10 @@ export default function App() {
 
       <AnimatePresence>
         {isLogging && (
-          <ReadingForm 
+          <ReadingForm
             onSave={handleSaveReading}
             onCancel={() => setIsLogging(false)}
+            latestReading={readings[0]}
           />
         )}
         

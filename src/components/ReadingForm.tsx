@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { History as HistoryIcon } from 'lucide-react';
 import {
   Check,
   AlertCircle,
@@ -23,6 +24,7 @@ import { generateContentWithRetry } from '../lib/gemini';
 interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp'>) => void;
   onCancel: () => void;
+  latestReading?: Reading;
 }
 
 const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
@@ -38,7 +40,7 @@ const FIELD_LABELS: Record<NumericField, string> = {
   cyanuricAcid: 'Cyanuric Acid',
 };
 
-const INITIAL_NUMERIC: Record<NumericField, number> = {
+const FALLBACK_NUMERIC: Record<NumericField, number> = {
   chlorine: 1.5,
   ph: 7.4,
   alkalinity: 100,
@@ -48,9 +50,21 @@ const INITIAL_NUMERIC: Record<NumericField, number> = {
   cyanuricAcid: 40,
 };
 
-export default function ReadingForm({ onSave, onCancel }: Props) {
+export default function ReadingForm({ onSave, onCancel, latestReading }: Props) {
+  // Prefill from the most recent reading when available; fall back to typical values otherwise.
+  const initialNumeric = React.useMemo<Record<NumericField, number>>(() => {
+    if (!latestReading) return { ...FALLBACK_NUMERIC };
+    const out = { ...FALLBACK_NUMERIC };
+    for (const field of NUMERIC_FIELDS) {
+      const v = latestReading[field];
+      if (typeof v === 'number' && isFinite(v)) out[field] = v;
+    }
+    return out;
+  }, [latestReading]);
+  const carriedFromHistory = !!latestReading;
+
   const [formData, setFormData] = useState({
-    ...INITIAL_NUMERIC,
+    ...initialNumeric,
     notes: '',
     uid: '',
   });
@@ -63,7 +77,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
   const [showDefaultsWarning, setShowDefaultsWarning] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [rawInputs, setRawInputs] = useState<Record<string, string>>(
-    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
+    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(initialNumeric[f])]))
   );
 
   const validate = (name: string, value: number) => {
@@ -309,6 +323,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={10}
               step="any"
               isDefault={!touched.has('chlorine')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="pH Level"
@@ -323,6 +338,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={14}
               step="any"
               isDefault={!touched.has('ph')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="Total Alkalinity"
@@ -337,6 +353,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={300}
               step="any"
               isDefault={!touched.has('alkalinity')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="Temperature"
@@ -351,6 +368,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={50}
               step="any"
               isDefault={!touched.has('temperature')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="Diff Pressure"
@@ -365,6 +383,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={500}
               step="any"
               isDefault={!touched.has('differentialPressure')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="Calcium Hardness"
@@ -379,6 +398,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={1000}
               step="any"
               isDefault={!touched.has('calciumHardness')}
+              carried={carriedFromHistory}
             />
             <InputField
               label="Cyanuric Acid"
@@ -393,6 +413,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={200}
               step="any"
               isDefault={!touched.has('cyanuricAcid')}
+              carried={carriedFromHistory}
             />
           </div>
 
@@ -455,10 +476,12 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                   <div className="p-4 rounded-xl bg-warning/10 border border-warning/40">
                     <div className="flex items-center gap-2 mb-2">
                       <AlertCircle size={14} className="text-warning flex-shrink-0" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">Unsaved field defaults detected</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">
+                        {carriedFromHistory ? 'Some fields carried over' : 'Unsaved field defaults detected'}
+                      </span>
                     </div>
                     <p className="text-xs text-ink-muted mb-3">
-                      <strong className="text-ink">{untouched.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouched.length === 1 ? 'was' : 'were'} not entered — the pre-filled estimate{untouched.length === 1 ? '' : 's'} will be saved and may affect report accuracy.
+                      <strong className="text-ink">{untouched.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouched.length === 1 ? 'was' : 'were'} not entered — {carriedFromHistory ? `${untouched.length === 1 ? 'the value' : 'values'} from your last reading will be saved.` : `the pre-filled estimate${untouched.length === 1 ? '' : 's'} will be saved and may affect report accuracy.`}
                     </p>
                     <div className="flex gap-2">
                       <button
@@ -496,7 +519,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault }: any) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault, carried }: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -506,9 +529,15 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
             <AlertCircle size={10} /> {error}
           </span>
         ) : isDefault ? (
-          <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
-            <MinusCircle size={10} /> Default
-          </span>
+          carried ? (
+            <span className="text-[9px] font-bold text-accent/70 uppercase tracking-widest flex items-center gap-1.5">
+              <HistoryIcon size={10} /> Carried
+            </span>
+          ) : (
+            <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
+              <MinusCircle size={10} /> Default
+            </span>
+          )
         ) : (
           <span className="text-[9px] font-bold text-success uppercase tracking-widest flex items-center gap-1.5">
             <Check size={10} /> Nominal
