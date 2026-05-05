@@ -18,13 +18,20 @@ const formatDuration = (ms: number) => {
   return `${hours}h ${minutes}m`;
 };
 
+const getLocalDayKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function WorkTracker({ sessions, activeSession, geoAutoStartEnabled, onStart, onStop, onToggleGeoAutoStart }: Props) {
   const totalMs = sessions.reduce((acc, session) => {
     const end = session.endTime ? session.endTime.getTime() : Date.now();
     return acc + Math.max(0, end - session.startTime.getTime());
   }, 0);
 
-  const poolDays = new Set(sessions.map(s => s.startTime.toISOString().slice(0, 10))).size;
+  const poolDays = new Set(sessions.map(s => getLocalDayKey(s.startTime))).size;
 
   return (
     <section className="card bg-surface border-border-dim p-4 space-y-4">
