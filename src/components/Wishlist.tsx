@@ -13,9 +13,12 @@ import {
   MessageCircle,
   Check,
   AlertTriangle,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Priority, PurchaseOption, WishlistItem } from '../types';
+import { callAiWithFallback } from '../lib/ai';
 
 interface WishlistProps {
   isOpen: boolean;
@@ -393,6 +396,9 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
   // a vendor and blurs — prevents accidental "Add Option" clicks from
   // persisting blank rows to Firestore.
   const [pendingOptions, setPendingOptions] = useState<PurchaseOption[]>([]);
+  // AI description generation state
+  const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+  const [descriptionError, setDescriptionError] = useState<string | null>(null);
 
   // Re-sync draft when the upstream item id or any tracked field changes
   // (e.g. snapshot brings in a remote edit). Equality check skips no-ops
@@ -460,6 +466,55 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
       ...item,
       purchaseOptions: item.purchaseOptions.filter((o) => o.id !== id),
     });
+  };
+
+  const generateDescription = async () => {
+    if (!draftItem.name.trim()) {
+      setDescriptionError('Please enter an equipment name first.');
+      setTimeout(() => setDescriptionError(null), 2500);
+      return;
+    }
+
+    setIsGeneratingDescription(true);
+    setDescriptionError(null);
+
+    try {
+      const apiKey = process.env.GEMINI_API_KEY || '';
+      if (!apiKey) {
+        throw new Error('AI API key not configured');
+      }
+
+      const systemInstruction = `You are a pool equipment and supply expert. Generate a clear, concise description (2-3 sentences) for a pool maintenance wishlist item. Focus on why this equipment matters for pool maintenance, key features or benefits, and typical use cases.`;
+
+      const prompt = `Generate a description for this pool equipment/supply item: ${draftItem.name}`;
+
+      const result = await callAiWithFallback(
+        {
+          model: 'gemini-2.0-flash',
+          contents: prompt,
+          config: {
+            systemInstruction,
+          },
+        },
+        apiKey,
+        systemInstruction
+      );
+
+      // Update the description field with the AI-generated text
+      setField('description', result.text.trim());
+      // Auto-commit the generated description
+      const next = { ...draftItem, description: result.text.trim() };
+      setDraftItem(next);
+      if (!itemFieldsEqual(next, item)) {
+        onUpdate({ ...next, purchaseOptions: item.purchaseOptions });
+      }
+    } catch (error: any) {
+      console.error('AI description generation failed:', error);
+      setDescriptionError(error.message || 'Failed to generate description. Please try again.');
+      setTimeout(() => setDescriptionError(null), 2500);
+    } finally {
+      setIsGeneratingDescription(false);
+    }
   };
 
   const totalOptions = item.purchaseOptions.length + pendingOptions.length;
@@ -545,16 +600,50 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                     />
                   </div>
                   <div className="space-y-1 col-span-2">
-                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
-                      Description / Specs
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                        Description / Specs
+                      </label>
+                      <button
+                        onClick={generateDescription}
+                        disabled={isGeneratingDescription || !draftItem.name.trim()}
+                        className="flex items-center gap-1 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-accent hover:text-accent-bright disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        title="Generate AI description"
+                      >
+                        {isGeneratingDescription ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={12} />
+                            AI Generate
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <textarea
                       value={draftItem.description || ''}
                       onChange={(e) => setField('description', e.target.value)}
                       onBlur={commitItemFields}
                       rows={2}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all resize-none"
+                      disabled={isGeneratingDescription}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all resize-none disabled:opacity-40"
                     />
+                    {descriptionError && (
+                      <AnimatePresence>
+                        <motion.span
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          className="text-[9px] text-red-500 flex items-center gap-1"
+                        >
+                          <AlertTriangle size={10} />
+                          {descriptionError}
+                        </motion.span>
+                      </AnimatePresence>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
