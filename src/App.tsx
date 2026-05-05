@@ -255,9 +255,14 @@ export default function App() {
 
   const handleStopWorkSession = async () => {
     if (!activeSession) return;
-    await updateDoc(doc(db, 'workSessions', activeSession.id), {
-      endTime: Timestamp.fromDate(new Date())
-    });
+
+    try {
+      await updateDoc(doc(db, 'workSessions', activeSession.id), {
+        endTime: Timestamp.fromDate(new Date())
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `workSessions/${activeSession.id}`);
+    }
   };
 
   useEffect(() => {
