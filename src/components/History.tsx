@@ -11,6 +11,10 @@ interface Props {
 }
 
 export default function History({ readings, onBack, onDelete }: Props) {
+
+  const uniqueVisitDays = new Set(readings.map((reading) => format(reading.timestamp, 'yyyy-MM-dd'))).size;
+  const firstVisit = readings.length ? readings[readings.length - 1].timestamp : null;
+  const lastVisit = readings.length ? readings[0].timestamp : null;
   return (
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
@@ -32,6 +36,12 @@ export default function History({ readings, onBack, onDelete }: Props) {
             <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">Historical Data Archive</p>
           </div>
         </header>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Logged Visits</p><p className="text-2xl font-bold text-white">{uniqueVisitDays}</p></div>
+          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Total Logs</p><p className="text-2xl font-bold text-white">{readings.length}</p></div>
+          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Range</p><p className="text-xs font-mono text-ink-muted">{firstVisit ? format(firstVisit, 'MMM d, yyyy') : '—'} → {lastVisit ? format(lastVisit, 'MMM d, yyyy') : '—'}</p></div>
+        </div>
 
         <div className="space-y-4">
           {readings.length === 0 ? (

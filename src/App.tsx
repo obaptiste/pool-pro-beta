@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Dashboard from './components/Dashboard';
 import ReadingForm from './components/ReadingForm';
@@ -12,7 +12,8 @@ import Inventory from './components/Inventory';
 import Equipment from './components/Equipment';
 import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
-import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem } from './types';
+import WorkTracker from './components/WorkTracker';
+import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
@@ -27,6 +28,8 @@ export default function App() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
+  const [geoAutoStartEnabled, setGeoAutoStartEnabled] = useState(false);
   const [schedule, setSchedule] = useState<MaintenanceSchedule>({
     uid: '',
     testFrequency: 'weekly',
@@ -48,6 +51,7 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
   const [reportTemplate, setReportTemplate] = useState<string>('');
+  const geoStartInFlight = useRef(false);
 
   // Auth listener
   useEffect(() => {
@@ -66,6 +70,7 @@ export default function App() {
       setInventory([]);
       setEquipment([]);
       setWishlist([]);
+      setWorkSessions([]);
       return;
     }
 
@@ -74,6 +79,7 @@ export default function App() {
     const inventoryQuery = query(collection(db, 'inventory'), where('uid', '==', user.uid));
     const equipmentQuery = query(collection(db, 'equipment'), where('uid', '==', user.uid));
     const wishlistQuery = query(collection(db, 'wishlist'), where('uid', '==', user.uid));
+    const sessionsQuery = query(collection(db, 'workSessions'), where('uid', '==', user.uid), orderBy('startTime', 'desc'));
     const scheduleDoc = doc(db, 'schedules', user.uid);
 
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
@@ -171,6 +177,19 @@ export default function App() {
       setWishlist(items);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'wishlist'));
 
+
+    const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
+      setWorkSessions(snapshot.docs.map((sessionDoc) => {
+        const data = sessionDoc.data();
+        return {
+          ...data,
+          id: sessionDoc.id,
+          startTime: (data.startTime as Timestamp).toDate(),
+          endTime: data.endTime ? (data.endTime as Timestamp).toDate() : null,
+        } as WorkSession;
+      }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'workSessions'));
+
     const unsubSchedule = onSnapshot(scheduleDoc, (doc) => {
       if (doc.exists()) {
         const data = doc.data();
@@ -188,6 +207,7 @@ export default function App() {
       unsubInventory();
       unsubEquipment();
       unsubWishlist();
+      unsubSessions();
       unsubSchedule();
     };
   }, [user]);
@@ -218,6 +238,56 @@ export default function App() {
       }
     }
   }, [schedule]);
+
+
+  const activeSession = workSessions.find((session) => !session.endTime) || null;
+
+  const handleStartWorkSession = async (source: 'manual' | 'geo') => {
+    if (!user || activeSession) return;
+    try {
+      await addDoc(collection(db, 'workSessions'), {
+        uid: user.uid,
+        startTime: Timestamp.fromDate(new Date()),
+        endTime: null,
+        source,
+        locationLabel: source === 'geo' ? 'Joy Lane' : 'Manual start',
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'workSessions');
+    }
+  };
+
+  const handleStopWorkSession = async () => {
+    if (!activeSession) return;
+
+    try {
+      await updateDoc(doc(db, 'workSessions', activeSession.id), {
+        endTime: Timestamp.fromDate(new Date())
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `workSessions/${activeSession.id}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!geoAutoStartEnabled || !user || activeSession || !('geolocation' in navigator)) return;
+    const joyLane = { latitude: 30.266, longitude: -97.743 };
+    const watchId = navigator.geolocation.watchPosition((position) => {
+      const toRad = (v: number) => (v * Math.PI) / 180;
+      const dLat = toRad(position.coords.latitude - joyLane.latitude);
+      const dLon = toRad(position.coords.longitude - joyLane.longitude);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(joyLane.latitude)) * Math.cos(toRad(position.coords.latitude)) * Math.sin(dLon / 2) ** 2;
+      const meters = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (meters < 120 && !geoStartInFlight.current) {
+        geoStartInFlight.current = true;
+        navigator.geolocation.clearWatch(watchId);
+        handleStartWorkSession('geo').finally(() => {
+          geoStartInFlight.current = false;
+        });
+      }
+    });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [geoAutoStartEnabled, user, activeSession]);
 
   const handleSaveReading = async (newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => {
     if (!user) return;
@@ -570,7 +640,15 @@ export default function App() {
         </div>
       </nav>
 
-      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28 grid-bg">
+      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28 grid-bg space-y-4">
+        <WorkTracker
+          sessions={workSessions}
+          activeSession={activeSession}
+          geoAutoStartEnabled={geoAutoStartEnabled}
+          onStart={handleStartWorkSession}
+          onStop={handleStopWorkSession}
+          onToggleGeoAutoStart={setGeoAutoStartEnabled}
+        />
         <Dashboard 
           readings={readings} 
           tasks={tasks}
