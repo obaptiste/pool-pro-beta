@@ -143,6 +143,17 @@ service cloud.firestore {
              data.uid == request.auth.uid;
     }
 
+    function isValidWishlist(data) {
+      return hasRequiredFields(['id', 'name', 'priority', 'quantity', 'purchaseOptions', 'uid', 'createdAt']) &&
+             data.id is string &&
+             data.name is string && data.name.size() <= 100 &&
+             data.priority in ['low', 'medium', 'high', 'critical'] &&
+             data.quantity is number &&
+             data.purchaseOptions is list && data.purchaseOptions.size() <= 20 &&
+             data.uid == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
     function isValidSchedule(data) {
       return hasRequiredFields(['uid', 'testFrequency', 'remindersEnabled']) &&
              data.uid == request.auth.uid &&
@@ -179,6 +190,13 @@ service cloud.firestore {
       allow read: if isDocOwner();
       allow create: if isAuthenticated() && isValidEquipment(request.resource.data) && uidUnchanged();
       allow update: if isDocOwner() && isValidEquipment(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /wishlist/{wishId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidWishlist(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidWishlist(request.resource.data) && uidNotModified();
       allow delete: if isDocOwner();
     }
 

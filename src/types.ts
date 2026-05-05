@@ -77,6 +77,30 @@ export interface EquipmentItem {
   uid: string;
 }
 
+export interface PurchaseOption {
+  id: string;
+  vendor: string;
+  url?: string;
+  price?: number;
+  currency?: string;
+  qualityRating?: number;
+  availability?: string;
+  notes?: string;
+}
+
+export interface WishlistItem {
+  id: string;
+  name: string;
+  description?: string;
+  priority: Priority;
+  quantity: number;
+  estimatedCost?: number;
+  currency?: string;
+  purchaseOptions: PurchaseOption[];
+  uid: string;
+  createdAt: Date;
+}
+
 export type Frequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
 
 export interface MaintenanceSchedule {

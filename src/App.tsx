@@ -10,12 +10,13 @@ import Glossary from './components/Glossary';
 import ReminderSettings from './components/ReminderSettings';
 import Inventory from './components/Inventory';
 import Equipment from './components/Equipment';
+import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
-import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem } from './types';
+import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
-import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText } from 'lucide-react';
+import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText, ListChecks } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
+  const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
   const [schedule, setSchedule] = useState<MaintenanceSchedule>({
     uid: '',
     testFrequency: 'weekly',
@@ -41,6 +43,7 @@ export default function App() {
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
+  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
@@ -62,6 +65,7 @@ export default function App() {
       setTasks([]);
       setInventory([]);
       setEquipment([]);
+      setWishlist([]);
       return;
     }
 
@@ -69,6 +73,7 @@ export default function App() {
     const tasksQuery = query(collection(db, 'tasks'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
     const inventoryQuery = query(collection(db, 'inventory'), where('uid', '==', user.uid));
     const equipmentQuery = query(collection(db, 'equipment'), where('uid', '==', user.uid));
+    const wishlistQuery = query(collection(db, 'wishlist'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
     const scheduleDoc = doc(db, 'schedules', user.uid);
 
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
@@ -131,6 +136,18 @@ export default function App() {
       } as EquipmentItem)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'equipment'));
 
+    const unsubWishlist = onSnapshot(wishlistQuery, (snapshot) => {
+      setWishlist(snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          purchaseOptions: Array.isArray(data.purchaseOptions) ? data.purchaseOptions : [],
+          createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+        } as WishlistItem;
+      }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'wishlist'));
+
     const unsubSchedule = onSnapshot(scheduleDoc, (doc) => {
       if (doc.exists()) {
         const data = doc.data();
@@ -147,6 +164,7 @@ export default function App() {
       unsubTasks();
       unsubInventory();
       unsubEquipment();
+      unsubWishlist();
       unsubSchedule();
     };
   }, [user]);
@@ -323,6 +341,44 @@ export default function App() {
     }
   };
 
+  const handleUpdateWishlist = async (item: WishlistItem) => {
+    if (!user) return;
+    try {
+      const cleanOptions = (item.purchaseOptions || []).map(opt => ({
+        id: opt.id,
+        vendor: opt.vendor || '',
+        url: opt.url || '',
+        price: opt.price ?? null,
+        currency: opt.currency || '',
+        qualityRating: opt.qualityRating ?? null,
+        availability: opt.availability || '',
+        notes: opt.notes || '',
+      }));
+      await setDoc(doc(db, 'wishlist', item.id), {
+        id: item.id,
+        name: item.name,
+        description: item.description || '',
+        priority: item.priority,
+        quantity: item.quantity,
+        estimatedCost: item.estimatedCost ?? null,
+        currency: item.currency || '',
+        purchaseOptions: cleanOptions,
+        uid: user.uid,
+        createdAt: Timestamp.fromDate(item.createdAt || new Date()),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `wishlist/${item.id}`);
+    }
+  };
+
+  const handleDeleteWishlist = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'wishlist', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `wishlist/${id}`);
+    }
+  };
+
   const exportToCSV = () => {
     const headers = ['Timestamp', 'Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (kPa)', 'Calcium Hardness (ppm)', 'CYA (ppm)', 'Notes'];
     const rows = readings.map(r => [
@@ -467,6 +523,13 @@ export default function App() {
             <Wrench size={18} />
           </button>
           <button
+            onClick={() => setIsWishlistOpen(true)}
+            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
+            title="Equipment Wishlist"
+          >
+            <ListChecks size={18} />
+          </button>
+          <button
             onClick={() => setIsWeeklyReportOpen(true)}
             className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-accent transition-colors"
             title="Weekly Report"
@@ -518,12 +581,20 @@ export default function App() {
         onDeleteItem={handleDeleteInventory}
       />
 
-      <Equipment 
+      <Equipment
         isOpen={isEquipmentOpen}
         onClose={() => setIsEquipmentOpen(false)}
         items={equipment}
         onUpdateItem={handleUpdateEquipment}
         onDeleteItem={handleDeleteEquipment}
+      />
+
+      <Wishlist
+        isOpen={isWishlistOpen}
+        onClose={() => setIsWishlistOpen(false)}
+        items={wishlist}
+        onUpdateItem={handleUpdateWishlist}
+        onDeleteItem={handleDeleteWishlist}
       />
 
       <AnimatePresence>
