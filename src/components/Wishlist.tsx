@@ -198,12 +198,9 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <button
-                    className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${
-                      exportedFlash === 'Copy failed' ? 'text-red-400' : 'text-accent'
-                    }`}
+                onClick={handleCopy}
                 disabled={items.length === 0}
-                    {exportedFlash === 'Copy failed' ? <X size={12} /> : <Check size={12} />}{' '}
-                    {exportedFlash}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white hover:border-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Copy size={14} />
                 Copy
