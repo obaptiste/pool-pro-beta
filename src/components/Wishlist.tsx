@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ListChecks,
   Plus,
@@ -41,6 +41,19 @@ const emptyItem = (): Omit<WishlistItem, 'id' | 'uid' | 'createdAt'> => ({
   purchaseOptions: [],
 });
 
+function safeHttpUrl(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const u = new URL(candidate);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 const emptyOption = (): PurchaseOption => ({
   id: crypto.randomUUID(),
   vendor: '',
@@ -69,7 +82,8 @@ function formatPlainText(items: WishlistItem[]): string {
         if (opt.qualityRating != null) bits.push(`quality ${opt.qualityRating}/5`);
         if (opt.availability) bits.push(opt.availability);
         lines.push(bits.join(' | '));
-        if (opt.url) lines.push(`       ${opt.url}`);
+        const exportedUrl = safeHttpUrl(opt.url);
+        if (exportedUrl) lines.push(`       ${exportedUrl}`);
         if (opt.notes) lines.push(`       Notes: ${opt.notes}`);
       });
     }
@@ -445,6 +459,38 @@ interface PurchaseOptionRowProps {
 }
 
 function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProps) {
+  const [draft, setDraft] = useState<PurchaseOption>(option);
+
+  useEffect(() => {
+    setDraft(option);
+  }, [option.id]);
+
+  const setLocal = <K extends keyof PurchaseOption>(field: K, value: PurchaseOption[K]) => {
+    setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const commit = () => {
+    if (
+      draft.vendor !== option.vendor ||
+      draft.url !== option.url ||
+      draft.price !== option.price ||
+      draft.currency !== option.currency ||
+      draft.qualityRating !== option.qualityRating ||
+      draft.availability !== option.availability ||
+      draft.notes !== option.notes
+    ) {
+      onChange(draft);
+    }
+  };
+
+  const setAndCommit = (next: PurchaseOption) => {
+    setDraft(next);
+    onChange(next);
+  };
+
+  const safeUrl = safeHttpUrl(draft.url);
+  const urlIsInvalid = (draft.url || '').trim().length > 0 && !safeUrl;
+
   return (
     <div className="p-3 rounded-xl bg-surface border border-border-dim space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -452,8 +498,9 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Vendor</label>
           <input
             type="text"
-            value={option.vendor}
-            onChange={(e) => onChange({ ...option, vendor: e.target.value })}
+            value={draft.vendor}
+            onChange={(e) => setLocal('vendor', e.target.value)}
+            onBlur={commit}
             className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
             placeholder="e.g. Pool Warehouse"
           />
@@ -462,10 +509,11 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Price</label>
           <input
             type="number"
-            value={option.price ?? ''}
+            value={draft.price ?? ''}
             onChange={(e) =>
-              onChange({ ...option, price: e.target.value === '' ? undefined : Number(e.target.value) })
+              setLocal('price', e.target.value === '' ? undefined : Number(e.target.value))
             }
+            onBlur={commit}
             className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
           />
         </div>
@@ -473,8 +521,9 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Currency</label>
           <input
             type="text"
-            value={option.currency || ''}
-            onChange={(e) => onChange({ ...option, currency: e.target.value })}
+            value={draft.currency || ''}
+            onChange={(e) => setLocal('currency', e.target.value)}
+            onBlur={commit}
             className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
             placeholder="USD"
           />
@@ -484,14 +533,17 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
           <div className="flex gap-2">
             <input
               type="url"
-              value={option.url || ''}
-              onChange={(e) => onChange({ ...option, url: e.target.value })}
-              className="flex-1 bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+              value={draft.url || ''}
+              onChange={(e) => setLocal('url', e.target.value)}
+              onBlur={commit}
+              className={`flex-1 bg-[#060e1a] border rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all ${
+                urlIsInvalid ? 'border-red-500/50' : 'border-border-dim'
+              }`}
               placeholder="https://"
             />
-            {option.url && (
+            {safeUrl && (
               <a
-                href={option.url}
+                href={safeUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1.5 rounded-lg bg-surface border border-border-dim text-ink-dim hover:text-accent transition-colors"
@@ -501,13 +553,19 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
               </a>
             )}
           </div>
+          {urlIsInvalid && (
+            <p className="text-[9px] text-red-400 uppercase tracking-widest">
+              Only http:// or https:// links are allowed
+            </p>
+          )}
         </div>
         <div className="space-y-1">
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Availability</label>
           <input
             type="text"
-            value={option.availability || ''}
-            onChange={(e) => onChange({ ...option, availability: e.target.value })}
+            value={draft.availability || ''}
+            onChange={(e) => setLocal('availability', e.target.value)}
+            onBlur={commit}
             className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
             placeholder="In stock / 2 wks"
           />
@@ -518,14 +576,14 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
             {[1, 2, 3, 4, 5].map((n) => (
               <button
                 key={n}
-                onClick={() => onChange({ ...option, qualityRating: n })}
+                onClick={() => setAndCommit({ ...draft, qualityRating: n })}
                 className="p-0.5"
                 aria-label={`Rate quality ${n}`}
               >
                 <Star
                   size={16}
                   className={
-                    (option.qualityRating ?? 0) >= n ? 'text-accent fill-accent' : 'text-ink-dim'
+                    (draft.qualityRating ?? 0) >= n ? 'text-accent fill-accent' : 'text-ink-dim'
                   }
                 />
               </button>
@@ -537,8 +595,9 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
         <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Notes</label>
         <input
           type="text"
-          value={option.notes || ''}
-          onChange={(e) => onChange({ ...option, notes: e.target.value })}
+          value={draft.notes || ''}
+          onChange={(e) => setLocal('notes', e.target.value)}
+          onBlur={commit}
           className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
           placeholder="Warranty, shipping, contact, etc."
         />
