@@ -139,10 +139,31 @@ export default function App() {
     const unsubWishlist = onSnapshot(wishlistQuery, (snapshot) => {
       setWishlist(snapshot.docs.map(doc => {
         const data = doc.data();
+        const rawOptions = Array.isArray(data.purchaseOptions) ? data.purchaseOptions : [];
+        const purchaseOptions = rawOptions
+          .filter((opt: unknown): opt is Record<string, unknown> =>
+            typeof opt === 'object' && opt !== null && typeof (opt as { id?: unknown }).id === 'string'
+          )
+          .map((opt) => ({
+            id: String(opt.id),
+            vendor: typeof opt.vendor === 'string' ? opt.vendor : '',
+            url: typeof opt.url === 'string' ? opt.url : '',
+            price: typeof opt.price === 'number' ? opt.price : undefined,
+            currency: typeof opt.currency === 'string' ? opt.currency : '',
+            qualityRating: typeof opt.qualityRating === 'number' ? opt.qualityRating : undefined,
+            availability: typeof opt.availability === 'string' ? opt.availability : '',
+            notes: typeof opt.notes === 'string' ? opt.notes : '',
+          }));
         return {
-          ...data,
           id: doc.id,
-          purchaseOptions: Array.isArray(data.purchaseOptions) ? data.purchaseOptions : [],
+          name: typeof data.name === 'string' ? data.name : '',
+          description: typeof data.description === 'string' ? data.description : '',
+          priority: ['low', 'medium', 'high', 'critical'].includes(data.priority) ? data.priority : 'medium',
+          quantity: typeof data.quantity === 'number' ? data.quantity : 1,
+          estimatedCost: typeof data.estimatedCost === 'number' ? data.estimatedCost : undefined,
+          currency: typeof data.currency === 'string' ? data.currency : '',
+          purchaseOptions,
+          uid: typeof data.uid === 'string' ? data.uid : '',
           createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
         } as WishlistItem;
       }));

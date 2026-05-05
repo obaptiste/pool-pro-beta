@@ -12,6 +12,7 @@ import {
   Mail,
   MessageCircle,
   Check,
+  AlertTriangle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Priority, PurchaseOption, WishlistItem } from '../types';
@@ -65,6 +66,29 @@ const emptyOption = (): PurchaseOption => ({
   notes: '',
 });
 
+// Treat undefined and null as equivalent so a Firestore round-trip
+// (which can coerce undefined to null) doesn't trigger spurious writes.
+const eq = <T,>(a: T | null | undefined, b: T | null | undefined): boolean =>
+  (a ?? null) === (b ?? null);
+
+const optionsEqual = (a: PurchaseOption, b: PurchaseOption): boolean =>
+  a.id === b.id &&
+  eq(a.vendor, b.vendor) &&
+  eq(a.url, b.url) &&
+  eq(a.price, b.price) &&
+  eq(a.currency, b.currency) &&
+  eq(a.qualityRating, b.qualityRating) &&
+  eq(a.availability, b.availability) &&
+  eq(a.notes, b.notes);
+
+const itemFieldsEqual = (a: WishlistItem, b: WishlistItem): boolean =>
+  eq(a.name, b.name) &&
+  eq(a.description, b.description) &&
+  a.priority === b.priority &&
+  a.quantity === b.quantity &&
+  eq(a.estimatedCost, b.estimatedCost) &&
+  eq(a.currency, b.currency);
+
 function formatPlainText(items: WishlistItem[]): string {
   if (items.length === 0) return 'Equipment wishlist is empty.';
   const lines: string[] = ['Pool Equipment Wishlist', '========================', ''];
@@ -92,11 +116,13 @@ function formatPlainText(items: WishlistItem[]): string {
   return lines.join('\n');
 }
 
+type Flash = { message: string; isError: boolean };
+
 export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDeleteItem }: WishlistProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newItem, setNewItem] = useState<Omit<WishlistItem, 'id' | 'uid' | 'createdAt'>>(emptyItem());
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [exportedFlash, setExportedFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<Flash | null>(null);
 
   const handleSaveNew = () => {
     if (!newItem.name.trim()) return;
@@ -110,41 +136,30 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
     setIsAdding(false);
   };
 
-  const updateOption = (item: WishlistItem, option: PurchaseOption) => {
-    const next = item.purchaseOptions.some((o) => o.id === option.id)
-      ? item.purchaseOptions.map((o) => (o.id === option.id ? option : o))
-      : [...item.purchaseOptions, option];
-    onUpdateItem({ ...item, purchaseOptions: next });
-  };
-
-  const removeOption = (item: WishlistItem, optionId: string) => {
-    onUpdateItem({ ...item, purchaseOptions: item.purchaseOptions.filter((o) => o.id !== optionId) });
-  };
-
-  const flashCopied = (label: string) => {
-    setExportedFlash(label);
-    window.setTimeout(() => setExportedFlash(null), 1800);
+  const showFlash = (message: string, isError = false) => {
+    setFlash({ message, isError });
+    window.setTimeout(() => setFlash(null), 1800);
   };
 
   const handleCopy = async () => {
     const text = formatPlainText(items);
     try {
       await navigator.clipboard.writeText(text);
-      flashCopied('Copied to clipboard');
+      showFlash('Copied to clipboard');
     } catch {
-      flashCopied('Copy failed');
+      showFlash('Copy failed', true);
     }
   };
 
   const handleEmail = () => {
     const subject = encodeURIComponent('Pool Equipment Wishlist');
     const body = encodeURIComponent(formatPlainText(items));
-    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleWhatsApp = () => {
     const text = encodeURIComponent(formatPlainText(items));
-    window.open(`https://wa.me/?text=${text}`, '_blank');
+    window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer');
   };
 
   if (!isOpen) return null;
@@ -207,14 +222,17 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                 WhatsApp
               </button>
               <AnimatePresence>
-                {exportedFlash && (
+                {flash && (
                   <motion.span
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0 }}
-                    className="text-[10px] font-bold uppercase tracking-widest text-accent flex items-center gap-1"
+                    className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${
+                      flash.isError ? 'text-red-400' : 'text-accent'
+                    }`}
                   >
-                    <Check size={12} /> {exportedFlash}
+                    {flash.isError ? <AlertTriangle size={12} /> : <Check size={12} />}
+                    {flash.message}
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -333,108 +351,16 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
           </AnimatePresence>
 
           <div className="grid gap-3">
-            {items.map((item) => {
-              const isExpanded = expandedId === item.id;
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-2xl bg-surface border border-border-dim overflow-hidden anim-scan"
-                >
-                  <div className="p-4 flex items-start justify-between gap-3 group">
-                    <button
-                      onClick={() => setExpandedId(isExpanded ? null : item.id)}
-                      className="flex-1 text-left flex items-start gap-4"
-                    >
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center border ${
-                          PRIORITY_COLORS[item.priority]
-                        }`}
-                      >
-                        <ListChecks size={20} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-sm font-bold text-white uppercase tracking-wide">{item.name}</h3>
-                          <span
-                            className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md border ${
-                              PRIORITY_COLORS[item.priority]
-                            }`}
-                          >
-                            {item.priority}
-                          </span>
-                          {item.quantity > 1 && (
-                            <span className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">
-                              ×{item.quantity}
-                            </span>
-                          )}
-                        </div>
-                        {item.description && (
-                          <p className="text-xs text-ink-dim mt-1 line-clamp-2">{item.description}</p>
-                        )}
-                        <p className="text-[10px] text-ink-dim uppercase tracking-widest mt-1">
-                          {item.purchaseOptions.length} purchase option
-                          {item.purchaseOptions.length === 1 ? '' : 's'}
-                          {item.estimatedCost != null
-                            ? ` · est. ${item.estimatedCost} ${item.currency || ''}`.trim()
-                            : ''}
-                        </p>
-                      </div>
-                      <div className="text-ink-dim self-center">
-                        {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                      </div>
-                    </button>
-                    <button
-                      onClick={() => onDeleteItem(item.id)}
-                      className="p-2 text-ink-dim hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      aria-label="Delete wish"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="border-t border-border-dim bg-[#060e1a]/40"
-                      >
-                        <div className="p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">
-                              Where to Buy
-                            </h4>
-                            <button
-                              onClick={() => updateOption(item, emptyOption())}
-                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white hover:border-accent transition-all"
-                            >
-                              <Plus size={12} />
-                              Option
-                            </button>
-                          </div>
-
-                          {item.purchaseOptions.length === 0 && (
-                            <p className="text-xs text-ink-dim italic">
-                              No purchase options yet. Add a vendor to compare price, quality &amp; availability.
-                            </p>
-                          )}
-
-                          {item.purchaseOptions.map((opt) => (
-                            <PurchaseOptionRow
-                              key={opt.id}
-                              option={opt}
-                              onChange={(next) => updateOption(item, next)}
-                              onRemove={() => removeOption(item, opt.id)}
-                            />
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
+            {items.map((item) => (
+              <WishItemCard
+                key={item.id}
+                item={item}
+                isExpanded={expandedId === item.id}
+                onToggleExpand={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                onUpdate={onUpdateItem}
+                onDelete={() => onDeleteItem(item.id)}
+              />
+            ))}
 
             {items.length === 0 && !isAdding && (
               <div className="text-center py-12 border-2 border-dashed border-border-dim rounded-3xl">
@@ -452,47 +378,374 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
   );
 }
 
+interface WishItemCardProps {
+  item: WishlistItem;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onUpdate: (item: WishlistItem) => void;
+  onDelete: () => void;
+}
+
+function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: WishItemCardProps) {
+  const [draftItem, setDraftItem] = useState<WishlistItem>(item);
+  // Pending purchase options live only on the client until the user enters
+  // a vendor and blurs — prevents accidental "Add Option" clicks from
+  // persisting blank rows to Firestore.
+  const [pendingOptions, setPendingOptions] = useState<PurchaseOption[]>([]);
+
+  // Re-sync draft when the upstream item id or any tracked field changes
+  // (e.g. snapshot brings in a remote edit). Equality check skips no-ops
+  // so the user's in-flight edits aren't clobbered.
+  useEffect(() => {
+    setDraftItem((prev) => (itemFieldsEqual(prev, item) ? prev : item));
+  }, [
+    item.id,
+    item.name,
+    item.description,
+    item.priority,
+    item.quantity,
+    item.estimatedCost,
+    item.currency,
+  ]);
+
+  const setField = <K extends keyof WishlistItem>(field: K, value: WishlistItem[K]) => {
+    setDraftItem((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const commitItemFields = () => {
+    if (!itemFieldsEqual(draftItem, item)) {
+      onUpdate(draftItem);
+    }
+  };
+
+  const setAndCommitField = <K extends keyof WishlistItem>(field: K, value: WishlistItem[K]) => {
+    const next = { ...draftItem, [field]: value };
+    setDraftItem(next);
+    if (!itemFieldsEqual(next, item)) {
+      onUpdate(next);
+    }
+  };
+
+  const addPendingOption = () => {
+    setPendingOptions((prev) => [...prev, emptyOption()]);
+  };
+
+  const updatePendingOption = (next: PurchaseOption) => {
+    setPendingOptions((prev) => prev.map((o) => (o.id === next.id ? next : o)));
+  };
+
+  const removePendingOption = (id: string) => {
+    setPendingOptions((prev) => prev.filter((o) => o.id !== id));
+  };
+
+  const promotePendingOption = (option: PurchaseOption) => {
+    if (!option.vendor.trim()) return;
+    setPendingOptions((prev) => prev.filter((o) => o.id !== option.id));
+    onUpdate({ ...item, purchaseOptions: [...item.purchaseOptions, option] });
+  };
+
+  const updatePersistedOption = (next: PurchaseOption) => {
+    onUpdate({
+      ...item,
+      purchaseOptions: item.purchaseOptions.map((o) => (o.id === next.id ? next : o)),
+    });
+  };
+
+  const removePersistedOption = (id: string) => {
+    onUpdate({
+      ...item,
+      purchaseOptions: item.purchaseOptions.filter((o) => o.id !== id),
+    });
+  };
+
+  const totalOptions = item.purchaseOptions.length + pendingOptions.length;
+
+  return (
+    <div className="rounded-2xl bg-surface border border-border-dim overflow-hidden anim-scan">
+      <div className="p-4 flex items-start justify-between gap-3 group">
+        <button
+          onClick={onToggleExpand}
+          className="flex-1 text-left flex items-start gap-4"
+        >
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center border ${
+              PRIORITY_COLORS[draftItem.priority]
+            }`}
+          >
+            <ListChecks size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{draftItem.name}</h3>
+              <span
+                className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md border ${
+                  PRIORITY_COLORS[draftItem.priority]
+                }`}
+              >
+                {draftItem.priority}
+              </span>
+              {draftItem.quantity > 1 && (
+                <span className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">
+                  ×{draftItem.quantity}
+                </span>
+              )}
+            </div>
+            {draftItem.description && (
+              <p className="text-xs text-ink-dim mt-1 line-clamp-2">{draftItem.description}</p>
+            )}
+            <p className="text-[10px] text-ink-dim uppercase tracking-widest mt-1">
+              {totalOptions} purchase option
+              {totalOptions === 1 ? '' : 's'}
+              {draftItem.estimatedCost != null
+                ? ` · est. ${draftItem.estimatedCost} ${draftItem.currency || ''}`.trim()
+                : ''}
+            </p>
+          </div>
+          <div className="text-ink-dim self-center">
+            {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </div>
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-2 text-ink-dim hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+          aria-label="Delete wish"
+        >
+          <Trash2 size={18} />
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="border-t border-border-dim bg-[#060e1a]/40"
+          >
+            <div className="p-4 space-y-4">
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">
+                  Details
+                </h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Equipment Name
+                    </label>
+                    <input
+                      type="text"
+                      value={draftItem.name}
+                      onChange={(e) => setField('name', e.target.value)}
+                      onBlur={commitItemFields}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Description / Specs
+                    </label>
+                    <textarea
+                      value={draftItem.description || ''}
+                      onChange={(e) => setField('description', e.target.value)}
+                      onBlur={commitItemFields}
+                      rows={2}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all resize-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Priority
+                    </label>
+                    <select
+                      value={draftItem.priority}
+                      onChange={(e) => setAndCommitField('priority', e.target.value as Priority)}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draftItem.quantity}
+                      onChange={(e) =>
+                        setField('quantity', Math.max(1, Number(e.target.value)))
+                      }
+                      onBlur={commitItemFields}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Est. Cost
+                    </label>
+                    <input
+                      type="number"
+                      value={draftItem.estimatedCost ?? ''}
+                      onChange={(e) =>
+                        setField(
+                          'estimatedCost',
+                          e.target.value === '' ? undefined : Number(e.target.value),
+                        )
+                      }
+                      onBlur={commitItemFields}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
+                      Currency
+                    </label>
+                    <input
+                      type="text"
+                      value={draftItem.currency || ''}
+                      onChange={(e) => setField('currency', e.target.value)}
+                      onBlur={commitItemFields}
+                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      placeholder="USD"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-border-dim pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">
+                    Where to Buy
+                  </h4>
+                  <button
+                    onClick={addPendingOption}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white hover:border-accent transition-all"
+                  >
+                    <Plus size={12} />
+                    Option
+                  </button>
+                </div>
+
+                {totalOptions === 0 && (
+                  <p className="text-xs text-ink-dim italic">
+                    No purchase options yet. Add a vendor to compare price, quality &amp; availability.
+                  </p>
+                )}
+
+                {item.purchaseOptions.map((opt) => (
+                  <PurchaseOptionRow
+                    key={opt.id}
+                    option={opt}
+                    onChange={updatePersistedOption}
+                    onRemove={() => removePersistedOption(opt.id)}
+                  />
+                ))}
+
+                {pendingOptions.map((opt) => (
+                  <PurchaseOptionRow
+                    key={opt.id}
+                    option={opt}
+                    isDraft
+                    onLocalChange={updatePendingOption}
+                    onPromote={promotePendingOption}
+                    onChange={updatePendingOption}
+                    onRemove={() => removePendingOption(opt.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 interface PurchaseOptionRowProps {
   option: PurchaseOption;
+  isDraft?: boolean;
   onChange: (option: PurchaseOption) => void;
+  onLocalChange?: (option: PurchaseOption) => void;
+  onPromote?: (option: PurchaseOption) => void;
   onRemove: () => void;
 }
 
-function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProps) {
+function PurchaseOptionRow({
+  option,
+  isDraft,
+  onChange,
+  onLocalChange,
+  onPromote,
+  onRemove,
+}: PurchaseOptionRowProps) {
   const [draft, setDraft] = useState<PurchaseOption>(option);
 
+  // Re-sync local draft when the upstream option changes (e.g. a remote
+  // snapshot updated the same id with new content). The equality helper
+  // treats undefined/null as the same so a Firestore round-trip that
+  // coerces undefined → null doesn't leave draft permanently divergent.
   useEffect(() => {
-    setDraft(option);
-  }, [option.id]);
+    setDraft((prev) => (optionsEqual(prev, option) ? prev : option));
+  }, [
+    option.id,
+    option.vendor,
+    option.url,
+    option.price,
+    option.currency,
+    option.qualityRating,
+    option.availability,
+    option.notes,
+  ]);
 
   const setLocal = <K extends keyof PurchaseOption>(field: K, value: PurchaseOption[K]) => {
-    setDraft((prev) => ({ ...prev, [field]: value }));
+    setDraft((prev) => {
+      const next = { ...prev, [field]: value };
+      onLocalChange?.(next);
+      return next;
+    });
   };
 
   const commit = () => {
-    if (
-      draft.vendor !== option.vendor ||
-      draft.url !== option.url ||
-      draft.price !== option.price ||
-      draft.currency !== option.currency ||
-      draft.qualityRating !== option.qualityRating ||
-      draft.availability !== option.availability ||
-      draft.notes !== option.notes
-    ) {
+    if (isDraft) {
+      if (draft.vendor.trim()) {
+        onPromote?.(draft);
+      }
+      return;
+    }
+    if (!optionsEqual(draft, option)) {
       onChange(draft);
     }
   };
 
   const setAndCommit = (next: PurchaseOption) => {
     setDraft(next);
-    onChange(next);
+    if (isDraft) {
+      onLocalChange?.(next);
+      if (next.vendor.trim()) onPromote?.(next);
+      return;
+    }
+    if (!optionsEqual(next, option)) {
+      onChange(next);
+    }
   };
 
   const safeUrl = safeHttpUrl(draft.url);
   const urlIsInvalid = (draft.url || '').trim().length > 0 && !safeUrl;
 
   return (
-    <div className="p-3 rounded-xl bg-surface border border-border-dim space-y-3">
+    <div
+      className={`p-3 rounded-xl bg-surface border space-y-3 ${
+        isDraft ? 'border-accent/40' : 'border-border-dim'
+      }`}
+    >
+      {isDraft && (
+        <p className="text-[9px] font-bold uppercase tracking-widest text-accent">
+          Unsaved · enter a vendor to keep this option
+        </p>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         <div className="space-y-1 col-span-2 md:col-span-1">
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Vendor</label>
@@ -608,7 +861,7 @@ function PurchaseOptionRow({ option, onChange, onRemove }: PurchaseOptionRowProp
           className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-red-500 transition-colors"
         >
           <Trash2 size={12} />
-          Remove option
+          {isDraft ? 'Discard' : 'Remove option'}
         </button>
       </div>
     </div>
