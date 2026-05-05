@@ -414,7 +414,10 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
 
   const commitItemFields = () => {
     if (!itemFieldsEqual(draftItem, item)) {
-      onUpdate(draftItem);
+      // Splice in the upstream purchaseOptions so a stale draft array
+      // (e.g. after a separate option edit landed but before draftItem
+      // re-synced) doesn't clobber the newer Firestore state.
+      onUpdate({ ...draftItem, purchaseOptions: item.purchaseOptions });
     }
   };
 
@@ -422,7 +425,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
     const next = { ...draftItem, [field]: value };
     setDraftItem(next);
     if (!itemFieldsEqual(next, item)) {
-      onUpdate(next);
+      onUpdate({ ...next, purchaseOptions: item.purchaseOptions });
     }
   };
 
