@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Dashboard from './components/Dashboard';
 import ReadingForm from './components/ReadingForm';
@@ -51,6 +51,7 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
   const [reportTemplate, setReportTemplate] = useState<string>('');
+  const geoStartInFlight = useRef(false);
 
   // Auth listener
   useEffect(() => {
@@ -178,12 +179,15 @@ export default function App() {
 
 
     const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
-      setWorkSessions(snapshot.docs.map((sessionDoc) => ({
-        ...sessionDoc.data(),
-        id: sessionDoc.id,
-        startTime: (sessionDoc.data().startTime as Timestamp).toDate(),
-        endTime: sessionDoc.data().endTime ? (sessionDoc.data().endTime as Timestamp).toDate() : null,
-      } as WorkSession)));
+      setWorkSessions(snapshot.docs.map((sessionDoc) => {
+        const data = sessionDoc.data();
+        return {
+          ...data,
+          id: sessionDoc.id,
+          startTime: (data.startTime as Timestamp).toDate(),
+          endTime: data.endTime ? (data.endTime as Timestamp).toDate() : null,
+        } as WorkSession;
+      }));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'workSessions'));
 
     const unsubSchedule = onSnapshot(scheduleDoc, (doc) => {
@@ -249,7 +253,7 @@ export default function App() {
         locationLabel: source === 'geo' ? 'Joy Lane' : 'Manual start',
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE);
+      handleFirestoreError(error, OperationType.CREATE, 'workSessions');
     }
   };
 
@@ -274,8 +278,12 @@ export default function App() {
       const dLon = toRad(position.coords.longitude - joyLane.longitude);
       const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(joyLane.latitude)) * Math.cos(toRad(position.coords.latitude)) * Math.sin(dLon / 2) ** 2;
       const meters = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (meters < 120) {
-        void handleStartWorkSession('geo');
+      if (meters < 120 && !geoStartInFlight.current) {
+        geoStartInFlight.current = true;
+        navigator.geolocation.clearWatch(watchId);
+        handleStartWorkSession('geo').finally(() => {
+          geoStartInFlight.current = false;
+        });
       }
     });
     return () => navigator.geolocation.clearWatch(watchId);
