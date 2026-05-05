@@ -240,13 +240,17 @@ export default function App() {
 
   const handleStartWorkSession = async (source: 'manual' | 'geo') => {
     if (!user || activeSession) return;
-    await addDoc(collection(db, 'workSessions'), {
-      uid: user.uid,
-      startTime: Timestamp.fromDate(new Date()),
-      endTime: null,
-      source,
-      locationLabel: source === 'geo' ? 'Joy Lane' : 'Manual start',
-    });
+    try {
+      await addDoc(collection(db, 'workSessions'), {
+        uid: user.uid,
+        startTime: Timestamp.fromDate(new Date()),
+        endTime: null,
+        source,
+        locationLabel: source === 'geo' ? 'Joy Lane' : 'Manual start',
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE);
+    }
   };
 
   const handleStopWorkSession = async () => {
