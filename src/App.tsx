@@ -178,12 +178,15 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'wishlist'));
 
 
-    const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
       setWorkSessions(snapshot.docs.map((sessionDoc) => {
         const data = sessionDoc.data();
         return {
           ...data,
           id: sessionDoc.id,
+          startTime: (data.startTime as Timestamp).toDate(),
+          endTime: data.endTime ? (data.endTime as Timestamp).toDate() : null,
+        } as WorkSession;
+      }));
           startTime: (data.startTime as Timestamp).toDate(),
           endTime: data.endTime ? (data.endTime as Timestamp).toDate() : null,
         } as WorkSession;
