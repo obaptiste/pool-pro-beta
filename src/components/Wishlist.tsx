@@ -38,7 +38,7 @@ const emptyItem = (): Omit<WishlistItem, 'id' | 'uid' | 'createdAt'> => ({
   priority: 'medium',
   quantity: 1,
   estimatedCost: undefined,
-  currency: 'USD',
+  currency: 'GBP',
   purchaseOptions: [],
 });
 
@@ -60,7 +60,7 @@ const emptyOption = (): PurchaseOption => ({
   vendor: '',
   url: '',
   price: undefined,
-  currency: 'USD',
+  currency: 'GBP',
   qualityRating: 3,
   availability: '',
   notes: '',
@@ -320,13 +320,14 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Currency</label>
-                    <input
-                      type="text"
-                      value={newItem.currency || ''}
+                    <select
+                      value={newItem.currency || 'GBP'}
                       onChange={(e) => setNewItem({ ...newItem, currency: e.target.value })}
                       className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
-                      placeholder="USD"
-                    />
+                    >
+                      <option value="GBP">GBP</option>
+                      <option value="USD">USD</option>
+                    </select>
                   </div>
                 </div>
                 <div className="flex justify-end gap-3">
@@ -606,14 +607,14 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                     <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">
                       Currency
                     </label>
-                    <input
-                      type="text"
-                      value={draftItem.currency || ''}
-                      onChange={(e) => setField('currency', e.target.value)}
-                      onBlur={commitItemFields}
+                    <select
+                      value={draftItem.currency || 'GBP'}
+                      onChange={(e) => setAndCommitField('currency', e.target.value)}
                       className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
-                      placeholder="USD"
-                    />
+                    >
+                      <option value="GBP">GBP</option>
+                      <option value="USD">USD</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -775,14 +776,15 @@ function PurchaseOptionRow({
         </div>
         <div className="space-y-1">
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Currency</label>
-          <input
-            type="text"
-            value={draft.currency || ''}
+          <select
+            value={draft.currency || 'GBP'}
             onChange={(e) => setLocal('currency', e.target.value)}
             onBlur={commit}
             className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
-            placeholder="USD"
-          />
+          >
+            <option value="GBP">GBP</option>
+            <option value="USD">USD</option>
+          </select>
         </div>
         <div className="space-y-1 col-span-2 md:col-span-3">
           <label className="text-[9px] font-bold text-ink-dim uppercase tracking-widest">Link</label>
