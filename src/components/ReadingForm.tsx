@@ -92,16 +92,23 @@ export default function ReadingForm({ onSave, onCancel, latestReading }: Props) 
   );
 
   // If `latestReading` arrives or changes after mount (e.g. Firestore snapshot lands
-  // after the form opens), re-seed any field the user hasn't touched. Touched fields
-  // are preserved so we don't clobber in-flight edits.
+  // after the form opens, or a newer reading replaces an older one), recompute every
+  // untouched field from a fresh fallback+latest base. This ensures fields missing
+  // from the new reading revert to the fallback constant rather than retaining stale
+  // values from a previous reading. Touched fields are preserved so we don't clobber
+  // in-flight edits.
   useEffect(() => {
     if (!latestReading) return;
+    const carried = carriedFromReading(latestReading);
+    const base: Record<NumericField, number> = { ...FALLBACK_NUMERIC };
+    for (const field of NUMERIC_FIELDS) {
+      if (carried.has(field)) base[field] = latestReading[field] as number;
+    }
     setFormData(prev => {
       const next = { ...prev };
       for (const field of NUMERIC_FIELDS) {
         if (touched.has(field)) continue;
-        const v = latestReading[field];
-        if (typeof v === 'number' && isFinite(v)) next[field] = v;
+        next[field] = base[field];
       }
       return next;
     });
@@ -109,17 +116,16 @@ export default function ReadingForm({ onSave, onCancel, latestReading }: Props) 
       const next = { ...prev };
       for (const field of NUMERIC_FIELDS) {
         if (touched.has(field)) continue;
-        const v = latestReading[field];
-        if (typeof v === 'number' && isFinite(v)) next[field] = String(v);
+        next[field] = String(base[field]);
       }
       return next;
     });
     setCarriedFields(prev => {
-      const next = new Set(prev);
+      // Preserve carried status for touched fields (their value may legitimately
+      // have come from a prior reading the user later edited); recompute the rest.
+      const next = new Set<NumericField>();
       for (const field of NUMERIC_FIELDS) {
-        if (touched.has(field)) continue;
-        const v = latestReading[field];
-        if (typeof v === 'number' && isFinite(v)) next.add(field);
+        if (touched.has(field) ? prev.has(field) : carried.has(field)) next.add(field);
       }
       return next;
     });
