@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Check,
   AlertCircle,
@@ -14,6 +14,7 @@ import {
   Waves,
   Sun,
   MinusCircle,
+  History as HistoryIcon,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -23,6 +24,7 @@ import { generateContentWithRetry } from '../lib/gemini';
 interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp'>) => void;
   onCancel: () => void;
+  latestReading?: Reading;
 }
 
 const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
@@ -38,7 +40,7 @@ const FIELD_LABELS: Record<NumericField, string> = {
   cyanuricAcid: 'Cyanuric Acid',
 };
 
-const INITIAL_NUMERIC: Record<NumericField, number> = {
+const FALLBACK_NUMERIC: Record<NumericField, number> = {
   chlorine: 1.5,
   ph: 7.4,
   alkalinity: 100,
@@ -48,9 +50,30 @@ const INITIAL_NUMERIC: Record<NumericField, number> = {
   cyanuricAcid: 40,
 };
 
-export default function ReadingForm({ onSave, onCancel }: Props) {
+function carriedFromReading(reading?: Reading): Set<NumericField> {
+  const set = new Set<NumericField>();
+  if (!reading) return set;
+  for (const field of NUMERIC_FIELDS) {
+    const v = reading[field];
+    if (typeof v === 'number' && isFinite(v)) set.add(field);
+  }
+  return set;
+}
+
+export default function ReadingForm({ onSave, onCancel, latestReading }: Props) {
+  // Prefill from the most recent reading when available; fall back to typical values otherwise.
+  const initialNumeric = React.useMemo<Record<NumericField, number>>(() => {
+    if (!latestReading) return { ...FALLBACK_NUMERIC };
+    const out = { ...FALLBACK_NUMERIC };
+    for (const field of NUMERIC_FIELDS) {
+      const v = latestReading[field];
+      if (typeof v === 'number' && isFinite(v)) out[field] = v;
+    }
+    return out;
+  }, [latestReading]);
+
   const [formData, setFormData] = useState({
-    ...INITIAL_NUMERIC,
+    ...initialNumeric,
     notes: '',
     uid: '',
   });
@@ -60,11 +83,53 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Tracks fields explicitly modified by the user (manual entry, voice transcription, or image upload)
   const [touched, setTouched] = useState<Set<NumericField>>(new Set());
+  // Tracks fields whose current value was actually copied from latestReading (vs. a fallback constant).
+  const [carriedFields, setCarriedFields] = useState<Set<NumericField>>(() => carriedFromReading(latestReading));
   const [showDefaultsWarning, setShowDefaultsWarning] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [rawInputs, setRawInputs] = useState<Record<string, string>>(
-    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
+    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(initialNumeric[f])]))
   );
+
+  // If `latestReading` arrives or changes after mount (e.g. Firestore snapshot lands
+  // after the form opens, or a newer reading replaces an older one), recompute every
+  // untouched field from a fresh fallback+latest base. This ensures fields missing
+  // from the new reading revert to the fallback constant rather than retaining stale
+  // values from a previous reading. Touched fields are preserved so we don't clobber
+  // in-flight edits.
+  useEffect(() => {
+    if (!latestReading) return;
+    const carried = carriedFromReading(latestReading);
+    const base: Record<NumericField, number> = { ...FALLBACK_NUMERIC };
+    for (const field of NUMERIC_FIELDS) {
+      if (carried.has(field)) base[field] = latestReading[field] as number;
+    }
+    setFormData(prev => {
+      const next = { ...prev };
+      for (const field of NUMERIC_FIELDS) {
+        if (touched.has(field)) continue;
+        next[field] = base[field];
+      }
+      return next;
+    });
+    setRawInputs(prev => {
+      const next = { ...prev };
+      for (const field of NUMERIC_FIELDS) {
+        if (touched.has(field)) continue;
+        next[field] = String(base[field]);
+      }
+      return next;
+    });
+    setCarriedFields(prev => {
+      // Preserve carried status for touched fields (their value may legitimately
+      // have come from a prior reading the user later edited); recompute the rest.
+      const next = new Set<NumericField>();
+      for (const field of NUMERIC_FIELDS) {
+        if (touched.has(field) ? prev.has(field) : carried.has(field)) next.add(field);
+      }
+      return next;
+    });
+  }, [latestReading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validate = (name: string, value: number) => {
     const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
@@ -309,6 +374,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={10}
               step="any"
               isDefault={!touched.has('chlorine')}
+              carried={carriedFields.has('chlorine')}
             />
             <InputField
               label="pH Level"
@@ -323,6 +389,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={14}
               step="any"
               isDefault={!touched.has('ph')}
+              carried={carriedFields.has('ph')}
             />
             <InputField
               label="Total Alkalinity"
@@ -337,6 +404,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={300}
               step="any"
               isDefault={!touched.has('alkalinity')}
+              carried={carriedFields.has('alkalinity')}
             />
             <InputField
               label="Temperature"
@@ -351,6 +419,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={50}
               step="any"
               isDefault={!touched.has('temperature')}
+              carried={carriedFields.has('temperature')}
             />
             <InputField
               label="Diff Pressure"
@@ -365,6 +434,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={500}
               step="any"
               isDefault={!touched.has('differentialPressure')}
+              carried={carriedFields.has('differentialPressure')}
             />
             <InputField
               label="Calcium Hardness"
@@ -379,6 +449,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={1000}
               step="any"
               isDefault={!touched.has('calciumHardness')}
+              carried={carriedFields.has('calciumHardness')}
             />
             <InputField
               label="Cyanuric Acid"
@@ -393,6 +464,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               max={200}
               step="any"
               isDefault={!touched.has('cyanuricAcid')}
+              carried={carriedFields.has('cyanuricAcid')}
             />
           </div>
 
@@ -451,14 +523,30 @@ missingInventory and missingEquipment should be arrays of strings when identifia
             <div className="max-w-2xl mx-auto space-y-3">
               {showDefaultsWarning && (() => {
                 const untouched = NUMERIC_FIELDS.filter(f => !touched.has(f));
+                const untouchedCarried = untouched.filter(f => carriedFields.has(f));
+                const untouchedFallback = untouched.filter(f => !carriedFields.has(f));
+                const hasFallback = untouchedFallback.length > 0;
+                const hasCarried = untouchedCarried.length > 0;
                 return (
                   <div className="p-4 rounded-xl bg-warning/10 border border-warning/40">
                     <div className="flex items-center gap-2 mb-2">
                       <AlertCircle size={14} className="text-warning flex-shrink-0" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">Unsaved field defaults detected</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">
+                        {hasFallback ? 'Unsaved field defaults detected' : 'Some fields carried over'}
+                      </span>
                     </div>
                     <p className="text-xs text-ink-muted mb-3">
-                      <strong className="text-ink">{untouched.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouched.length === 1 ? 'was' : 'were'} not entered — the pre-filled estimate{untouched.length === 1 ? '' : 's'} will be saved and may affect report accuracy.
+                      {hasCarried && (
+                        <>
+                          <strong className="text-ink">{untouchedCarried.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouchedCarried.length === 1 ? 'will be carried over' : 'will be carried over'} from your last reading.
+                          {hasFallback && ' '}
+                        </>
+                      )}
+                      {hasFallback && (
+                        <>
+                          <strong className="text-ink">{untouchedFallback.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouchedFallback.length === 1 ? 'has' : 'have'} no prior value — the pre-filled estimate{untouchedFallback.length === 1 ? '' : 's'} will be saved and may affect report accuracy.
+                        </>
+                      )}
                     </p>
                     <div className="flex gap-2">
                       <button
@@ -496,7 +584,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault }: any) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault, carried }: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -506,9 +594,15 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
             <AlertCircle size={10} /> {error}
           </span>
         ) : isDefault ? (
-          <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
-            <MinusCircle size={10} /> Default
-          </span>
+          carried ? (
+            <span className="text-[9px] font-bold text-accent/70 uppercase tracking-widest flex items-center gap-1.5">
+              <HistoryIcon size={10} /> Carried
+            </span>
+          ) : (
+            <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
+              <MinusCircle size={10} /> Default
+            </span>
+          )
         ) : (
           <span className="text-[9px] font-bold text-success uppercase tracking-widest flex items-center gap-1.5">
             <Check size={10} /> Nominal
