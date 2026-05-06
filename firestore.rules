@@ -104,13 +104,21 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
 
+    function isNumericOrNull(data, field) {
+      return !(field in data) || data[field] == null || data[field] is number;
+    }
+
     function isValidReading(data) {
-      return hasRequiredFields(['id', 'timestamp', 'chlorine', 'ph', 'alkalinity', 'uid']) &&
+      return hasRequiredFields(['id', 'timestamp', 'uid']) &&
              data.id is string &&
              data.timestamp is timestamp &&
-             data.chlorine is number &&
-             data.ph is number &&
-             data.alkalinity is number &&
+             isNumericOrNull(data, 'chlorine') &&
+             isNumericOrNull(data, 'ph') &&
+             isNumericOrNull(data, 'alkalinity') &&
+             isNumericOrNull(data, 'temperature') &&
+             isNumericOrNull(data, 'differentialPressure') &&
+             isNumericOrNull(data, 'calciumHardness') &&
+             isNumericOrNull(data, 'cyanuricAcid') &&
              data.uid == request.auth.uid;
     }
 

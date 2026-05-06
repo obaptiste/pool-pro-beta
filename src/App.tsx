@@ -474,15 +474,16 @@ export default function App() {
 
   const exportToCSV = () => {
     const headers = ['Timestamp', 'Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (kPa)', 'Calcium Hardness (ppm)', 'CYA (ppm)', 'Notes'];
+    const csvNum = (v: number | null) => v == null ? '' : String(v);
     const rows = readings.map(r => [
       r.timestamp.toISOString(),
-      r.chlorine,
-      r.ph,
-      r.alkalinity,
-      r.temperature,
-      r.differentialPressure,
-      r.calciumHardness,
-      r.cyanuricAcid,
+      csvNum(r.chlorine),
+      csvNum(r.ph),
+      csvNum(r.alkalinity),
+      csvNum(r.temperature),
+      csvNum(r.differentialPressure),
+      csvNum(r.calciumHardness),
+      csvNum(r.cyanuricAcid),
       r.notes || '',
     ]);
 

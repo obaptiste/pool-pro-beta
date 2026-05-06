@@ -166,10 +166,11 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setLoading(true);
     setError(null);
     setIsMapsMode(false);
-    
+
     try {
       const lsi = calculateLSI(latestReading);
-      
+      const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
+
       const recentNotes = history
         .slice(0, 5)
         .filter(r => r.notes)
@@ -179,14 +180,14 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       const prompt = `
         You are an expert pool maintenance system (PoolStatus AI). 
         Analyze the following telemetry data:
-        - Free Chlorine: ${latestReading.chlorine} ppm
-        - pH Level: ${latestReading.ph}
-        - Total Alkalinity: ${latestReading.alkalinity} ppm
-        - Water Temperature: ${latestReading.temperature}°C
-        - Calcium Hardness: ${latestReading.calciumHardness} ppm
-        - Cyanuric Acid: ${latestReading.cyanuricAcid} ppm
-        - Differential Pressure: ${latestReading.differentialPressure} kPa
-        - Calculated LSI: ${lsi}
+        - Free Chlorine: ${fmt(latestReading.chlorine)} ppm
+        - pH Level: ${fmt(latestReading.ph)}
+        - Total Alkalinity: ${fmt(latestReading.alkalinity)} ppm
+        - Water Temperature: ${fmt(latestReading.temperature)}°C
+        - Calcium Hardness: ${fmt(latestReading.calciumHardness)} ppm
+        - Cyanuric Acid: ${fmt(latestReading.cyanuricAcid)} ppm
+        - Differential Pressure: ${fmt(latestReading.differentialPressure)} kPa
+        - Calculated LSI: ${lsi == null ? 'not computable (missing inputs)' : lsi}
         
         RECENT MAINTENANCE HISTORY:
         ${recentNotes || 'No recent maintenance recorded.'}
@@ -265,10 +266,11 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
 
   const buildReportSummary = () => {
     if (!insight || !latestReading) return '';
+    const fmt = (v: number | null | undefined) => v == null ? '—' : String(v);
     const checklist = insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
     return [
       `AI Analysis (${new Date().toLocaleString()})`,
-      `Reading: Cl ${latestReading.chlorine} ppm, pH ${latestReading.ph}, TA ${latestReading.alkalinity} ppm, Temp ${latestReading.temperature}°C`,
+      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
       `Assessment: ${insight.analysis.replace(/\n+/g, ' ').trim()}`,
       `Checklist: ${checklist}`,
       `Target Outcome: ${insight.expectedOutcome.replace(/\n+/g, ' ').trim()}`
@@ -287,16 +289,17 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
 
   const exportSnapshot = () => {
     if (!insight || !latestReading) return;
+    const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
     const report = [
       '# PoolStatus AI Telemetry Snapshot',
       `Generated: ${new Date().toLocaleString()}`,
       '',
       '## Current Reading',
-      `- Free Chlorine: ${latestReading.chlorine} ppm`,
-      `- pH: ${latestReading.ph}`,
-      `- Alkalinity: ${latestReading.alkalinity} ppm`,
-      `- Temperature: ${latestReading.temperature}°C`,
-      `- Differential Pressure: ${latestReading.differentialPressure} kPa`,
+      `- Free Chlorine: ${fmt(latestReading.chlorine)} ppm`,
+      `- pH: ${fmt(latestReading.ph)}`,
+      `- Alkalinity: ${fmt(latestReading.alkalinity)} ppm`,
+      `- Temperature: ${fmt(latestReading.temperature)}°C`,
+      `- Differential Pressure: ${fmt(latestReading.differentialPressure)} kPa`,
       '',
       '## Health Assessment',
       insight.analysis,
@@ -351,8 +354,9 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setIsMapsMode(false);
 
     try {
+      const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
       const context = latestReading
-        ? `Latest reading context: FC ${latestReading.chlorine} ppm, pH ${latestReading.ph}, TA ${latestReading.alkalinity} ppm, Temp ${latestReading.temperature}°C, CYA ${latestReading.cyanuricAcid} ppm.`
+        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
         : 'No latest reading is currently available.';
       const response = await callAiWithFallback({
         model: "gemini-3-flash-preview",

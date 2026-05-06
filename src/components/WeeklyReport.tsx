@@ -26,10 +26,10 @@ interface DayStatus {
 
 interface TrendPoint {
   d: string;
-  chlorine: number;
-  ph: number;
-  alk: number;
-  press: number;
+  chlorine: number | null;
+  ph: number | null;
+  alk: number | null;
+  press: number | null;
 }
 
 interface Advisory {
@@ -78,7 +78,7 @@ interface ReportData {
   status: {
     overall: 'good' | 'watch' | 'warning' | 'critical';
     headline: string;
-    lsi: number;
+    lsi: number | null;
     lsiLabel: string;
     uptime: number;
     readings: number;
@@ -195,6 +195,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     dayR.forEach(r => {
       METRICS.forEach(m => {
         const v = m.get(r);
+        if (v == null) return;
         const [lo, hi] = m.target;
         if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
         else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
@@ -219,13 +220,13 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   // Use the latest in-window reading for LSI; fall back to global latest only for the gauge snapshot
   const latestWeekR = weekReadings.length > 0 ? weekReadings[weekReadings.length - 1] : null;
   const latestR = latestWeekR ?? readings[0] ?? null;
-  const lsi = latestWeekR ? calculateLSI(latestWeekR) : 0;
-  const lsiAbs = Math.abs(lsi);
-  const lsiLabel = lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
+  const lsi: number | null = latestWeekR ? calculateLSI(latestWeekR) : null;
+  const lsiAbs = lsi == null ? null : Math.abs(lsi);
+  const lsiLabel = lsiAbs == null ? 'Insufficient data' : lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
   const allUnknown = weekReadings.length === 0;
-  const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || lsiAbs > 0.3);
-  const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs > 0.1 && lsiAbs <= 0.3));
+  const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || (lsiAbs != null && lsiAbs > 0.3));
+  const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs != null && lsiAbs > 0.1 && lsiAbs <= 0.3));
   const hasWatch    = !allUnknown && telemetry.some(m => m.status === 'watch');
   const overall: ReportData['status']['overall'] =
     allUnknown    ? 'watch' :
@@ -265,7 +266,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   }
   if (weekReadings.length > 0) {
     advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
-      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi >= 0 ? '+' : ''}${lsi} (${lsiLabel}).`,
+      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi == null ? '—' : `${lsi >= 0 ? '+' : ''}${lsi}`} (${lsiLabel}).`,
       action: 'Continue current monitoring cadence.' });
   } else {
     advisories.push({ tier: 'watch', title: 'No data this period', time: 'Week',
@@ -321,9 +322,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       timestamp: latestR ? `${fmtDate(latestR.timestamp)} · ${latestR.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : 'No data',
       operator: operatorName,
       gauges: {
-        pressure: latestR ? `${latestR.differentialPressure} kPa` : '— kPa',
-        chlorine: latestR ? `${latestR.chlorine} ppm` : '— ppm',
-        ph: latestR ? `${latestR.ph}` : '—',
+        pressure: latestR?.differentialPressure != null ? `${latestR.differentialPressure} kPa` : '— kPa',
+        chlorine: latestR?.chlorine != null ? `${latestR.chlorine} ppm` : '— ppm',
+        ph: latestR?.ph != null ? `${latestR.ph}` : '—',
       },
     },
   };
@@ -331,9 +332,10 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
 
 // ── Visualization components ──────────────────────────────────────────────────
 
-function LsiGauge({ value = 0, size = 220, theme = 'dark' }: { value?: number; size?: number; theme?: 'dark' | 'light' }) {
+function LsiGauge({ value, size = 220, theme = 'dark' }: { value: number | null; size?: number; theme?: 'dark' | 'light' }) {
   const min = -0.5, max = 0.5;
-  const v = Math.max(min, Math.min(max, value));
+  const hasValue = value != null;
+  const v = hasValue ? Math.max(min, Math.min(max, value)) : 0;
   const pct = (v - min) / (max - min);
   const angle = -90 + pct * 180;
   const r = size * 0.42;
@@ -375,11 +377,11 @@ function LsiGauge({ value = 0, size = 220, theme = 'dark' }: { value?: number; s
           </g>
         );
       })}
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={ink} strokeWidth="3" strokeLinecap="round" />
+      {hasValue && <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={ink} strokeWidth="3" strokeLinecap="round" />}
       <circle cx={cx} cy={cy} r="6" fill={ink} />
-      <circle cx={cx} cy={cy} r="3" fill={accent} />
-      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="32" fontWeight="700" fontFamily="Space Mono, monospace" fill={ink}>{v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}</text>
-      <text x={cx} y={cy + 50} textAnchor="middle" fontSize="10" fontWeight="700" letterSpacing="0.16em" fill={accent} style={{ textTransform: 'uppercase' }}>{lsiLabel}</text>
+      {hasValue && <circle cx={cx} cy={cy} r="3" fill={accent} />}
+      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="32" fontWeight="700" fontFamily="Space Mono, monospace" fill={ink}>{!hasValue ? '—' : v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}</text>
+      <text x={cx} y={cy + 50} textAnchor="middle" fontSize="10" fontWeight="700" letterSpacing="0.16em" fill={accent} style={{ textTransform: 'uppercase' }}>{!hasValue ? 'No data' : lsiLabel}</text>
     </svg>
   );
 }
@@ -771,7 +773,7 @@ function ReportA({ d }: { d: ReportData }) {
         </div>
         <div style={{ color: '#fff', fontSize: 14, lineHeight: 1.5, maxWidth: 540 }}>{d.status.headline}</div>
         <div style={{ display: 'flex', gap: 24 }}>
-          {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }].map(s => (
+          {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }].map(s => (
             <div key={s.l} style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>{s.l}</div>
               <div style={{ fontSize: 18, fontFamily: '"Space Mono",monospace', fontWeight: 700, color: '#4FC3F7', marginTop: 2 }}>{s.v}</div>
@@ -882,7 +884,7 @@ function ReportB({ d }: { d: ReportData }) {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3', marginBottom: 14 }}>Headline</div>
           <p style={{ fontSize: 24, lineHeight: 1.3, fontWeight: 600, color: '#1a2740', margin: 0, letterSpacing: '-.01em' }}>"{d.status.headline}."</p>
-          <div style={{ marginTop: 18, fontSize: 12, color: '#7d8aa3', fontFamily: '"Space Mono",monospace', letterSpacing: '.08em' }}>{d.status.readings} readings · {d.status.uptime}% uptime · LSI {d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}</div>
+          <div style={{ marginTop: 18, fontSize: 12, color: '#7d8aa3', fontFamily: '"Space Mono",monospace', letterSpacing: '.08em' }}>{d.status.readings} readings · {d.status.uptime}% uptime · LSI {d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3' }}>Saturation Index</div>
@@ -944,7 +946,7 @@ function ReportB({ d }: { d: ReportData }) {
         <p style={{ fontSize: 13, color: '#3a4a66', lineHeight: 1.7, margin: '18px 0 0', columnCount: 2, columnGap: 32 }}>
           {d.status.readings === 0
             ? 'No readings recorded for this week. Start logging readings to see trend analysis here.'
-            : `${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} recorded this week. LSI held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
+            : `${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} recorded this week. LSI ${d.status.lsi == null ? 'not computable' : `held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}`} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
         </p>
       </section>
 
@@ -989,7 +991,7 @@ function ReportC({ d }: { d: ReportData }) {
           </div>
           <div style={{ fontSize: 42, fontWeight: 800, marginTop: 18, lineHeight: 1.1, letterSpacing: '-.01em' }}>{d.status.headline}.</div>
           <div style={{ display: 'flex', gap: 28, marginTop: 28, flexWrap: 'wrap' }}>
-            {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }, { l: 'Days OK', v: `${daysOK}/7` }].map(s => (
+            {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }, { l: 'Days OK', v: `${daysOK}/7` }].map(s => (
               <div key={s.l}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>{s.l}</div>
                 <div style={{ fontSize: 28, fontFamily: '"Space Mono",monospace', fontWeight: 700, color: '#4FC3F7', marginTop: 2 }}>{s.v}</div>

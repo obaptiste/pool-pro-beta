@@ -16,7 +16,6 @@ import {
   MinusCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { GoogleGenAI } from "@google/genai";
 import { Reading, DEFAULT_RANGES } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
 
@@ -28,43 +27,40 @@ interface Props {
 const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
 type NumericField = typeof NUMERIC_FIELDS[number];
 
-const FIELD_LABELS: Record<NumericField, string> = {
-  chlorine: 'Free Chlorine',
-  ph: 'pH Level',
-  alkalinity: 'Total Alkalinity',
-  temperature: 'Temperature',
-  differentialPressure: 'Diff. Pressure',
-  calciumHardness: 'Calcium Hardness',
-  cyanuricAcid: 'Cyanuric Acid',
+type FormData = Record<NumericField, number | null> & {
+  notes: string;
+  uid: string;
 };
 
-const INITIAL_NUMERIC: Record<NumericField, number> = {
-  chlorine: 1.5,
-  ph: 7.4,
-  alkalinity: 100,
-  temperature: 26,
-  differentialPressure: 12,
-  calciumHardness: 300,
-  cyanuricAcid: 40,
+const INITIAL_FORM: FormData = {
+  chlorine: null,
+  ph: null,
+  alkalinity: null,
+  temperature: null,
+  differentialPressure: null,
+  calciumHardness: null,
+  cyanuricAcid: null,
+  notes: '',
+  uid: '',
+};
+
+const INITIAL_RAW: Record<NumericField, string> = {
+  chlorine: '',
+  ph: '',
+  alkalinity: '',
+  temperature: '',
+  differentialPressure: '',
+  calciumHardness: '',
+  cyanuricAcid: '',
 };
 
 export default function ReadingForm({ onSave, onCancel }: Props) {
-  const [formData, setFormData] = useState({
-    ...INITIAL_NUMERIC,
-    notes: '',
-    uid: '',
-  });
-
+  const [formData, setFormData] = useState<FormData>(INITIAL_FORM);
+  const [rawInputs, setRawInputs] = useState<Record<NumericField, string>>(INITIAL_RAW);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  // Tracks fields explicitly modified by the user (manual entry, voice transcription, or image upload)
-  const [touched, setTouched] = useState<Set<NumericField>>(new Set());
-  const [showDefaultsWarning, setShowDefaultsWarning] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
-  const [rawInputs, setRawInputs] = useState<Record<string, string>>(
-    () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(INITIAL_NUMERIC[f])]))
-  );
 
   const validate = (name: string, value: number) => {
     const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
@@ -78,17 +74,16 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
     const { name, value, type } = e.target;
 
     if (type === 'number') {
-      setRawInputs(prev => ({ ...prev, [name]: value }));
-      setTouched(prev => { const n = new Set(prev); n.add(name as NumericField); return n; });
-      setShowDefaultsWarning(false);
+      const fieldName = name as NumericField;
+      setRawInputs(prev => ({ ...prev, [fieldName]: value }));
       if (value === '' || value.endsWith('.')) {
-        // Mid-entry — clear stale error so UI doesn't show an outdated state
-        setErrors(prev => ({ ...prev, [name]: '' }));
+        setFormData(prev => ({ ...prev, [fieldName]: value === '' ? null : prev[fieldName] }));
+        setErrors(prev => ({ ...prev, [fieldName]: '' }));
       } else {
         const parsed = parseFloat(value);
         if (!isNaN(parsed)) {
-          setFormData(prev => ({ ...prev, [name]: parsed }));
-          setErrors(prev => ({ ...prev, [name]: validate(name, parsed) }));
+          setFormData(prev => ({ ...prev, [fieldName]: parsed }));
+          setErrors(prev => ({ ...prev, [fieldName]: validate(fieldName, parsed) }));
         }
       }
     } else {
@@ -98,35 +93,45 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+    const fieldName = name as NumericField;
+    if (value === '') {
+      setFormData(prev => ({ ...prev, [fieldName]: null }));
+      setErrors(prev => ({ ...prev, [fieldName]: '' }));
+      return;
+    }
     const parsed = parseFloat(value);
-    const num = isNaN(parsed) ? 0 : parsed;
-    setRawInputs(prev => ({ ...prev, [name]: String(num) }));
-    setFormData(prev => ({ ...prev, [name]: num }));
-    setErrors(prev => ({ ...prev, [name]: validate(name, num) }));
+    if (isNaN(parsed)) {
+      setRawInputs(prev => ({ ...prev, [fieldName]: '' }));
+      setFormData(prev => ({ ...prev, [fieldName]: null }));
+      setErrors(prev => ({ ...prev, [fieldName]: '' }));
+      return;
+    }
+    setRawInputs(prev => ({ ...prev, [fieldName]: String(parsed) }));
+    setFormData(prev => ({ ...prev, [fieldName]: parsed }));
+    setErrors(prev => ({ ...prev, [fieldName]: validate(fieldName, parsed) }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Flush any rawInputs that are still mid-edit (e.g. focused field ending with ".")
-    const flushed = { ...formData };
+    // Flush any rawInputs that are still mid-edit (e.g. focused field ending with ".").
+    // Empty strings remain null — "not measured" is a valid state.
+    const flushed: FormData = { ...formData };
     for (const field of NUMERIC_FIELDS) {
-      const parsed = parseFloat(rawInputs[field] ?? '');
-      if (!isNaN(parsed)) flushed[field] = parsed;
+      const raw = rawInputs[field] ?? '';
+      if (raw === '') {
+        flushed[field] = null;
+      } else {
+        const parsed = parseFloat(raw);
+        if (!isNaN(parsed)) flushed[field] = parsed;
+      }
     }
-    // Warn if any measurement fields are still at their pre-filled defaults
-    const untouched = NUMERIC_FIELDS.filter(f => !touched.has(f));
-    if (untouched.length > 0 && !showDefaultsWarning) {
-      setShowDefaultsWarning(true);
-      return;
-    }
-    setShowDefaultsWarning(false);
     onSave(flushed);
   };
 
   const handleVoiceInput = async (targetField: 'all' | 'notes' = 'all') => {
     const isNotes = targetField === 'notes';
     if (isNotes ? isTranscribingNotes : isTranscribing) return;
-    
+
     if (isNotes) setIsTranscribingNotes(true);
     else setIsTranscribing(true);
 
@@ -145,7 +150,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
-          
+
           const response = await generateContentWithRetry({
             model: "gemini-3-flash-preview",
             contents: [
@@ -156,7 +161,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
                 }
               },
               {
-                text: isNotes 
+                text: isNotes
                   ? "Transcribe the following pool maintenance observations or chemical additions. Return ONLY the transcribed text."
                   : "Transcribe the following pool reading. Extract values for Chlorine, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
               }
@@ -175,7 +180,6 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
               }));
             } else {
               const result = JSON.parse(response.text || '{}');
-              // Only accept fields where transcription returned a parseable finite number
               const validFields: Partial<Record<NumericField, number>> = {};
               for (const field of NUMERIC_FIELDS) {
                 const parsed = parseFloat(String(result[field]));
@@ -186,11 +190,6 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
                 ...prev,
                 ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
               }));
-              setTouched(prev => {
-                const n = new Set(prev);
-                for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
-                return n;
-              });
             }
           } catch (e) {
             console.error("Failed to process transcription", e);
@@ -239,7 +238,6 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         config: { responseMimeType: "application/json" }
       }, process.env.GEMINI_API_KEY!);
       const parsed = JSON.parse(response.text || '{}');
-      // Only accept fields where the image extraction returned a parseable finite number
       const validFields: Partial<Record<NumericField, number>> = {};
       for (const field of NUMERIC_FIELDS) {
         const v = parseFloat(String(parsed[field]));
@@ -259,11 +257,6 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         ...prev,
         ...Object.fromEntries(Object.entries(validFields).map(([k, v]) => [k, String(v)])),
       }));
-      setTouched(prev => {
-        const n = new Set(prev);
-        for (const field of Object.keys(validFields) as NumericField[]) n.add(field);
-        return n;
-      });
     } catch (error) {
       console.error('Image analysis failed', error);
     } finally {
@@ -273,7 +266,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
@@ -281,8 +274,8 @@ missingInventory and missingEquipment should be arrays of strings when identifia
     >
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
-          <button 
-            onClick={onCancel} 
+          <button
+            onClick={onCancel}
             className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors"
           >
             <ChevronLeft size={16} />
@@ -296,104 +289,13 @@ missingInventory and missingEquipment should be arrays of strings when identifia
 
         <form onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <InputField
-              label="Free Chlorine"
-              name="chlorine"
-              value={rawInputs.chlorine}
-              unit="ppm"
-              icon={<Droplets size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.chlorine}
-              min={0}
-              max={10}
-              step="any"
-              isDefault={!touched.has('chlorine')}
-            />
-            <InputField
-              label="pH Level"
-              name="ph"
-              value={rawInputs.ph}
-              unit=""
-              icon={<Activity size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.ph}
-              min={0}
-              max={14}
-              step="any"
-              isDefault={!touched.has('ph')}
-            />
-            <InputField
-              label="Total Alkalinity"
-              name="alkalinity"
-              value={rawInputs.alkalinity}
-              unit="ppm"
-              icon={<TrendingUp size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.alkalinity}
-              min={0}
-              max={300}
-              step="any"
-              isDefault={!touched.has('alkalinity')}
-            />
-            <InputField
-              label="Temperature"
-              name="temperature"
-              value={rawInputs.temperature}
-              unit="°C"
-              icon={<Thermometer size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.temperature}
-              min={0}
-              max={50}
-              step="any"
-              isDefault={!touched.has('temperature')}
-            />
-            <InputField
-              label="Diff Pressure"
-              name="differentialPressure"
-              value={rawInputs.differentialPressure}
-              unit="kPa"
-              icon={<Gauge size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.differentialPressure}
-              min={0}
-              max={500}
-              step="any"
-              isDefault={!touched.has('differentialPressure')}
-            />
-            <InputField
-              label="Calcium Hardness"
-              name="calciumHardness"
-              value={rawInputs.calciumHardness}
-              unit="ppm"
-              icon={<Waves size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.calciumHardness}
-              min={0}
-              max={1000}
-              step="any"
-              isDefault={!touched.has('calciumHardness')}
-            />
-            <InputField
-              label="Cyanuric Acid"
-              name="cyanuricAcid"
-              value={rawInputs.cyanuricAcid}
-              unit="ppm"
-              icon={<Sun size={16} />}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              error={errors.cyanuricAcid}
-              min={0}
-              max={200}
-              step="any"
-              isDefault={!touched.has('cyanuricAcid')}
-            />
+            <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={formData.chlorine == null} />
+            <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={formData.ph == null} />
+            <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={formData.alkalinity == null} />
+            <InputField label="Temperature" name="temperature" value={rawInputs.temperature} unit="°C" icon={<Thermometer size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.temperature} min={0} max={50} step="any" isEmpty={formData.temperature == null} />
+            <InputField label="Diff Pressure" name="differentialPressure" value={rawInputs.differentialPressure} unit="kPa" icon={<Gauge size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.differentialPressure} min={0} max={500} step="any" isEmpty={formData.differentialPressure == null} />
+            <InputField label="Calcium Hardness" name="calciumHardness" value={rawInputs.calciumHardness} unit="ppm" icon={<Waves size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.calciumHardness} min={0} max={1000} step="any" isEmpty={formData.calciumHardness == null} />
+            <InputField label="Cyanuric Acid" name="cyanuricAcid" value={rawInputs.cyanuricAcid} unit="ppm" icon={<Sun size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.cyanuricAcid} min={0} max={200} step="any" isEmpty={formData.cyanuricAcid == null} />
           </div>
 
           <div className="flex items-center gap-4 p-4 bg-bg/40 rounded-xl border border-border-dim">
@@ -438,7 +340,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               </div>
               <span className="text-[9px] font-bold uppercase tracking-widest text-ink-dim/50">Optional</span>
             </div>
-            <textarea 
+            <textarea
               name="notes"
               value={formData.notes}
               onChange={handleChange}
@@ -448,46 +350,14 @@ missingInventory and missingEquipment should be arrays of strings when identifia
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-6 bg-[#060e1a]/95 backdrop-blur-xl border-t border-border-dim">
-            <div className="max-w-2xl mx-auto space-y-3">
-              {showDefaultsWarning && (() => {
-                const untouched = NUMERIC_FIELDS.filter(f => !touched.has(f));
-                return (
-                  <div className="p-4 rounded-xl bg-warning/10 border border-warning/40">
-                    <div className="flex items-center gap-2 mb-2">
-                      <AlertCircle size={14} className="text-warning flex-shrink-0" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-warning">Unsaved field defaults detected</span>
-                    </div>
-                    <p className="text-xs text-ink-muted mb-3">
-                      <strong className="text-ink">{untouched.map(f => FIELD_LABELS[f]).join(', ')}</strong> {untouched.length === 1 ? 'was' : 'were'} not entered — the pre-filled estimate{untouched.length === 1 ? '' : 's'} will be saved and may affect report accuracy.
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowDefaultsWarning(false)}
-                        className="btn btn-secondary py-2 flex-1"
-                      >
-                        Review Fields
-                      </button>
-                      <button
-                        type="submit"
-                        className="btn btn-primary py-2 flex-1"
-                      >
-                        <Save size={14} />
-                        Save Anyway
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-              {!showDefaultsWarning && (
-                <button
-                  type="submit"
-                  className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
-                >
-                  <Save size={18} />
-                  Commit to Database
-                </button>
-              )}
+            <div className="max-w-2xl mx-auto">
+              <button
+                type="submit"
+                className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
+              >
+                <Save size={18} />
+                Commit to Database
+              </button>
             </div>
           </div>
         </form>
@@ -496,7 +366,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isDefault }: any) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -505,9 +375,9 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
           <span className="text-[9px] font-bold text-critical uppercase tracking-widest flex items-center gap-1.5">
             <AlertCircle size={10} /> {error}
           </span>
-        ) : isDefault ? (
+        ) : isEmpty ? (
           <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">
-            <MinusCircle size={10} /> Default
+            <MinusCircle size={10} /> Not measured
           </span>
         ) : (
           <span className="text-[9px] font-bold text-success uppercase tracking-widest flex items-center gap-1.5">
@@ -528,6 +398,7 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
           min={min}
           max={max}
           step={step}
+          placeholder="—"
           className={`input bg-[#0d1f38] pl-12 pr-16 py-4 text-sm font-mono ${error ? 'border-critical focus:ring-critical/10' : 'border-border-dim focus:border-accent focus:ring-accent/10'}`}
         />
         <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ink-dim uppercase tracking-widest">
