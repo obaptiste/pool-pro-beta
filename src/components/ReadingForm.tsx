@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { History as HistoryIcon } from 'lucide-react';
 import {
   Check,
@@ -79,6 +79,31 @@ export default function ReadingForm({ onSave, onCancel, latestReading }: Props) 
   const [rawInputs, setRawInputs] = useState<Record<string, string>>(
     () => Object.fromEntries(NUMERIC_FIELDS.map(f => [f, String(initialNumeric[f])]))
   );
+
+  // If `latestReading` arrives or changes after mount (e.g. Firestore snapshot lands
+  // after the form opens), re-seed any field the user hasn't touched. Touched fields
+  // are preserved so we don't clobber in-flight edits.
+  useEffect(() => {
+    if (!latestReading) return;
+    setFormData(prev => {
+      const next = { ...prev };
+      for (const field of NUMERIC_FIELDS) {
+        if (touched.has(field)) continue;
+        const v = latestReading[field];
+        if (typeof v === 'number' && isFinite(v)) next[field] = v;
+      }
+      return next;
+    });
+    setRawInputs(prev => {
+      const next = { ...prev };
+      for (const field of NUMERIC_FIELDS) {
+        if (touched.has(field)) continue;
+        const v = latestReading[field];
+        if (typeof v === 'number' && isFinite(v)) next[field] = String(v);
+      }
+      return next;
+    });
+  }, [latestReading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validate = (name: string, value: number) => {
     const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
