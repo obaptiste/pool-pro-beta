@@ -45,11 +45,26 @@ const emptyItem = (): Omit<WishlistItem, 'id' | 'uid' | 'createdAt'> => ({
   purchaseOptions: [],
 });
 
+let fallbackIdCounter = 0;
+
 const createLocalId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map((n) => n.toString(16).padStart(2, '0'))
+      .join('');
+    return `wish-${randomHex}`;
+  }
+
+  fallbackIdCounter += 1;
+  const perfMicros =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? Math.floor(performance.now() * 1000).toString(36)
+      : '0';
+  return `wish-${Date.now().toString(36)}-${perfMicros}-${fallbackIdCounter.toString(36)}`;
 };
 
 function safeHttpUrl(raw: string | undefined | null): string | null {
