@@ -127,16 +127,30 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
 
-  const handleSaveNew = () => {
+  const handleSaveNew = async () => {
     if (!newItem.name.trim()) return;
-    onUpdateItem({
-      ...newItem,
-      id: crypto.randomUUID(),
-      uid: '',
-      createdAt: new Date(),
-    });
-    setNewItem(emptyItem());
-    setIsAdding(false);
+    try {
+      await onUpdateItem({
+        ...newItem,
+        id: crypto.randomUUID(),
+        uid: '',
+        createdAt: new Date(),
+      });
+      setNewItem(emptyItem());
+      setIsAdding(false);
+      showFlash('Wish item added');
+    } catch (error: any) {
+      console.error('Failed to save wishlist item:', error);
+      // Parse JSON error from handleFirestoreError if present
+      let message = 'Failed to save item. Please try again.';
+      try {
+        const parsed = JSON.parse(error?.message || '{}');
+        message = parsed.error || message;
+      } catch {
+        message = error?.message || message;
+      }
+      showFlash(message, true);
+    }
   };
 
   const showFlash = (message: string, isError = false) => {
@@ -399,6 +413,46 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
   // AI description generation state
   const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
+  // Save error state
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const safeUpdate = async (updatedItem: WishlistItem) => {
+    try {
+      setSaveError(null);
+      await onUpdate(updatedItem);
+    } catch (error: any) {
+      console.error('Failed to update wishlist item:', error);
+      // Parse JSON error from handleFirestoreError if present
+      let message = 'Failed to save changes. Please try again.';
+      try {
+        const parsed = JSON.parse(error?.message || '{}');
+        message = parsed.error || message;
+      } catch {
+        message = error?.message || message;
+      }
+      setSaveError(message);
+      setTimeout(() => setSaveError(null), 3000);
+    }
+  };
+
+  const safeDelete = async () => {
+    try {
+      setSaveError(null);
+      await onDelete();
+    } catch (error: any) {
+      console.error('Failed to delete wishlist item:', error);
+      // Parse JSON error from handleFirestoreError if present
+      let message = 'Failed to delete item. Please try again.';
+      try {
+        const parsed = JSON.parse(error?.message || '{}');
+        message = parsed.error || message;
+      } catch {
+        message = error?.message || message;
+      }
+      setSaveError(message);
+      setTimeout(() => setSaveError(null), 3000);
+    }
+  };
 
   // Re-sync draft when the upstream item id or any tracked field changes
   // (e.g. snapshot brings in a remote edit). Equality check skips no-ops
@@ -424,7 +478,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
       // Splice in the upstream purchaseOptions so a stale draft array
       // (e.g. after a separate option edit landed but before draftItem
       // re-synced) doesn't clobber the newer Firestore state.
-      onUpdate({ ...draftItem, purchaseOptions: item.purchaseOptions });
+      safeUpdate({ ...draftItem, purchaseOptions: item.purchaseOptions });
     }
   };
 
@@ -432,7 +486,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
     const next = { ...draftItem, [field]: value };
     setDraftItem(next);
     if (!itemFieldsEqual(next, item)) {
-      onUpdate({ ...next, purchaseOptions: item.purchaseOptions });
+      safeUpdate({ ...next, purchaseOptions: item.purchaseOptions });
     }
   };
 
@@ -451,18 +505,18 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
   const promotePendingOption = (option: PurchaseOption) => {
     if (!option.vendor.trim()) return;
     setPendingOptions((prev) => prev.filter((o) => o.id !== option.id));
-    onUpdate({ ...item, purchaseOptions: [...item.purchaseOptions, option] });
+    safeUpdate({ ...item, purchaseOptions: [...item.purchaseOptions, option] });
   };
 
   const updatePersistedOption = (next: PurchaseOption) => {
-    onUpdate({
+    safeUpdate({
       ...item,
       purchaseOptions: item.purchaseOptions.map((o) => (o.id === next.id ? next : o)),
     });
   };
 
   const removePersistedOption = (id: string) => {
-    onUpdate({
+    safeUpdate({
       ...item,
       purchaseOptions: item.purchaseOptions.filter((o) => o.id !== id),
     });
@@ -506,7 +560,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
       const next = { ...draftItem, description: result.text.trim() };
       setDraftItem(next);
       if (!itemFieldsEqual(next, item)) {
-        onUpdate({ ...next, purchaseOptions: item.purchaseOptions });
+        await safeUpdate({ ...next, purchaseOptions: item.purchaseOptions });
       }
     } catch (error: any) {
       console.error('AI description generation failed:', error);
@@ -565,7 +619,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
           </div>
         </button>
         <button
-          onClick={onDelete}
+          onClick={safeDelete}
           className="p-2 text-ink-dim hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
           aria-label="Delete wish"
         >
@@ -582,6 +636,19 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
             className="border-t border-border-dim bg-[#060e1a]/40"
           >
             <div className="p-4 space-y-4">
+              {saveError && (
+                <AnimatePresence>
+                  <motion.div
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 flex items-start gap-2"
+                  >
+                    <AlertTriangle size={14} className="text-red-500 mt-0.5 flex-shrink-0" />
+                    <span className="text-[10px] text-red-400 font-medium">{saveError}</span>
+                  </motion.div>
+                </AnimatePresence>
+              )}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">
                   Details
