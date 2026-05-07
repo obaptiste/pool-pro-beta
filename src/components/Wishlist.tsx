@@ -24,8 +24,8 @@ interface WishlistProps {
   isOpen: boolean;
   onClose: () => void;
   items: WishlistItem[];
-  onUpdateItem: (item: WishlistItem) => void;
-  onDeleteItem: (id: string) => void;
+  onUpdateItem: (item: WishlistItem) => void | Promise<void>;
+  onDeleteItem: (id: string) => void | Promise<void>;
 }
 
 const PRIORITY_COLORS: Record<Priority, string> = {
@@ -400,8 +400,8 @@ interface WishItemCardProps {
   item: WishlistItem;
   isExpanded: boolean;
   onToggleExpand: () => void;
-  onUpdate: (item: WishlistItem) => void;
-  onDelete: () => void;
+  onUpdate: (item: WishlistItem) => void | Promise<void>;
+  onDelete: () => void | Promise<void>;
 }
 
 function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: WishItemCardProps) {
