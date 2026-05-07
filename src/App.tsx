@@ -759,7 +759,10 @@ export default function App() {
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
-            onEdit={(reading) => setEditingReading(reading)}
+            onEdit={(reading) => {
+              setEditingReading(reading);
+              setIsHistoryOpen(false);
+            }}
           />
         )}
       </AnimatePresence>
