@@ -437,27 +437,42 @@ export default function App() {
   const handleUpdateWishlist = async (item: WishlistItem) => {
     if (!user) return;
     try {
-      const cleanOptions = (item.purchaseOptions || []).map(opt => ({
-        id: opt.id,
-        vendor: opt.vendor || '',
-        url: opt.url || '',
-        price: opt.price ?? null,
-        currency: opt.currency || '',
-        qualityRating: opt.qualityRating ?? null,
-        availability: opt.availability || '',
-        notes: opt.notes || '',
+      const isFiniteNumber = (value: unknown): value is number =>
+        typeof value === 'number' && Number.isFinite(value);
+
+      const name = item.name.trim();
+      if (!name) return;
+
+      const createdAt =
+        item.createdAt instanceof Date && !Number.isNaN(item.createdAt.getTime())
+          ? item.createdAt
+          : new Date();
+
+      const priority = ['low', 'medium', 'high', 'critical'].includes(item.priority) ? item.priority : 'medium';
+      const quantity = isFiniteNumber(item.quantity) ? Math.max(1, item.quantity) : 1;
+      const estimatedCost = isFiniteNumber(item.estimatedCost) ? item.estimatedCost : null;
+
+      const cleanOptions = (item.purchaseOptions || []).map((opt) => ({
+        id: typeof opt.id === 'string' && opt.id ? opt.id : crypto.randomUUID(),
+        vendor: typeof opt.vendor === 'string' ? opt.vendor : '',
+        url: typeof opt.url === 'string' ? opt.url : '',
+        price: isFiniteNumber(opt.price) ? opt.price : null,
+        currency: typeof opt.currency === 'string' ? opt.currency : '',
+        qualityRating: isFiniteNumber(opt.qualityRating) ? opt.qualityRating : null,
+        availability: typeof opt.availability === 'string' ? opt.availability : '',
+        notes: typeof opt.notes === 'string' ? opt.notes : '',
       }));
       await setDoc(doc(db, 'wishlist', item.id), {
         id: item.id,
-        name: item.name,
+        name,
         description: item.description || '',
-        priority: item.priority,
-        quantity: item.quantity,
-        estimatedCost: item.estimatedCost ?? null,
+        priority,
+        quantity,
+        estimatedCost,
         currency: item.currency || '',
         purchaseOptions: cleanOptions,
         uid: user.uid,
-        createdAt: Timestamp.fromDate(item.createdAt || new Date()),
+        createdAt: Timestamp.fromDate(createdAt),
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `wishlist/${item.id}`);
