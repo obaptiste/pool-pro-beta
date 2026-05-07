@@ -299,13 +299,28 @@ export default function App() {
       timestamp: now,
       uid: user.uid
     };
+    // A reading with no actual measurements doesn't count as a completed water
+    // test, so it shouldn't advance the schedule and suppress the next reminder.
+    const hasMeasurement =
+      newReading.chlorine != null ||
+      newReading.ph != null ||
+      newReading.alkalinity != null ||
+      newReading.temperature != null ||
+      newReading.differentialPressure != null ||
+      newReading.calciumHardness != null ||
+      newReading.cyanuricAcid != null;
 
     try {
       await setDoc(doc(db, 'readings', id), {
         ...reading,
         timestamp: Timestamp.fromDate(now)
       });
-      
+
+      if (!hasMeasurement) {
+        setIsLogging(false);
+        return;
+      }
+
       // Update schedule
       const daysToAdd = {
         daily: 1,

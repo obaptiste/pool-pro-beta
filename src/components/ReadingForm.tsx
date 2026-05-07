@@ -74,6 +74,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
     if (type === 'number') {
       const fieldName = name as NumericField;
       setRawInputs(prev => ({ ...prev, [fieldName]: value }));
+      if (value !== '') setSubmitError(null);
       if (value === '' || value.endsWith('.')) {
         setFormData(prev => ({ ...prev, [fieldName]: value === '' ? null : prev[fieldName] }));
         setErrors(prev => ({ ...prev, [fieldName]: '' }));
@@ -109,6 +110,8 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
     setErrors(prev => ({ ...prev, [fieldName]: validate(fieldName, parsed) }));
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // Flush any rawInputs that are still mid-edit (e.g. focused field ending with ".").
@@ -123,6 +126,14 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
         if (!isNaN(parsed)) flushed[field] = parsed;
       }
     }
+    // Block all-null submissions: every numeric field would be saved as "not
+    // measured", which advances the test schedule without any actual data.
+    const hasAnyMeasurement = NUMERIC_FIELDS.some(f => flushed[f] != null);
+    if (!hasAnyMeasurement) {
+      setSubmitError('Enter at least one measurement before saving.');
+      return;
+    }
+    setSubmitError(null);
     onSave(flushed);
   };
 
@@ -348,7 +359,13 @@ missingInventory and missingEquipment should be arrays of strings when identifia
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-6 bg-[#060e1a]/95 backdrop-blur-xl border-t border-border-dim">
-            <div className="max-w-2xl mx-auto">
+            <div className="max-w-2xl mx-auto space-y-3">
+              {submitError && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-critical/10 border border-critical/40">
+                  <AlertCircle size={14} className="text-critical flex-shrink-0" />
+                  <span className="text-xs text-critical">{submitError}</span>
+                </div>
+              )}
               <button
                 type="submit"
                 className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
