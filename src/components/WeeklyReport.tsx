@@ -231,7 +231,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   const lsiAbs = lsi == null ? null : Math.abs(lsi);
   const lsiLabel = lsiAbs == null ? 'Insufficient data' : lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
-  const allUnknown = weekReadings.length === 0;
+  // A week with reading documents but no actual measurements (every metric null)
+  // is still a monitoring gap, not a healthy week — treat it the same as no readings.
+  const allUnknown = weekReadings.length === 0 || telemetry.every(m => m.status === 'unknown');
   const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || (lsiAbs != null && lsiAbs > 0.3));
   const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs != null && lsiAbs > 0.1 && lsiAbs <= 0.3));
   const hasWatch    = !allUnknown && telemetry.some(m => m.status === 'watch');
@@ -244,7 +246,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   // Only flag metrics that have actual data (exclude unknown placeholders)
   const badMetrics = telemetry.filter(m => m.status !== 'good' && m.status !== 'unknown').map(m => m.label.toLowerCase());
   const headline = allUnknown
-    ? 'No readings recorded this week — monitoring gap'
+    ? (weekReadings.length === 0
+        ? 'No readings recorded this week — monitoring gap'
+        : 'Readings logged but no measurements recorded — monitoring gap')
     : badMetrics.length === 0
     ? 'All parameters within specification this week'
     : badMetrics.length === 1
