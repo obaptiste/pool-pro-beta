@@ -20,7 +20,7 @@ import { Reading, DEFAULT_RANGES } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
 
 interface Props {
-  onSave: (reading: Omit<Reading, 'id' | 'timestamp'>) => void;
+  onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
   onCancel: () => void;
 }
 
@@ -29,7 +29,6 @@ type NumericField = typeof NUMERIC_FIELDS[number];
 
 type FormData = Record<NumericField, number | null> & {
   notes: string;
-  uid: string;
 };
 
 const INITIAL_FORM: FormData = {
@@ -41,7 +40,6 @@ const INITIAL_FORM: FormData = {
   calciumHardness: null,
   cyanuricAcid: null,
   notes: '',
-  uid: '',
 };
 
 const INITIAL_RAW: Record<NumericField, string> = {
@@ -289,13 +287,13 @@ missingInventory and missingEquipment should be arrays of strings when identifia
 
         <form onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={formData.chlorine == null} />
-            <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={formData.ph == null} />
-            <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={formData.alkalinity == null} />
-            <InputField label="Temperature" name="temperature" value={rawInputs.temperature} unit="°C" icon={<Thermometer size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.temperature} min={0} max={50} step="any" isEmpty={formData.temperature == null} />
-            <InputField label="Diff Pressure" name="differentialPressure" value={rawInputs.differentialPressure} unit="kPa" icon={<Gauge size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.differentialPressure} min={0} max={500} step="any" isEmpty={formData.differentialPressure == null} />
-            <InputField label="Calcium Hardness" name="calciumHardness" value={rawInputs.calciumHardness} unit="ppm" icon={<Waves size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.calciumHardness} min={0} max={1000} step="any" isEmpty={formData.calciumHardness == null} />
-            <InputField label="Cyanuric Acid" name="cyanuricAcid" value={rawInputs.cyanuricAcid} unit="ppm" icon={<Sun size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.cyanuricAcid} min={0} max={200} step="any" isEmpty={formData.cyanuricAcid == null} />
+            <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
+            <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={rawInputs.ph === ''} />
+            <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={rawInputs.alkalinity === ''} />
+            <InputField label="Temperature" name="temperature" value={rawInputs.temperature} unit="°C" icon={<Thermometer size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.temperature} min={0} max={50} step="any" isEmpty={rawInputs.temperature === ''} />
+            <InputField label="Diff Pressure" name="differentialPressure" value={rawInputs.differentialPressure} unit="kPa" icon={<Gauge size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.differentialPressure} min={0} max={500} step="any" isEmpty={rawInputs.differentialPressure === ''} />
+            <InputField label="Calcium Hardness" name="calciumHardness" value={rawInputs.calciumHardness} unit="ppm" icon={<Waves size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.calciumHardness} min={0} max={1000} step="any" isEmpty={rawInputs.calciumHardness === ''} />
+            <InputField label="Cyanuric Acid" name="cyanuricAcid" value={rawInputs.cyanuricAcid} unit="ppm" icon={<Sun size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.cyanuricAcid} min={0} max={200} step="any" isEmpty={rawInputs.cyanuricAcid === ''} />
           </div>
 
           <div className="flex items-center gap-4 p-4 bg-bg/40 rounded-xl border border-border-dim">

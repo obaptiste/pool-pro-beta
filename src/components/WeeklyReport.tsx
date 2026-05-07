@@ -191,17 +191,24 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       return { date: fmtDate(d), status: 'unknown' as const, note: 'No readings' };
     }
     let worst: 'good' | 'watch' | 'warning' | 'critical' = 'good';
+    let observedAny = false;
     const notes: string[] = [];
     dayR.forEach(r => {
       METRICS.forEach(m => {
         const v = m.get(r);
         if (v == null) return;
+        observedAny = true;
         const [lo, hi] = m.target;
         if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
         else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
         else if (v < lo || v > hi)               { if (worst === 'good') worst = 'watch'; notes.push(`${m.label} watch`); }
       });
     });
+    // Days that contain only all-null readings get an unknown status — they're a
+    // monitoring gap, not "all nominal" data.
+    if (!observedAny) {
+      return { date: fmtDate(d), status: 'unknown' as const, note: 'No measurements logged' };
+    }
     return {
       date: fmtDate(d),
       status: worst,
@@ -475,21 +482,34 @@ function TrendLines({ trend, metrics, theme = 'dark', height = 220 }: { trend: T
         return <text key={i} x={x} y={H - 8} fontSize="8" fontFamily="Space Mono, monospace" fill={dim} textAnchor="middle">{i % 2 === 0 ? t.d : ''}</text>;
       })}
       {metrics.map(m => {
-        const vals = trend.map(t => t[m.key] as number);
-        const vMin = Math.min(...vals), vRange = (Math.max(...vals) - vMin) || 1;
-        const pts = vals.map((v, i) => {
-          const x = padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
-          const y = padT + innerH - ((v - vMin) / vRange) * innerH;
-          return `${x},${y}`;
-        }).join(' ');
+        // Skip null points so missing samples render as gaps in the polyline rather than
+        // collapsing to zero and distorting the y-axis range.
+        const allVals = trend.map(t => t[m.key]) as (number | null)[];
+        const numericVals = allVals.filter((v): v is number => v != null);
+        if (numericVals.length === 0) return <g key={m.key as string} />;
+        const vMin = Math.min(...numericVals);
+        const vRange = (Math.max(...numericVals) - vMin) || 1;
+        const xAt = (i: number) => padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
+        const yAt = (v: number) => padT + innerH - ((v - vMin) / vRange) * innerH;
+        // Build contiguous segments of non-null values so the polyline breaks at gaps.
+        const segments: string[][] = [];
+        let current: string[] = [];
+        allVals.forEach((v, i) => {
+          if (v == null) {
+            if (current.length > 0) { segments.push(current); current = []; }
+          } else {
+            current.push(`${xAt(i)},${yAt(v)}`);
+          }
+        });
+        if (current.length > 0) segments.push(current);
         return (
           <g key={m.key as string}>
-            <polyline points={pts} fill="none" stroke={m.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-            {vals.map((v, i) => {
-              const x = padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
-              const y = padT + innerH - ((v - vMin) / vRange) * innerH;
-              return <circle key={i} cx={x} cy={y} r="2" fill={m.color} />;
-            })}
+            {segments.map((pts, idx) => (
+              <polyline key={idx} points={pts.join(' ')} fill="none" stroke={m.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
+            {allVals.map((v, i) => v == null ? null : (
+              <circle key={i} cx={xAt(i)} cy={yAt(v)} r="2" fill={m.color} />
+            ))}
           </g>
         );
       })}
