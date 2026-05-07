@@ -22,6 +22,7 @@ import { generateContentWithRetry } from '../lib/gemini';
 interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
   onCancel: () => void;
+  initialReading?: Reading;
 }
 
 const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
@@ -52,9 +53,34 @@ const INITIAL_RAW: Record<NumericField, string> = {
   cyanuricAcid: '',
 };
 
-export default function ReadingForm({ onSave, onCancel }: Props) {
-  const [formData, setFormData] = useState<FormData>(INITIAL_FORM);
-  const [rawInputs, setRawInputs] = useState<Record<NumericField, string>>(INITIAL_RAW);
+export default function ReadingForm({ onSave, onCancel, initialReading }: Props) {
+  const isEditing = !!initialReading;
+  const [formData, setFormData] = useState<FormData>(() => {
+    if (!initialReading) return INITIAL_FORM;
+    return {
+      chlorine: initialReading.chlorine,
+      ph: initialReading.ph,
+      alkalinity: initialReading.alkalinity,
+      temperature: initialReading.temperature,
+      differentialPressure: initialReading.differentialPressure,
+      calciumHardness: initialReading.calciumHardness,
+      cyanuricAcid: initialReading.cyanuricAcid,
+      notes: initialReading.notes ?? '',
+    };
+  });
+  const [rawInputs, setRawInputs] = useState<Record<NumericField, string>>(() => {
+    if (!initialReading) return INITIAL_RAW;
+    const fromValue = (v: number | null) => (v == null ? '' : String(v));
+    return {
+      chlorine: fromValue(initialReading.chlorine),
+      ph: fromValue(initialReading.ph),
+      alkalinity: fromValue(initialReading.alkalinity),
+      temperature: fromValue(initialReading.temperature),
+      differentialPressure: fromValue(initialReading.differentialPressure),
+      calciumHardness: fromValue(initialReading.calciumHardness),
+      cyanuricAcid: fromValue(initialReading.cyanuricAcid),
+    };
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
@@ -291,8 +317,8 @@ missingInventory and missingEquipment should be arrays of strings when identifia
             Back to Dashboard
           </button>
           <div className="text-right">
-            <h1 className="text-lg font-bold text-ink tracking-tight">New Reading</h1>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">Manual Data Entry</p>
+            <h1 className="text-lg font-bold text-ink tracking-tight">{isEditing ? 'Amend Reading' : 'New Reading'}</h1>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">{isEditing ? 'Edit Existing Log' : 'Manual Data Entry'}</p>
           </div>
         </header>
 
@@ -371,7 +397,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                 className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
               >
                 <Save size={18} />
-                Commit to Database
+                {isEditing ? 'Save Changes' : 'Commit to Database'}
               </button>
             </div>
           </div>

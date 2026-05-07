@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun } from 'lucide-react';
+import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Pencil } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { format } from 'date-fns';
@@ -8,9 +8,10 @@ interface Props {
   readings: Reading[];
   onBack: () => void;
   onDelete: (id: string) => void;
+  onEdit: (reading: Reading) => void;
 }
 
-export default function History({ readings, onBack, onDelete }: Props) {
+export default function History({ readings, onBack, onDelete, onEdit }: Props) {
 
   const uniqueVisitDays = new Set(readings.map((reading) => format(reading.timestamp, 'yyyy-MM-dd'))).size;
   const firstVisit = readings.length ? readings[readings.length - 1].timestamp : null;
@@ -84,8 +85,15 @@ export default function History({ readings, onBack, onDelete }: Props) {
                       </div>
                     )}
 
-                    <div className="flex justify-end border-t border-border-dim/30 pt-3 mt-1">
-                      <button 
+                    <div className="flex justify-end items-center gap-4 border-t border-border-dim/30 pt-3 mt-1">
+                      <button
+                        onClick={() => onEdit(reading)}
+                        className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors"
+                      >
+                        <Pencil size={12} />
+                        Amend Log
+                      </button>
+                      <button
                         onClick={() => onDelete(reading.id)}
                         className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-critical/50 hover:text-critical transition-colors"
                       >
