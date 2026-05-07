@@ -738,6 +738,18 @@ export default function App() {
       />
 
       <AnimatePresence>
+        {isHistoryOpen && (
+          <History
+            readings={readings}
+            onBack={() => setIsHistoryOpen(false)}
+            onDelete={handleDeleteReading}
+            onEdit={(reading) => {
+              setEditingReading(reading);
+              setIsHistoryOpen(false);
+            }}
+          />
+        )}
+
         {isLogging && (
           <ReadingForm
             onSave={handleSaveReading}
@@ -751,18 +763,6 @@ export default function App() {
             initialReading={editingReading}
             onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
             onCancel={() => setEditingReading(null)}
-          />
-        )}
-
-        {isHistoryOpen && (
-          <History
-            readings={readings}
-            onBack={() => setIsHistoryOpen(false)}
-            onDelete={handleDeleteReading}
-            onEdit={(reading) => {
-              setEditingReading(reading);
-              setIsHistoryOpen(false);
-            }}
           />
         )}
       </AnimatePresence>
