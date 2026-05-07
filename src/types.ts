@@ -5,13 +5,13 @@ export type TaskFrequency = 'daily' | 'weekly' | 'monthly' | 'once';
 export interface Reading {
   id: string;
   timestamp: Date;
-  chlorine: number;
-  ph: number;
-  alkalinity: number;
-  temperature: number;
-  differentialPressure: number;
-  calciumHardness: number;
-  cyanuricAcid: number;
+  chlorine: number | null;
+  ph: number | null;
+  alkalinity: number | null;
+  temperature: number | null;
+  differentialPressure: number | null;
+  calciumHardness: number | null;
+  cyanuricAcid: number | null;
   notes?: string;
   uid: string;
 }

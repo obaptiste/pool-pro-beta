@@ -104,7 +104,8 @@ export default function History({ readings, onBack, onDelete }: Props) {
   );
 }
 
-function DataPoint({ label, value, unit, icon, color }: any) {
+function DataPoint({ label, value, unit, icon, color }: { label: string; value: number | null; unit: string; icon: React.ReactNode; color: string }) {
+  const isMissing = value == null;
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-ink-dim">
@@ -112,7 +113,9 @@ function DataPoint({ label, value, unit, icon, color }: any) {
         {label}
       </div>
       <div className="flex items-baseline gap-1">
-        <span className={`text-lg font-bold font-mono ${color}`}>{value.toFixed(label === 'pH Level' ? 1 : 0)}</span>
+        <span className={`text-lg font-bold font-mono ${isMissing ? 'text-ink-dim' : color}`}>
+          {isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}
+        </span>
         <span className="text-[9px] text-ink-dim font-bold uppercase">{unit}</span>
       </div>
     </div>
