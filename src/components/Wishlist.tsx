@@ -45,6 +45,13 @@ const emptyItem = (): Omit<WishlistItem, 'id' | 'uid' | 'createdAt'> => ({
   purchaseOptions: [],
 });
 
+const createLocalId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
 function safeHttpUrl(raw: string | undefined | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -59,7 +66,7 @@ function safeHttpUrl(raw: string | undefined | null): string | null {
 }
 
 const emptyOption = (): PurchaseOption => ({
-  id: crypto.randomUUID(),
+  id: createLocalId(),
   vendor: '',
   url: '',
   price: undefined,
@@ -131,7 +138,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
     if (!newItem.name.trim()) return;
     onUpdateItem({
       ...newItem,
-      id: crypto.randomUUID(),
+      id: createLocalId(),
       uid: '',
       createdAt: new Date(),
     });
