@@ -441,7 +441,9 @@ export default function App() {
         typeof value === 'number' && Number.isFinite(value);
 
       const name = item.name.trim();
-      if (!name) return;
+      if (!name) {
+        throw new Error('Wishlist item name is required.');
+      }
 
       const createdAt =
         item.createdAt instanceof Date && !Number.isNaN(item.createdAt.getTime())
