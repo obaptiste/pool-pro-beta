@@ -234,6 +234,8 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   // A week with reading documents but no actual measurements (every metric null)
   // is still a monitoring gap, not a healthy week — treat it the same as no readings.
   const allUnknown = weekReadings.length === 0 || telemetry.every(m => m.status === 'unknown');
+  const unknownMetrics = telemetry.filter(m => m.status === 'unknown').map(m => m.label.toLowerCase());
+  const hasUnmeasured = !allUnknown && unknownMetrics.length > 0;
   const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || (lsiAbs != null && lsiAbs > 0.3));
   const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs != null && lsiAbs > 0.1 && lsiAbs <= 0.3));
   const hasWatch    = !allUnknown && telemetry.some(m => m.status === 'watch');
@@ -241,19 +243,23 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     allUnknown    ? 'watch' :
     hasCritical   ? 'critical' :
     hasWarning    ? 'warning'  :
-    hasWatch      ? 'watch'    : 'good';
+    hasWatch      ? 'watch'    :
+    hasUnmeasured ? 'watch'    : 'good';
 
   // Only flag metrics that have actual data (exclude unknown placeholders)
   const badMetrics = telemetry.filter(m => m.status !== 'good' && m.status !== 'unknown').map(m => m.label.toLowerCase());
+  const fmtList = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
   const headline = allUnknown
     ? (weekReadings.length === 0
         ? 'No readings recorded this week — monitoring gap'
         : 'Readings logged but no measurements recorded — monitoring gap')
     : badMetrics.length === 0
-    ? 'All parameters within specification this week'
+    ? (hasUnmeasured
+        ? `Measured parameters within specification — ${fmtList(unknownMetrics)} not measured this week`
+        : 'All parameters within specification this week')
     : badMetrics.length === 1
-    ? `${badMetrics[0]} requires attention this week`
-    : `${badMetrics.slice(0, -1).join(', ')} and ${badMetrics[badMetrics.length - 1]} need monitoring`;
+    ? `${badMetrics[0]} requires attention this week${hasUnmeasured ? ` (${fmtList(unknownMetrics)} not measured)` : ''}`
+    : `${fmtList(badMetrics)} need monitoring${hasUnmeasured ? ` (${fmtList(unknownMetrics)} not measured)` : ''}`;
 
   const advisories: Advisory[] = [];
   const pressM = telemetry.find(m => m.key === 'press');
@@ -275,14 +281,20 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       msg: `FC dropped to ${clM.min} ppm — below target of ${DEFAULT_RANGES.chlorine.min} ppm.`,
       action: 'Check chlorine supply and dosing schedule.' });
   }
-  if (weekReadings.length > 0) {
+  if (allUnknown) {
+    advisories.push({ tier: 'watch', title: 'No data this period', time: 'Week',
+      msg: weekReadings.length === 0
+        ? 'No readings were recorded during this 7-day window.'
+        : `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} logged but no measurements were recorded.`,
+      action: 'Verify data entry cadence and log a reading with measurements to resume monitoring.' });
+  } else if (hasUnmeasured) {
+    advisories.push({ tier: 'watch', title: 'Partial monitoring', time: 'Week',
+      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded, but ${fmtList(unknownMetrics)} ${unknownMetrics.length === 1 ? 'was' : 'were'} not measured. LSI: ${lsi == null ? '—' : `${lsi >= 0 ? '+' : ''}${lsi}`} (${lsiLabel}).`,
+      action: 'Capture the missing measurements at the next test to close the monitoring gap.' });
+  } else {
     advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
       msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi == null ? '—' : `${lsi >= 0 ? '+' : ''}${lsi}`} (${lsiLabel}).`,
       action: 'Continue current monitoring cadence.' });
-  } else {
-    advisories.push({ tier: 'watch', title: 'No data this period', time: 'Week',
-      msg: 'No readings were recorded during this 7-day window.',
-      action: 'Verify data entry cadence and log a reading to resume monitoring.' });
   }
 
   const nextSteps: NextStep[] = [];
