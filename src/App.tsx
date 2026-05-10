@@ -326,9 +326,9 @@ export default function App() {
         ...reading,
         timestamp: Timestamp.fromDate(now)
       });
-      markSaved(hasMeasurement ? 'Reading saved to database' : 'Note saved to database');
 
       if (!hasMeasurement) {
+        markSaved('Note saved to database');
         setIsLogging(false);
         return;
       }
@@ -351,6 +351,7 @@ export default function App() {
         nextTestDate: Timestamp.fromDate(nextTest),
       }, { merge: true });
 
+      markSaved('Reading saved to database');
       setIsLogging(false);
     } catch (err) {
       toast.error('Could not save reading');

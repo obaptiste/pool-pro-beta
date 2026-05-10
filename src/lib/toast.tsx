@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from 'lucide-react';
 
@@ -19,6 +19,16 @@ interface ToastContextValue {
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
+
+let idCounter = 0;
+function makeId(): string {
+  const cryptoRef = typeof globalThis !== 'undefined' ? (globalThis.crypto as Crypto | undefined) : undefined;
+  if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
+    return cryptoRef.randomUUID();
+  }
+  idCounter += 1;
+  return `toast-${Date.now()}-${idCounter}`;
+}
 
 const VARIANT_STYLES: Record<ToastVariant, { border: string; iconColor: string; Icon: typeof CheckCircle2 }> = {
   success: { border: 'border-success/60', iconColor: 'text-success', Icon: CheckCircle2 },
@@ -41,7 +51,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const show = useCallback((message: string, variant: ToastVariant = 'success') => {
-    const id = crypto.randomUUID();
+    const id = makeId();
     setToasts((prev) => [...prev, { id, message, variant }]);
     const timer = setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -58,13 +68,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const value: ToastContextValue = {
+  const value = useMemo<ToastContextValue>(() => ({
     show,
     success: (m) => show(m, 'success'),
     error: (m) => show(m, 'error'),
     info: (m) => show(m, 'info'),
     warning: (m) => show(m, 'warning'),
-  };
+  }), [show]);
 
   return (
     <ToastContext.Provider value={value}>
@@ -92,6 +102,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 <Icon size={18} className={`${iconColor} flex-shrink-0`} />
                 <span className="text-sm text-white flex-1">{toast.message}</span>
                 <button
+                  type="button"
                   onClick={() => dismiss(toast.id)}
                   className="text-ink-dim hover:text-white transition-colors flex-shrink-0"
                   aria-label="Dismiss notification"
