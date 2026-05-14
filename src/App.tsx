@@ -377,7 +377,9 @@ export default function App() {
         notes: updates.notes ?? '',
       });
       setEditingReading(null);
+      markSaved('Reading updated');
     } catch (err) {
+      toast.error('Could not update reading');
       handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
     }
   };
