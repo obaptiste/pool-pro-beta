@@ -360,6 +360,10 @@ export default function App() {
   };
 
   const handleDeleteReading = async (id: string) => {
+    if (!window.confirm('Delete this reading permanently?')) {
+      toast.info('Reading deletion canceled');
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'readings', id));
       markSaved('Reading deleted');
@@ -462,6 +466,10 @@ export default function App() {
   };
 
   const handleDeleteInventory = async (id: string) => {
+    if (!window.confirm('Remove this inventory item?')) {
+      toast.info('Inventory removal canceled');
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'inventory', id));
       markSaved('Inventory item removed');
@@ -472,6 +480,10 @@ export default function App() {
   };
 
   const handleDeleteEquipment = async (id: string) => {
+    if (!window.confirm('Remove this equipment record?')) {
+      toast.info('Equipment removal canceled');
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'equipment', id));
       markSaved('Equipment removed');
@@ -514,6 +526,10 @@ export default function App() {
   };
 
   const handleDeleteWishlist = async (id: string) => {
+    if (!window.confirm('Remove this wishlist item?')) {
+      toast.info('Wishlist removal canceled');
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'wishlist', id));
       markSaved('Wishlist item removed');
