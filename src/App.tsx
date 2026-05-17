@@ -41,6 +41,7 @@ export default function App() {
   const [isLogging, setIsLogging] = useState(false);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [returnToHistoryAfterEdit, setReturnToHistoryAfterEdit] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
@@ -349,8 +350,8 @@ export default function App() {
   const handleUpdateReading = async (
     id: string,
     updates: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
-  ) => {
-    if (!user) return;
+  ): Promise<boolean> => {
+    if (!user) return false;
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -362,9 +363,10 @@ export default function App() {
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
       });
-      setEditingReading(null);
+      return true;
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
+      return false;
     }
   };
 
@@ -749,8 +751,22 @@ export default function App() {
           <ReadingForm
             key={editingReading.id}
             initialReading={editingReading}
-            onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
-            onCancel={() => setEditingReading(null)}
+            onSave={async (updates) => {
+              const updated = await handleUpdateReading(editingReading.id, updates);
+              if (!updated) return;
+              setEditingReading(null);
+              if (returnToHistoryAfterEdit) {
+                setIsHistoryOpen(true);
+                setReturnToHistoryAfterEdit(false);
+              }
+            }}
+            onCancel={() => {
+              setEditingReading(null);
+              if (returnToHistoryAfterEdit) {
+                setIsHistoryOpen(true);
+                setReturnToHistoryAfterEdit(false);
+              }
+            }}
           />
         )}
 
@@ -759,7 +775,11 @@ export default function App() {
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
-            onEdit={(reading) => setEditingReading(reading)}
+            onEdit={(reading) => {
+              setEditingReading(reading);
+              setReturnToHistoryAfterEdit(true);
+              setIsHistoryOpen(false);
+            }}
           />
         )}
       </AnimatePresence>
