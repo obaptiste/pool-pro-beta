@@ -32,11 +32,40 @@ const HARD_MIN_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
   sanitisationMv: 0,
 };
 
+const HARD_MAX_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
+  chlorine: 20,
+  ph: 14,
+  alkalinity: 2000,
+  temperature: 100,
+  differentialPressure: 10000,
+  calciumHardness: 10000,
+  cyanuricAcid: 1000,
+  sanitisationMv: 2000,
+};
+
+const FIELD_LABEL: Record<NumericReadingField, string> = {
+  chlorine: 'Chlorine',
+  ph: 'pH',
+  alkalinity: 'Alkalinity',
+  temperature: 'Temperature',
+  differentialPressure: 'Differential Pressure',
+  calciumHardness: 'Calcium Hardness',
+  cyanuricAcid: 'Cyanuric Acid',
+  sanitisationMv: 'ORP',
+};
+
 export function getHardValidationError(field: NumericReadingField, value: number): string {
   if (!Number.isFinite(value)) return 'Enter a valid number.';
+  const label = FIELD_LABEL[field];
   const min = HARD_MIN_BY_FIELD[field];
   if (typeof min === 'number' && value < min) {
-    return `${field === 'ph' ? 'pH' : 'Value'} cannot be negative.`;
+    return min === 0
+      ? `${label} cannot be negative.`
+      : `${label} must be at least ${min}.`;
+  }
+  const max = HARD_MAX_BY_FIELD[field];
+  if (typeof max === 'number' && value > max) {
+    return `${label} cannot exceed ${max}.`;
   }
   return '';
 }

@@ -118,7 +118,9 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
         flushed[field] = null;
       } else {
         const parsed = parseFloat(raw);
-        if (!isNaN(parsed)) flushed[field] = parsed;
+        // Non-empty but non-parsable (e.g. a lone "-"): treat as null so
+        // a stale formData value is not silently saved.
+        flushed[field] = isNaN(parsed) ? null : parsed;
       }
     }
     // Block all-null submissions: every numeric field would be saved as "not
@@ -397,11 +399,26 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: any) {
+interface InputFieldProps {
+  label: string;
+  name: NumericField;
+  value: string;
+  unit: string;
+  icon: React.ReactNode;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void;
+  error?: string;
+  min?: number;
+  max?: number;
+  step?: string;
+  isEmpty: boolean;
+}
+
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: InputFieldProps) {
   const parsedValue = value === '' ? null : Number(value);
   const softWarning =
     parsedValue != null && Number.isFinite(parsedValue) && !error
-      ? getSoftWarning(name as NumericField, parsedValue)
+      ? getSoftWarning(name, parsedValue)
       : null;
   return (
     <div className="space-y-3">
