@@ -3,6 +3,7 @@ import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, Trending
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { format } from 'date-fns';
+import { getSoftWarning } from '../lib/readingValidation';
 
 interface Props {
   readings: Reading[];
@@ -67,8 +68,9 @@ export default function History({ readings, onBack, onDelete }: Props) {
 
                   {/* Data Grid */}
                   <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
                       <DataPoint label="Chlorine" value={reading.chlorine} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" />
+                      <DataPoint label="Sanitisation / ORP" value={reading.sanitisationMv ?? null} unit="mV" icon={<Droplets size={12} />} color="text-blue-300" warning={reading.sanitisationMv != null ? getSoftWarning('sanitisationMv', reading.sanitisationMv) : null} />
                       <DataPoint label="pH Level" value={reading.ph} unit="" icon={<Activity size={12} />} color="text-emerald-400" />
                       <DataPoint label="Alkalinity" value={reading.alkalinity} unit="ppm" icon={<TrendingUp size={12} />} color="text-amber-400" />
                       <DataPoint label="Temp" value={reading.temperature} unit="°C" icon={<Thermometer size={12} />} color="text-red-400" />
@@ -104,7 +106,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
   );
 }
 
-function DataPoint({ label, value, unit, icon, color }: { label: string; value: number | null; unit: string; icon: React.ReactNode; color: string }) {
+function DataPoint({ label, value, unit, icon, color, warning }: { label: string; value: number | null; unit: string; icon: React.ReactNode; color: string; warning?: { message: string } | null }) {
   const isMissing = value == null;
   return (
     <div className="space-y-1">
@@ -118,6 +120,7 @@ function DataPoint({ label, value, unit, icon, color }: { label: string; value: 
         </span>
         <span className="text-[9px] text-ink-dim font-bold uppercase">{unit}</span>
       </div>
+      {warning && !isMissing ? <p className="text-[9px] text-amber-300 leading-tight">{warning.message}</p> : null}
     </div>
   );
 }
