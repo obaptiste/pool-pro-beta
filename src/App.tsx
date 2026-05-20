@@ -92,6 +92,7 @@ export default function App() {
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
       setReadings(snapshot.docs.map(doc => ({
         ...doc.data(),
+        sanitisationMv: doc.data().sanitisationMv ?? null,
         timestamp: (doc.data().timestamp as Timestamp).toDate()
       } as Reading)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
@@ -314,6 +315,7 @@ export default function App() {
     // test, so it shouldn't advance the schedule and suppress the next reminder.
     const hasMeasurement =
       newReading.chlorine != null ||
+      newReading.sanitisationMv != null ||
       newReading.ph != null ||
       newReading.alkalinity != null ||
       newReading.temperature != null ||
