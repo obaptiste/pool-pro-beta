@@ -12,9 +12,10 @@ interface Props {
 }
 
 export default function History({ readings, onBack, onDelete }: Props) {
+  const initialSelectedDay = readings[0]?.timestamp ?? null;
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
-  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
-  const [selectedDay, setSelectedDay] = useState<Date | null>(readings[0]?.timestamp ?? null);
+  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(initialSelectedDay ?? new Date()));
+  const [selectedDay, setSelectedDay] = useState<Date | null>(initialSelectedDay);
 
   const uniqueVisitDays = new Set(readings.map((reading) => format(reading.timestamp, 'yyyy-MM-dd'))).size;
   const firstVisit = readings.length ? readings[readings.length - 1].timestamp : null;
