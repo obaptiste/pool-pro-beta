@@ -75,9 +75,9 @@ export default function History({ readings, onBack, onDelete }: Props) {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 card bg-surface border-border-dim p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <button onClick={() => setCalendarMonth(subMonths(calendarMonth, 1))} className="p-2 rounded border border-border-dim text-ink-dim"><ChevronLeft size={14} /></button>
+                <button aria-label="Previous month" onClick={() => setCalendarMonth(subMonths(calendarMonth, 1))} className="p-2 rounded border border-border-dim text-ink-dim"><ChevronLeft size={14} /></button>
                 <p className="text-sm font-bold text-white">{format(calendarMonth, 'MMMM yyyy')}</p>
-                <button onClick={() => setCalendarMonth(addMonths(calendarMonth, 1))} className="p-2 rounded border border-border-dim text-ink-dim"><ChevronRight size={14} /></button>
+                <button aria-label="Next month" onClick={() => setCalendarMonth(addMonths(calendarMonth, 1))} className="p-2 rounded border border-border-dim text-ink-dim"><ChevronRight size={14} /></button>
               </div>
               <div className="grid grid-cols-7 gap-2 text-center text-[10px] uppercase tracking-widest text-ink-dim">
                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d}>{d}</div>)}
