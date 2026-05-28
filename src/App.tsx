@@ -15,6 +15,7 @@ import WeeklyReport from './components/WeeklyReport';
 import WorkTracker from './components/WorkTracker';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
+import { useToast } from './lib/toast';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText, ListChecks } from 'lucide-react';
@@ -53,6 +54,12 @@ export default function App() {
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
   const [reportTemplate, setReportTemplate] = useState<string>('');
   const geoStartInFlight = useRef(false);
+  const toast = useToast();
+
+  const markSaved = (message: string) => {
+    setLastSaved(new Date());
+    toast.success(message);
+  };
 
   // Auth listener
   useEffect(() => {
@@ -86,6 +93,7 @@ export default function App() {
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
       setReadings(snapshot.docs.map(doc => ({
         ...doc.data(),
+        sanitisationMv: doc.data().sanitisationMv ?? null,
         timestamp: (doc.data().timestamp as Timestamp).toDate()
       } as Reading)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
@@ -253,7 +261,9 @@ export default function App() {
         source,
         locationLabel: source === 'geo' ? 'Joy Lane' : 'Manual start',
       });
+      markSaved(source === 'geo' ? 'Work session auto-started' : 'Work session started');
     } catch (error) {
+      toast.error('Could not start work session');
       handleFirestoreError(error, OperationType.CREATE, 'workSessions');
     }
   };
@@ -265,7 +275,9 @@ export default function App() {
       await updateDoc(doc(db, 'workSessions', activeSession.id), {
         endTime: Timestamp.fromDate(new Date())
       });
+      markSaved('Work session ended');
     } catch (err) {
+      toast.error('Could not end work session');
       handleFirestoreError(err, OperationType.WRITE, `workSessions/${activeSession.id}`);
     }
   };
@@ -304,6 +316,7 @@ export default function App() {
     // test, so it shouldn't advance the schedule and suppress the next reminder.
     const hasMeasurement =
       newReading.chlorine != null ||
+      newReading.sanitisationMv != null ||
       newReading.ph != null ||
       newReading.alkalinity != null ||
       newReading.temperature != null ||
@@ -318,6 +331,7 @@ export default function App() {
       });
 
       if (!hasMeasurement) {
+        markSaved('Note saved to database');
         setIsLogging(false);
         return;
       }
@@ -340,8 +354,10 @@ export default function App() {
         nextTestDate: Timestamp.fromDate(nextTest),
       }, { merge: true });
 
+      markSaved('Reading saved to database');
       setIsLogging(false);
     } catch (err) {
+      toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
     }
   };
@@ -354,6 +370,7 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
+        sanitisationMv: updates.sanitisationMv,
         ph: updates.ph,
         alkalinity: updates.alkalinity,
         temperature: updates.temperature,
@@ -371,7 +388,9 @@ export default function App() {
   const handleDeleteReading = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'readings', id));
+      markSaved('Reading deleted');
     } catch (err) {
+      toast.error('Could not delete reading');
       handleFirestoreError(err, OperationType.DELETE, `readings/${id}`);
     }
   };
@@ -381,7 +400,9 @@ export default function App() {
     if (!task) return;
     try {
       await updateDoc(doc(db, 'tasks', id), { completed: !task.completed });
+      markSaved(task.completed ? 'Task reopened' : 'Task completed');
     } catch (err) {
+      toast.error('Could not update task');
       handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
     }
   };
@@ -399,7 +420,9 @@ export default function App() {
         uid: user.uid,
         createdAt: Timestamp.fromDate(new Date())
       })));
+      markSaved(`Protocol saved (${newTasks.length} task${newTasks.length === 1 ? '' : 's'})`);
     } catch (err) {
+      toast.error('Could not save protocol');
       handleFirestoreError(err, OperationType.WRITE, 'tasks');
     }
   };
@@ -413,7 +436,9 @@ export default function App() {
         lastTestDate: newSchedule.lastTestDate ? Timestamp.fromDate(newSchedule.lastTestDate) : null,
         nextTestDate: newSchedule.nextTestDate ? Timestamp.fromDate(newSchedule.nextTestDate) : null,
       });
+      markSaved('Schedule updated');
     } catch (err) {
+      toast.error('Could not update schedule');
       handleFirestoreError(err, OperationType.WRITE, `schedules/${user.uid}`);
     }
   };
@@ -428,7 +453,9 @@ export default function App() {
         uid: user.uid,
         createdAt: Timestamp.fromDate(new Date())
       });
+      markSaved('Task added');
     } catch (err) {
+      toast.error('Could not add task');
       handleFirestoreError(err, OperationType.WRITE, `tasks`);
     }
   };
@@ -437,7 +464,9 @@ export default function App() {
     if (!user) return;
     try {
       await setDoc(doc(db, 'inventory', item.id), { ...item, uid: user.uid });
+      markSaved(`Saved ${item.name}`);
     } catch (err) {
+      toast.error(`Could not save ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `inventory/${item.id}`);
     }
   };
@@ -451,7 +480,9 @@ export default function App() {
         installDate: Timestamp.fromDate(item.installDate),
         lastServiceDate: item.lastServiceDate ? Timestamp.fromDate(item.lastServiceDate) : null
       });
+      markSaved(`Saved ${item.name}`);
     } catch (err) {
+      toast.error(`Could not save ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `equipment/${item.id}`);
     }
   };
@@ -459,7 +490,9 @@ export default function App() {
   const handleDeleteInventory = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'inventory', id));
+      markSaved('Inventory item removed');
     } catch (err) {
+      toast.error('Could not remove inventory item');
       handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
     }
   };
@@ -467,7 +500,9 @@ export default function App() {
   const handleDeleteEquipment = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'equipment', id));
+      markSaved('Equipment removed');
     } catch (err) {
+      toast.error('Could not remove equipment');
       handleFirestoreError(err, OperationType.DELETE, `equipment/${id}`);
     }
   };
@@ -497,7 +532,9 @@ export default function App() {
         uid: user.uid,
         createdAt: Timestamp.fromDate(item.createdAt || new Date()),
       });
+      markSaved(`Saved ${item.name}`);
     } catch (err) {
+      toast.error(`Could not save ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `wishlist/${item.id}`);
     }
   };
@@ -505,7 +542,9 @@ export default function App() {
   const handleDeleteWishlist = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'wishlist', id));
+      markSaved('Wishlist item removed');
     } catch (err) {
+      toast.error('Could not remove wishlist item');
       handleFirestoreError(err, OperationType.DELETE, `wishlist/${id}`);
     }
   };
