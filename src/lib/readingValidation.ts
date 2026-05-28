@@ -40,7 +40,7 @@ const HARD_MAX_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
   differentialPressure: 10000,
   calciumHardness: 10000,
   cyanuricAcid: 1000,
-  sanitisationMv: 2000,
+  sanitisationMv: 1200,
 };
 
 const FIELD_LABEL: Record<NumericReadingField, string> = {
