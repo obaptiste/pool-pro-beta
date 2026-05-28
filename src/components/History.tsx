@@ -51,7 +51,7 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
           <button onClick={onBack} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors">
-            <ChevronLeft size={16} />Back to Dashboard
+            <ChevronLeft size={16} /> Back to Dashboard
           </button>
           <div className="text-right space-y-2">
             <h1 className="text-lg font-bold text-ink tracking-tight">Telemetry Logs</h1>
