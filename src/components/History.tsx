@@ -67,9 +67,20 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Logged Visits</p><p className="text-2xl font-bold text-white">{uniqueVisitDays}</p></div>
-          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Total Logs</p><p className="text-2xl font-bold text-white">{readings.length}</p></div>
-          <div className="card bg-surface border-border-dim p-4"><p className="text-[10px] uppercase tracking-widest text-ink-dim">Range</p><p className="text-xs font-mono text-ink-muted">{firstVisit ? format(firstVisit, 'MMM d, yyyy') : '—'} → {lastVisit ? format(lastVisit, 'MMM d, yyyy') : '—'}</p></div>
+          <div className="card bg-surface border-border-dim p-4">
+            <p className="text-[10px] uppercase tracking-widest text-ink-dim">Logged Visits</p>
+            <p className="text-2xl font-bold text-white">{uniqueVisitDays}</p>
+          </div>
+          <div className="card bg-surface border-border-dim p-4">
+            <p className="text-[10px] uppercase tracking-widest text-ink-dim">Total Logs</p>
+            <p className="text-2xl font-bold text-white">{readings.length}</p>
+          </div>
+          <div className="card bg-surface border-border-dim p-4">
+            <p className="text-[10px] uppercase tracking-widest text-ink-dim">Range</p>
+            <p className="text-xs font-mono text-ink-muted">
+              {firstVisit ? format(firstVisit, 'MMM d, yyyy') : '—'} → {lastVisit ? format(lastVisit, 'MMM d, yyyy') : '—'}
+            </p>
+          </div>
         </div>
 
         {viewMode === 'calendar' ? (
@@ -183,7 +194,37 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
   );
 }
 
-function DataPoint({ label, value, unit, icon, color, warning }: { label: string; value: number | null; unit: string; icon: React.ReactNode; color: string; warning?: { message: string } | null }) {
+function DataPoint({
+  label,
+  value,
+  unit,
+  icon,
+  color,
+  warning
+}: {
+  label: string;
+  value: number | null;
+  unit: string;
+  icon: React.ReactNode;
+  color: string;
+  warning?: { message: string } | null;
+}) {
   const isMissing = value == null;
-  return <div className="space-y-1"><div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-ink-dim">{icon}{label}</div><div className="flex items-baseline gap-1"><span className={`text-lg font-bold font-mono ${isMissing ? 'text-ink-dim' : color}`}>{isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}</span><span className="text-[9px] text-ink-dim font-bold uppercase">{unit}</span></div>{warning && !isMissing ? <p className="text-[9px] text-amber-300 leading-tight">{warning.message}</p> : null}</div>;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-ink-dim">
+        {icon}
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className={`text-lg font-bold font-mono ${isMissing ? 'text-ink-dim' : color}`}>
+          {isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}
+        </span>
+        <span className="text-[9px] text-ink-dim font-bold uppercase">{unit}</span>
+      </div>
+      {warning && !isMissing ? (
+        <p className="text-[9px] text-amber-300 leading-tight">{warning.message}</p>
+      ) : null}
+    </div>
+  );
 }
