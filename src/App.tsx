@@ -370,6 +370,7 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
+        sanitisationMv: updates.sanitisationMv ?? null,
         ph: updates.ph,
         alkalinity: updates.alkalinity,
         temperature: updates.temperature,
