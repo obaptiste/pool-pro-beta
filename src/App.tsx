@@ -365,7 +365,11 @@ export default function App() {
       });
       return true;
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
+      } catch {
+        // Preserve the boolean failure contract even if the logger rethrows.
+      }
       return false;
     }
   };
