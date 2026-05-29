@@ -16,8 +16,9 @@ import {
   MinusCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Reading, DEFAULT_RANGES } from '../types';
+import { Reading } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
+import { getHardValidationError, getSoftWarning, NUMERIC_READING_FIELDS, NumericReadingField } from '../lib/readingValidation';
 
 interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
@@ -25,8 +26,8 @@ interface Props {
   initialReading?: Reading;
 }
 
-const NUMERIC_FIELDS = ['chlorine', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'] as const;
-type NumericField = typeof NUMERIC_FIELDS[number];
+const NUMERIC_FIELDS = NUMERIC_READING_FIELDS;
+type NumericField = NumericReadingField;
 
 type FormData = Record<NumericField, number | null> & {
   notes: string;
@@ -34,6 +35,7 @@ type FormData = Record<NumericField, number | null> & {
 
 const INITIAL_FORM: FormData = {
   chlorine: null,
+  sanitisationMv: null,
   ph: null,
   alkalinity: null,
   temperature: null,
@@ -45,6 +47,7 @@ const INITIAL_FORM: FormData = {
 
 const INITIAL_RAW: Record<NumericField, string> = {
   chlorine: '',
+  sanitisationMv: '',
   ph: '',
   alkalinity: '',
   temperature: '',
@@ -59,6 +62,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
     if (!initialReading) return INITIAL_FORM;
     return {
       chlorine: initialReading.chlorine,
+      sanitisationMv: initialReading.sanitisationMv ?? null,
       ph: initialReading.ph,
       alkalinity: initialReading.alkalinity,
       temperature: initialReading.temperature,
@@ -73,6 +77,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
     const fromValue = (v: number | null) => (v == null ? '' : String(v));
     return {
       chlorine: fromValue(initialReading.chlorine),
+      sanitisationMv: fromValue(initialReading.sanitisationMv ?? null),
       ph: fromValue(initialReading.ph),
       alkalinity: fromValue(initialReading.alkalinity),
       temperature: fromValue(initialReading.temperature),
@@ -85,14 +90,6 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
-
-  const validate = (name: string, value: number) => {
-    const range = DEFAULT_RANGES[name as keyof typeof DEFAULT_RANGES];
-    if (value < range.min || value > range.max) {
-      return `Out of range (${range.min}-${range.max} ${range.unit})`;
-    }
-    return '';
-  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
@@ -108,7 +105,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
         const parsed = parseFloat(value);
         if (!isNaN(parsed)) {
           setFormData(prev => ({ ...prev, [fieldName]: parsed }));
-          setErrors(prev => ({ ...prev, [fieldName]: validate(fieldName, parsed) }));
+          setErrors(prev => ({ ...prev, [fieldName]: getHardValidationError(fieldName, parsed) }));
         }
       }
     } else {
@@ -133,7 +130,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
     }
     setRawInputs(prev => ({ ...prev, [fieldName]: String(parsed) }));
     setFormData(prev => ({ ...prev, [fieldName]: parsed }));
-    setErrors(prev => ({ ...prev, [fieldName]: validate(fieldName, parsed) }));
+    setErrors(prev => ({ ...prev, [fieldName]: getHardValidationError(fieldName, parsed) }));
   };
 
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -149,7 +146,9 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
         flushed[field] = null;
       } else {
         const parsed = parseFloat(raw);
-        if (!isNaN(parsed)) flushed[field] = parsed;
+        // Non-empty but non-parsable (e.g. a lone "-"): treat as null so
+        // a stale formData value is not silently saved.
+        flushed[field] = isNaN(parsed) ? null : parsed;
       }
     }
     // Block all-null submissions: every numeric field would be saved as "not
@@ -157,6 +156,17 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
     const hasAnyMeasurement = NUMERIC_FIELDS.some(f => flushed[f] != null);
     if (!hasAnyMeasurement) {
       setSubmitError('Enter at least one measurement before saving.');
+      return;
+    }
+    const hardErrors: Record<string, string> = {};
+    for (const field of NUMERIC_FIELDS) {
+      if (flushed[field] == null) continue;
+      const err = getHardValidationError(field, flushed[field] as number);
+      if (err) hardErrors[field] = err;
+    }
+    setErrors(prev => ({ ...prev, ...hardErrors }));
+    if (Object.keys(hardErrors).length > 0) {
+      setSubmitError('Fix invalid values before saving.');
       return;
     }
     setSubmitError(null);
@@ -198,7 +208,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
               {
                 text: isNotes
                   ? "Transcribe the following pool maintenance observations or chemical additions. Return ONLY the transcribed text."
-                  : "Transcribe the following pool reading. Extract values for Chlorine, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
+                    : "Transcribe the following pool reading. Extract values for Chlorine, ORP sanitisation mV, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
               }
             ],
             config: {
@@ -266,7 +276,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
           },
           {
             text: `Extract pool report details from this image. Return ONLY a JSON object with keys:
-chlorine, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
+chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
 missingInventory and missingEquipment should be arrays of strings when identifiable.`
           }
         ],
@@ -325,6 +335,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         <form onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
+            <InputField label="Sanitisation / ORP (mV)" name="sanitisationMv" value={rawInputs.sanitisationMv} unit="mV" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.sanitisationMv} min={0} max={1200} step="any" isEmpty={rawInputs.sanitisationMv === ''} />
             <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={rawInputs.ph === ''} />
             <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={rawInputs.alkalinity === ''} />
             <InputField label="Temperature" name="temperature" value={rawInputs.temperature} unit="°C" icon={<Thermometer size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.temperature} min={0} max={50} step="any" isEmpty={rawInputs.temperature === ''} />
@@ -392,6 +403,15 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                   <span className="text-xs text-critical">{submitError}</span>
                 </div>
               )}
+              {NUMERIC_FIELDS.some((field) => {
+                const v = formData[field];
+                return typeof v === 'number' && !getHardValidationError(field, v) && !!getSoftWarning(field, v);
+              }) && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-400/40">
+                  <AlertCircle size={14} className="text-amber-300 flex-shrink-0" />
+                  <span className="text-xs text-amber-200">One or more values are outside the normal operating range. Please double-check, but you can still save this reading.</span>
+                </div>
+              )}
               <button
                 type="submit"
                 className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
@@ -407,7 +427,27 @@ missingInventory and missingEquipment should be arrays of strings when identifia
   );
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: any) {
+interface InputFieldProps {
+  label: string;
+  name: NumericField;
+  value: string;
+  unit: string;
+  icon: React.ReactNode;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void;
+  error?: string;
+  min?: number;
+  max?: number;
+  step?: string;
+  isEmpty: boolean;
+}
+
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: InputFieldProps) {
+  const parsedValue = value === '' ? null : Number(value);
+  const softWarning =
+    parsedValue != null && Number.isFinite(parsedValue) && !error
+      ? getSoftWarning(name, parsedValue)
+      : null;
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -415,6 +455,10 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
         {error ? (
           <span className="text-[9px] font-bold text-critical uppercase tracking-widest flex items-center gap-1.5">
             <AlertCircle size={10} /> {error}
+          </span>
+        ) : softWarning ? (
+          <span className="text-[9px] font-bold text-amber-300 uppercase tracking-widest flex items-center gap-1.5">
+            <AlertCircle size={10} /> {softWarning.message}
           </span>
         ) : isEmpty ? (
           <span className="text-[9px] font-bold text-ink-dim uppercase tracking-widest flex items-center gap-1.5">

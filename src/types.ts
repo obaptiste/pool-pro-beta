@@ -6,6 +6,7 @@ export interface Reading {
   id: string;
   timestamp: Date;
   chlorine: number | null;
+  sanitisationMv: number | null;
   ph: number | null;
   alkalinity: number | null;
   temperature: number | null;
@@ -122,6 +123,7 @@ export interface WorkSession {
 
 export interface Ranges {
   chlorine: { min: number; max: number; unit: string };
+  sanitisationMv: { min: number; max: number; unit: string };
   ph: { min: number; max: number; unit: string };
   alkalinity: { min: number; max: number; unit: string };
   temperature: { min: number; max: number; unit: string };
@@ -132,6 +134,7 @@ export interface Ranges {
 
 export const DEFAULT_RANGES: Ranges = {
   chlorine: { min: 1, max: 3, unit: 'ppm' },
+  sanitisationMv: { min: 650, max: 750, unit: 'mV' },
   ph: { min: 7.2, max: 7.8, unit: 'pH' },
   alkalinity: { min: 80, max: 120, unit: 'ppm' },
   temperature: { min: 24, max: 30, unit: '°C' },
