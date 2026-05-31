@@ -370,7 +370,7 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
-        sanitisationMv: updates.sanitisationMv,
+        sanitisationMv: updates.sanitisationMv ?? null,
         ph: updates.ph,
         alkalinity: updates.alkalinity,
         temperature: updates.temperature,
@@ -380,7 +380,9 @@ export default function App() {
         notes: updates.notes ?? '',
       });
       setEditingReading(null);
+      markSaved('Reading updated');
     } catch (err) {
+      toast.error('Could not update reading');
       handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
     }
   };
