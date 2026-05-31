@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus } from 'lucide-react';
+import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { addDays, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
@@ -9,9 +9,10 @@ interface Props {
   readings: Reading[];
   onBack: () => void;
   onDelete: (id: string) => void;
+  onEdit: (reading: Reading) => void;
 }
 
-export default function History({ readings, onBack, onDelete }: Props) {
+export default function History({ readings, onBack, onDelete, onEdit }: Props) {
   const initialSelectedDay = readings[0]?.timestamp ?? null;
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(initialSelectedDay ?? new Date()));
@@ -117,7 +118,7 @@ export default function History({ readings, onBack, onDelete }: Props) {
               <div key={reading.id} className="card anim-scan bg-surface border-border-dim p-0 overflow-hidden group"><div className="grid grid-cols-1 md:grid-cols-4"><div className="bg-bg p-4 flex flex-col justify-center border-r border-border-dim md:col-span-1"><div className="flex items-center gap-2 text-accent mb-1"><Calendar size={14} /><span className="text-xs font-bold font-mono">{format(reading.timestamp, 'MMM d, yyyy')}</span></div><div className="flex items-center gap-2 text-ink-dim"><Clock size={14} /><span className="text-[10px] font-bold font-mono uppercase tracking-widest">{format(reading.timestamp, 'HH:mm:ss')}</span></div></div>
                 <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4"><div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4"><DataPoint label="Chlorine" value={reading.chlorine} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" /><DataPoint label="Sanitisation / ORP" value={reading.sanitisationMv ?? null} unit="mV" icon={<Droplets size={12} />} color="text-blue-300" warning={reading.sanitisationMv != null ? getSoftWarning('sanitisationMv', reading.sanitisationMv) : null} /><DataPoint label="pH Level" value={reading.ph} unit="" icon={<Activity size={12} />} color="text-emerald-400" /><DataPoint label="Alkalinity" value={reading.alkalinity} unit="ppm" icon={<TrendingUp size={12} />} color="text-amber-400" /><DataPoint label="Temp" value={reading.temperature} unit="°C" icon={<Thermometer size={12} />} color="text-red-400" /><DataPoint label="Pressure" value={reading.differentialPressure} unit="PSI" icon={<Gauge size={12} />} color="text-indigo-400" /><DataPoint label="Calcium" value={reading.calciumHardness} unit="ppm" icon={<Waves size={12} />} color="text-cyan-400" /><DataPoint label="CYA" value={reading.cyanuricAcid} unit="ppm" icon={<Sun size={12} />} color="text-yellow-400" /></div>
                   {reading.notes && (<div className="flex gap-2 p-3 bg-bg/60 rounded-lg border border-border-dim/30"><FileText size={14} className="text-ink-dim shrink-0 mt-0.5" /><p className="text-[11px] text-ink-muted italic leading-relaxed">{reading.notes}</p></div>)}
-                  <div className="flex justify-end border-t border-border-dim/30 pt-3 mt-1"><button onClick={() => onDelete(reading.id)} className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-critical/50 hover:text-critical transition-colors"><Trash2 size={12} />Purge Record</button></div>
+                  <div className="flex justify-end items-center gap-4 border-t border-border-dim/30 pt-3 mt-1"><button onClick={() => onEdit(reading)} className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors"><Pencil size={12} />Amend Log</button><button onClick={() => onDelete(reading.id)} className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-critical/50 hover:text-critical transition-colors"><Trash2 size={12} />Purge Record</button></div>
                 </div></div></div>
             ))}
           </div>

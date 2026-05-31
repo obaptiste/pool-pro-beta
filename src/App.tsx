@@ -40,6 +40,7 @@ export default function App() {
   });
 
   const [isLogging, setIsLogging] = useState(false);
+  const [editingReading, setEditingReading] = useState<Reading | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
@@ -358,6 +359,31 @@ export default function App() {
     } catch (err) {
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
+    }
+  };
+
+  const handleUpdateReading = async (
+    id: string,
+    updates: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
+  ) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'readings', id), {
+        chlorine: updates.chlorine,
+        sanitisationMv: updates.sanitisationMv ?? null,
+        ph: updates.ph,
+        alkalinity: updates.alkalinity,
+        temperature: updates.temperature,
+        differentialPressure: updates.differentialPressure,
+        calciumHardness: updates.calciumHardness,
+        cyanuricAcid: updates.cyanuricAcid,
+        notes: updates.notes ?? '',
+      });
+      setEditingReading(null);
+      markSaved('Reading updated');
+    } catch (err) {
+      toast.error('Could not update reading');
+      handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
     }
   };
 
@@ -759,12 +785,25 @@ export default function App() {
             onCancel={() => setIsLogging(false)}
           />
         )}
-        
+
+        {editingReading && (
+          <ReadingForm
+            key={editingReading.id}
+            initialReading={editingReading}
+            onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
+            onCancel={() => setEditingReading(null)}
+          />
+        )}
+
         {isHistoryOpen && (
-          <History 
+          <History
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
+            onEdit={(reading) => {
+              setIsHistoryOpen(false);
+              setEditingReading(reading);
+            }}
           />
         )}
       </AnimatePresence>
