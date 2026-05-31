@@ -629,6 +629,14 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  const closeReadingEditAndReturnToHistoryIfNeeded = () => {
+    setEditingReading(null);
+    if (returnToHistoryAfterEdit) {
+      setIsHistoryOpen(true);
+      setReturnToHistoryAfterEdit(false);
+    }
+  };
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center">
@@ -790,8 +798,12 @@ export default function App() {
           <ReadingForm
             key={editingReading.id}
             initialReading={editingReading}
-            onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
-            onCancel={() => setEditingReading(null)}
+            onSave={async (updates) => {
+              const updated = await handleUpdateReading(editingReading.id, updates);
+              if (!updated) return;
+              closeReadingEditAndReturnToHistoryIfNeeded();
+            }}
+            onCancel={closeReadingEditAndReturnToHistoryIfNeeded}
           />
         )}
 
@@ -801,6 +813,7 @@ export default function App() {
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
             onEdit={(reading) => {
+              setReturnToHistoryAfterEdit(true);
               setIsHistoryOpen(false);
               setEditingReading(reading);
             }}
