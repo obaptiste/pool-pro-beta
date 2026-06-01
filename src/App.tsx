@@ -41,6 +41,7 @@ export default function App() {
 
   const [isLogging, setIsLogging] = useState(false);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
+  const [returnToHistoryAfterEdit, setReturnToHistoryAfterEdit] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
@@ -365,8 +366,8 @@ export default function App() {
   const handleUpdateReading = async (
     id: string,
     updates: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
-  ) => {
-    if (!user) return;
+  ): Promise<boolean> => {
+    if (!user) return false;
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -379,11 +380,12 @@ export default function App() {
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
       });
-      setEditingReading(null);
       markSaved('Reading updated');
+      return true;
     } catch (err) {
       toast.error('Could not update reading');
       handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
+      return false;
     }
   };
 
@@ -629,6 +631,14 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  const closeReadingEditAndReturnToHistoryIfNeeded = () => {
+    setEditingReading(null);
+    if (returnToHistoryAfterEdit) {
+      setIsHistoryOpen(true);
+      setReturnToHistoryAfterEdit(false);
+    }
+  };
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center">
@@ -785,8 +795,9 @@ export default function App() {
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
             onEdit={(reading) => {
-              setEditingReading(reading);
+              setReturnToHistoryAfterEdit(true);
               setIsHistoryOpen(false);
+              setEditingReading(reading);
             }}
           />
         )}
@@ -802,8 +813,12 @@ export default function App() {
           <ReadingForm
             key={editingReading.id}
             initialReading={editingReading}
-            onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
-            onCancel={() => setEditingReading(null)}
+            onSave={async (updates) => {
+              const updated = await handleUpdateReading(editingReading.id, updates);
+              if (!updated) return;
+              closeReadingEditAndReturnToHistoryIfNeeded();
+            }}
+            onCancel={closeReadingEditAndReturnToHistoryIfNeeded}
           />
         )}
       </AnimatePresence>
