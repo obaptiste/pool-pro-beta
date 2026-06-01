@@ -1,6 +1,17 @@
 import { Reading } from '../types';
 
-export function calculateLSI(reading: Reading): number {
+export function calculateLSI(reading: Reading): number | null {
+  // LSI requires pH, temperature, calcium hardness, and alkalinity. If any are
+  // missing (not measured), return null rather than fabricating a value.
+  if (
+    reading.ph == null ||
+    reading.temperature == null ||
+    reading.calciumHardness == null ||
+    reading.alkalinity == null
+  ) {
+    return null;
+  }
+
   const getTF = (temp: number) => {
     if (temp < 0) return 0;
     if (temp < 10) return 0.3;
@@ -34,10 +45,10 @@ export function calculateLSI(reading: Reading): number {
   };
 
   const lsi =
-    (Number(reading.ph) || 0) +
-    getTF(Number(reading.temperature) || 0) +
-    getCF(Number(reading.calciumHardness) || 0) +
-    getAF(Number(reading.alkalinity) || 0) -
+    reading.ph +
+    getTF(reading.temperature) +
+    getCF(reading.calciumHardness) +
+    getAF(reading.alkalinity) -
     12.1;
   return parseFloat(lsi.toFixed(2));
 }

@@ -26,10 +26,10 @@ interface DayStatus {
 
 interface TrendPoint {
   d: string;
-  chlorine: number;
-  ph: number;
-  alk: number;
-  press: number;
+  chlorine: number | null;
+  ph: number | null;
+  alk: number | null;
+  press: number | null;
 }
 
 interface Advisory {
@@ -78,7 +78,7 @@ interface ReportData {
   status: {
     overall: 'good' | 'watch' | 'warning' | 'critical';
     headline: string;
-    lsi: number;
+    lsi: number | null;
     lsiLabel: string;
     uptime: number;
     readings: number;
@@ -191,16 +191,24 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       return { date: fmtDate(d), status: 'unknown' as const, note: 'No readings' };
     }
     let worst: 'good' | 'watch' | 'warning' | 'critical' = 'good';
+    let observedAny = false;
     const notes: string[] = [];
     dayR.forEach(r => {
       METRICS.forEach(m => {
         const v = m.get(r);
+        if (v == null) return;
+        observedAny = true;
         const [lo, hi] = m.target;
         if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
         else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
         else if (v < lo || v > hi)               { if (worst === 'good') worst = 'watch'; notes.push(`${m.label} watch`); }
       });
     });
+    // Days that contain only all-null readings get an unknown status — they're a
+    // monitoring gap, not "all nominal" data.
+    if (!observedAny) {
+      return { date: fmtDate(d), status: 'unknown' as const, note: 'No measurements logged' };
+    }
     return {
       date: fmtDate(d),
       status: worst,
@@ -219,29 +227,39 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   // Use the latest in-window reading for LSI; fall back to global latest only for the gauge snapshot
   const latestWeekR = weekReadings.length > 0 ? weekReadings[weekReadings.length - 1] : null;
   const latestR = latestWeekR ?? readings[0] ?? null;
-  const lsi = latestWeekR ? calculateLSI(latestWeekR) : 0;
-  const lsiAbs = Math.abs(lsi);
-  const lsiLabel = lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
+  const lsi: number | null = latestWeekR ? calculateLSI(latestWeekR) : null;
+  const lsiAbs = lsi == null ? null : Math.abs(lsi);
+  const lsiLabel = lsiAbs == null ? 'Insufficient data' : lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
-  const allUnknown = weekReadings.length === 0;
-  const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || lsiAbs > 0.3);
-  const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs > 0.1 && lsiAbs <= 0.3));
+  // A week with reading documents but no actual measurements (every metric null)
+  // is still a monitoring gap, not a healthy week — treat it the same as no readings.
+  const allUnknown = weekReadings.length === 0 || telemetry.every(m => m.status === 'unknown');
+  const unknownMetrics = telemetry.filter(m => m.status === 'unknown').map(m => m.label.toLowerCase());
+  const hasUnmeasured = !allUnknown && unknownMetrics.length > 0;
+  const hasCritical = !allUnknown && (telemetry.some(m => m.status === 'critical') || (lsiAbs != null && lsiAbs > 0.3));
+  const hasWarning  = !allUnknown && (telemetry.some(m => m.status === 'warning')  || (lsiAbs != null && lsiAbs > 0.1 && lsiAbs <= 0.3));
   const hasWatch    = !allUnknown && telemetry.some(m => m.status === 'watch');
   const overall: ReportData['status']['overall'] =
     allUnknown    ? 'watch' :
     hasCritical   ? 'critical' :
     hasWarning    ? 'warning'  :
-    hasWatch      ? 'watch'    : 'good';
+    hasWatch      ? 'watch'    :
+    hasUnmeasured ? 'watch'    : 'good';
 
   // Only flag metrics that have actual data (exclude unknown placeholders)
   const badMetrics = telemetry.filter(m => m.status !== 'good' && m.status !== 'unknown').map(m => m.label.toLowerCase());
+  const fmtList = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
   const headline = allUnknown
-    ? 'No readings recorded this week — monitoring gap'
+    ? (weekReadings.length === 0
+        ? 'No readings recorded this week — monitoring gap'
+        : 'Readings logged but no measurements recorded — monitoring gap')
     : badMetrics.length === 0
-    ? 'All parameters within specification this week'
+    ? (hasUnmeasured
+        ? `Measured parameters within specification — ${fmtList(unknownMetrics)} not measured this week`
+        : 'All parameters within specification this week')
     : badMetrics.length === 1
-    ? `${badMetrics[0]} requires attention this week`
-    : `${badMetrics.slice(0, -1).join(', ')} and ${badMetrics[badMetrics.length - 1]} need monitoring`;
+    ? `${badMetrics[0]} requires attention this week${hasUnmeasured ? ` (${fmtList(unknownMetrics)} not measured)` : ''}`
+    : `${fmtList(badMetrics)} need monitoring${hasUnmeasured ? ` (${fmtList(unknownMetrics)} not measured)` : ''}`;
 
   const advisories: Advisory[] = [];
   const pressM = telemetry.find(m => m.key === 'press');
@@ -263,14 +281,20 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       msg: `FC dropped to ${clM.min} ppm — below target of ${DEFAULT_RANGES.chlorine.min} ppm.`,
       action: 'Check chlorine supply and dosing schedule.' });
   }
-  if (weekReadings.length > 0) {
-    advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
-      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi >= 0 ? '+' : ''}${lsi} (${lsiLabel}).`,
-      action: 'Continue current monitoring cadence.' });
-  } else {
+  if (allUnknown) {
     advisories.push({ tier: 'watch', title: 'No data this period', time: 'Week',
-      msg: 'No readings were recorded during this 7-day window.',
-      action: 'Verify data entry cadence and log a reading to resume monitoring.' });
+      msg: weekReadings.length === 0
+        ? 'No readings were recorded during this 7-day window.'
+        : `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} logged but no measurements were recorded.`,
+      action: 'Verify data entry cadence and log a reading with measurements to resume monitoring.' });
+  } else if (hasUnmeasured) {
+    advisories.push({ tier: 'watch', title: 'Partial monitoring', time: 'Week',
+      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded, but ${fmtList(unknownMetrics)} ${unknownMetrics.length === 1 ? 'was' : 'were'} not measured. LSI: ${lsi == null ? '—' : `${lsi >= 0 ? '+' : ''}${lsi}`} (${lsiLabel}).`,
+      action: 'Capture the missing measurements at the next test to close the monitoring gap.' });
+  } else {
+    advisories.push({ tier: 'good', title: 'Monitoring active', time: 'Week',
+      msg: `${weekReadings.length} reading${weekReadings.length !== 1 ? 's' : ''} recorded this week. LSI: ${lsi == null ? '—' : `${lsi >= 0 ? '+' : ''}${lsi}`} (${lsiLabel}).`,
+      action: 'Continue current monitoring cadence.' });
   }
 
   const nextSteps: NextStep[] = [];
@@ -321,9 +345,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       timestamp: latestR ? `${fmtDate(latestR.timestamp)} · ${latestR.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : 'No data',
       operator: operatorName,
       gauges: {
-        pressure: latestR ? `${latestR.differentialPressure} kPa` : '— kPa',
-        chlorine: latestR ? `${latestR.chlorine} ppm` : '— ppm',
-        ph: latestR ? `${latestR.ph}` : '—',
+        pressure: latestR?.differentialPressure != null ? `${latestR.differentialPressure} kPa` : '— kPa',
+        chlorine: latestR?.chlorine != null ? `${latestR.chlorine} ppm` : '— ppm',
+        ph: latestR?.ph != null ? `${latestR.ph}` : '—',
       },
     },
   };
@@ -331,9 +355,10 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
 
 // ── Visualization components ──────────────────────────────────────────────────
 
-function LsiGauge({ value = 0, size = 220, theme = 'dark' }: { value?: number; size?: number; theme?: 'dark' | 'light' }) {
+function LsiGauge({ value, size = 220, theme = 'dark' }: { value: number | null; size?: number; theme?: 'dark' | 'light' }) {
   const min = -0.5, max = 0.5;
-  const v = Math.max(min, Math.min(max, value));
+  const hasValue = value != null;
+  const v = hasValue ? Math.max(min, Math.min(max, value)) : 0;
   const pct = (v - min) / (max - min);
   const angle = -90 + pct * 180;
   const r = size * 0.42;
@@ -375,11 +400,11 @@ function LsiGauge({ value = 0, size = 220, theme = 'dark' }: { value?: number; s
           </g>
         );
       })}
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={ink} strokeWidth="3" strokeLinecap="round" />
+      {hasValue && <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={ink} strokeWidth="3" strokeLinecap="round" />}
       <circle cx={cx} cy={cy} r="6" fill={ink} />
-      <circle cx={cx} cy={cy} r="3" fill={accent} />
-      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="32" fontWeight="700" fontFamily="Space Mono, monospace" fill={ink}>{v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}</text>
-      <text x={cx} y={cy + 50} textAnchor="middle" fontSize="10" fontWeight="700" letterSpacing="0.16em" fill={accent} style={{ textTransform: 'uppercase' }}>{lsiLabel}</text>
+      {hasValue && <circle cx={cx} cy={cy} r="3" fill={accent} />}
+      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="32" fontWeight="700" fontFamily="Space Mono, monospace" fill={ink}>{!hasValue ? '—' : v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}</text>
+      <text x={cx} y={cy + 50} textAnchor="middle" fontSize="10" fontWeight="700" letterSpacing="0.16em" fill={accent} style={{ textTransform: 'uppercase' }}>{!hasValue ? 'No data' : lsiLabel}</text>
     </svg>
   );
 }
@@ -473,21 +498,34 @@ function TrendLines({ trend, metrics, theme = 'dark', height = 220 }: { trend: T
         return <text key={i} x={x} y={H - 8} fontSize="8" fontFamily="Space Mono, monospace" fill={dim} textAnchor="middle">{i % 2 === 0 ? t.d : ''}</text>;
       })}
       {metrics.map(m => {
-        const vals = trend.map(t => t[m.key] as number);
-        const vMin = Math.min(...vals), vRange = (Math.max(...vals) - vMin) || 1;
-        const pts = vals.map((v, i) => {
-          const x = padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
-          const y = padT + innerH - ((v - vMin) / vRange) * innerH;
-          return `${x},${y}`;
-        }).join(' ');
+        // Skip null points so missing samples render as gaps in the polyline rather than
+        // collapsing to zero and distorting the y-axis range.
+        const allVals = trend.map(t => t[m.key]) as (number | null)[];
+        const numericVals = allVals.filter((v): v is number => v != null);
+        if (numericVals.length === 0) return <g key={m.key as string} />;
+        const vMin = Math.min(...numericVals);
+        const vRange = (Math.max(...numericVals) - vMin) || 1;
+        const xAt = (i: number) => padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
+        const yAt = (v: number) => padT + innerH - ((v - vMin) / vRange) * innerH;
+        // Build contiguous segments of non-null values so the polyline breaks at gaps.
+        const segments: string[][] = [];
+        let current: string[] = [];
+        allVals.forEach((v, i) => {
+          if (v == null) {
+            if (current.length > 0) { segments.push(current); current = []; }
+          } else {
+            current.push(`${xAt(i)},${yAt(v)}`);
+          }
+        });
+        if (current.length > 0) segments.push(current);
         return (
           <g key={m.key as string}>
-            <polyline points={pts} fill="none" stroke={m.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-            {vals.map((v, i) => {
-              const x = padL + (trend.length > 1 ? (i / (trend.length - 1)) * innerW : innerW / 2);
-              const y = padT + innerH - ((v - vMin) / vRange) * innerH;
-              return <circle key={i} cx={x} cy={y} r="2" fill={m.color} />;
-            })}
+            {segments.map((pts, idx) => (
+              <polyline key={idx} points={pts.join(' ')} fill="none" stroke={m.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
+            {allVals.map((v, i) => v == null ? null : (
+              <circle key={i} cx={xAt(i)} cy={yAt(v)} r="2" fill={m.color} />
+            ))}
           </g>
         );
       })}
@@ -771,7 +809,7 @@ function ReportA({ d }: { d: ReportData }) {
         </div>
         <div style={{ color: '#fff', fontSize: 14, lineHeight: 1.5, maxWidth: 540 }}>{d.status.headline}</div>
         <div style={{ display: 'flex', gap: 24 }}>
-          {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }].map(s => (
+          {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }].map(s => (
             <div key={s.l} style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>{s.l}</div>
               <div style={{ fontSize: 18, fontFamily: '"Space Mono",monospace', fontWeight: 700, color: '#4FC3F7', marginTop: 2 }}>{s.v}</div>
@@ -882,7 +920,7 @@ function ReportB({ d }: { d: ReportData }) {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3', marginBottom: 14 }}>Headline</div>
           <p style={{ fontSize: 24, lineHeight: 1.3, fontWeight: 600, color: '#1a2740', margin: 0, letterSpacing: '-.01em' }}>"{d.status.headline}."</p>
-          <div style={{ marginTop: 18, fontSize: 12, color: '#7d8aa3', fontFamily: '"Space Mono",monospace', letterSpacing: '.08em' }}>{d.status.readings} readings · {d.status.uptime}% uptime · LSI {d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}</div>
+          <div style={{ marginTop: 18, fontSize: 12, color: '#7d8aa3', fontFamily: '"Space Mono",monospace', letterSpacing: '.08em' }}>{d.status.readings} readings · {d.status.uptime}% uptime · LSI {d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7d8aa3' }}>Saturation Index</div>
@@ -944,7 +982,7 @@ function ReportB({ d }: { d: ReportData }) {
         <p style={{ fontSize: 13, color: '#3a4a66', lineHeight: 1.7, margin: '18px 0 0', columnCount: 2, columnGap: 32 }}>
           {d.status.readings === 0
             ? 'No readings recorded for this week. Start logging readings to see trend analysis here.'
-            : `${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} recorded this week. LSI held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
+            : `${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} recorded this week. LSI ${d.status.lsi == null ? 'not computable' : `held at ${d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi}`} (${d.status.lsiLabel}). ${d.status.overall === 'good' ? 'All parameters remained within spec for the full period.' : 'Some parameters required attention — see advisories above.'}`}
         </p>
       </section>
 
@@ -989,7 +1027,7 @@ function ReportC({ d }: { d: ReportData }) {
           </div>
           <div style={{ fontSize: 42, fontWeight: 800, marginTop: 18, lineHeight: 1.1, letterSpacing: '-.01em' }}>{d.status.headline}.</div>
           <div style={{ display: 'flex', gap: 28, marginTop: 28, flexWrap: 'wrap' }}>
-            {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }, { l: 'Days OK', v: `${daysOK}/7` }].map(s => (
+            {[{ l: 'Uptime', v: `${d.status.uptime}%` }, { l: 'Readings', v: d.status.readings }, { l: 'LSI', v: d.status.lsi == null ? '—' : d.status.lsi >= 0 ? `+${d.status.lsi}` : d.status.lsi }, { l: 'Days OK', v: `${daysOK}/7` }].map(s => (
               <div key={s.l}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>{s.l}</div>
                 <div style={{ fontSize: 28, fontFamily: '"Space Mono",monospace', fontWeight: 700, color: '#4FC3F7', marginTop: 2 }}>{s.v}</div>

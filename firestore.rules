@@ -10,15 +10,15 @@ service cloud.firestore {
     // Fields:
     //   - id: string (required)
     //   - timestamp: timestamp (required)
-    //   - chlorine: number (required)
-    //   - ph: number (required)
-    //   - alkalinity: number (required)
-    //   - temperature: number (required)
-    //   - differentialPressure: number (required)
-    //   - calciumHardness: number (required)
-    //   - cyanuricAcid: number (required)
-    //   - notes: string (optional)
     //   - uid: string (required)
+    //   - chlorine: number | null (optional — null/missing means "not measured")
+    //   - ph: number | null (optional — null/missing means "not measured")
+    //   - alkalinity: number | null (optional — null/missing means "not measured")
+    //   - temperature: number | null (optional — null/missing means "not measured")
+    //   - differentialPressure: number | null (optional — null/missing means "not measured")
+    //   - calciumHardness: number | null (optional — null/missing means "not measured")
+    //   - cyanuricAcid: number | null (optional — null/missing means "not measured")
+    //   - notes: string (optional)
     //
     // Collection: tasks
     // Document ID: auto-generated
@@ -104,13 +104,21 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
 
+    function isNumericOrNull(data, field) {
+      return !(field in data) || data[field] == null || data[field] is number;
+    }
+
     function isValidReading(data) {
-      return hasRequiredFields(['id', 'timestamp', 'chlorine', 'ph', 'alkalinity', 'uid']) &&
+      return hasRequiredFields(['id', 'timestamp', 'uid']) &&
              data.id is string &&
              data.timestamp is timestamp &&
-             data.chlorine is number &&
-             data.ph is number &&
-             data.alkalinity is number &&
+             isNumericOrNull(data, 'chlorine') &&
+             isNumericOrNull(data, 'ph') &&
+             isNumericOrNull(data, 'alkalinity') &&
+             isNumericOrNull(data, 'temperature') &&
+             isNumericOrNull(data, 'differentialPressure') &&
+             isNumericOrNull(data, 'calciumHardness') &&
+             isNumericOrNull(data, 'cyanuricAcid') &&
              data.uid == request.auth.uid;
     }
 
