@@ -139,7 +139,12 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
                     width: 3,
                     height: h,
                     transformOrigin: 'bottom',
-                    animation: 'audio-bar 0.75s ease-in-out infinite',
+                    animation:
+                      typeof window !== 'undefined' &&
+                      typeof window.matchMedia === 'function' &&
+                      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                        ? 'none'
+                        : 'audio-bar 0.75s ease-in-out infinite',
                     animationDelay: `${i * 0.09}s`,
                   }}
                 />
