@@ -33,14 +33,13 @@ const HARD_MIN_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
 };
 
 const HARD_MAX_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
-  chlorine: 20,
   ph: 14,
   alkalinity: 2000,
   temperature: 100,
   differentialPressure: 10000,
   calciumHardness: 10000,
   cyanuricAcid: 1000,
-  sanitisationMv: 2000,
+  sanitisationMv: 1200,
 };
 
 const FIELD_LABEL: Record<NumericReadingField, string> = {
