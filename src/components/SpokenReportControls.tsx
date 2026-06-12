@@ -19,7 +19,9 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
   const activeTypeRef = useRef<NarrationType | null>(null);
 
   // Cancel any in-progress speech when the component unmounts (e.g. user navigates away)
-  useEffect(() => () => { window.speechSynthesis.cancel(); }, []);
+  useEffect(() => () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  }, []);
 
   const stopSpeech = useCallback(() => {
     window.speechSynthesis.cancel();
