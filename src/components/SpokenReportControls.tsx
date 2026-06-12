@@ -17,6 +17,17 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
   const [activeType, setActiveType] = useState<NarrationType | null>(null);
   // Keep a stable ref so event callbacks always see the latest state
   const activeTypeRef = useRef<NarrationType | null>(null);
+  // Chrome loads voices asynchronously — cache them so speak() always has the full list
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    const load = () => { voicesRef.current = window.speechSynthesis.getVoices(); };
+    load(); // synchronous on Firefox / Safari; empty on first Chrome call — that's fine
+    window.speechSynthesis.addEventListener('voiceschanged', load);
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', load);
+    };
+  }, []);
 
   // Cancel any in-progress speech when the component unmounts (e.g. user navigates away)
   useEffect(() => () => {
@@ -41,7 +52,9 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
     utterance.volume = 1.0;
 
     // Pick a natural-sounding English voice if available
-    const voices = window.speechSynthesis.getVoices();
+    const voices = voicesRef.current.length
+      ? voicesRef.current
+      : window.speechSynthesis.getVoices(); // last-resort fallback
     const preferred =
       voices.find(v =>
         v.lang.startsWith('en') &&
