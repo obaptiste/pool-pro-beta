@@ -144,6 +144,11 @@
   }
 }
 
+@keyframes audio-bar {
+  0%, 100% { transform: scaleY(0.35); opacity: 0.45; }
+  50%       { transform: scaleY(1);    opacity: 1; }
+}
+
 /* Custom scrollbar for better mobile feel */
 ::-webkit-scrollbar {
   width: 6px;

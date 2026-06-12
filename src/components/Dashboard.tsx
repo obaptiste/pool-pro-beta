@@ -60,7 +60,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
   const [isLsiLoading, setIsLsiLoading] = React.useState(false);
   const latest = readings[0];
 
-  const lsiScore = latest ? calculateLSI(latest) : 0;
+  const lsiScore: number | null = latest ? calculateLSI(latest) : null;
 
   const getLsiStatus = (score: number): Status => {
     if (score < -0.3 || score > 0.3) return 'critical';
@@ -68,14 +68,16 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     return 'good';
   };
 
+  const fmtField = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
+
   const runLsiAnalysis = async () => {
-    if (!latest || isLsiLoading) return;
+    if (!latest || isLsiLoading || lsiScore == null) return;
     setIsLsiLoading(true);
     try {
       const response = await generateContentWithRetry({
         model: "gemini-2.0-flash",
         contents: `Analyze this LSI score of ${lsiScore} for a pool.
-        Context: pH ${latest.ph}, Temp ${latest.temperature}°C, CH ${latest.calciumHardness}, TA ${latest.alkalinity}.
+        Context: pH ${fmtField(latest.ph)}, Temp ${fmtField(latest.temperature)}°C, CH ${fmtField(latest.calciumHardness)}, TA ${fmtField(latest.alkalinity)}.
         Provide a 1-sentence technical recommendation.`,
       }, process.env.GEMINI_API_KEY!);
       setLsiAnalysis(response.text || "Analysis unavailable.");
@@ -112,7 +114,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'cl_low',
       type: 'chlorine',
-      condition: latest.chlorine < DEFAULT_RANGES.chlorine.min,
+      condition: latest.chlorine != null && latest.chlorine < DEFAULT_RANGES.chlorine.min,
       msg: 'Free chlorine critically low — pool unsafe. Dose now.',
       action: 'Add chlorine or shock treatment immediately.',
       severity: 'critical'
@@ -120,7 +122,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'cl_high',
       type: 'chlorine',
-      condition: latest.chlorine > DEFAULT_RANGES.chlorine.max,
+      condition: latest.chlorine != null && latest.chlorine > DEFAULT_RANGES.chlorine.max,
       msg: 'Chlorine elevated — likely post-shock.',
       action: 'Stop chlorination and wait for levels to drop.',
       severity: 'warning'
@@ -128,7 +130,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'ph_low',
       type: 'ph',
-      condition: latest.ph < DEFAULT_RANGES.ph.min,
+      condition: latest.ph != null && latest.ph < DEFAULT_RANGES.ph.min,
       msg: 'pH too low — corrosive water.',
       action: 'Add sodium carbonate (Soda Ash).',
       severity: 'critical'
@@ -136,7 +138,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'ph_high',
       type: 'ph',
-      condition: latest.ph > DEFAULT_RANGES.ph.max,
+      condition: latest.ph != null && latest.ph > DEFAULT_RANGES.ph.max,
       msg: 'pH too high — chlorine less effective.',
       action: 'Add muriatic acid.',
       severity: 'warning'
@@ -144,7 +146,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'alk_low',
       type: 'alkalinity',
-      condition: latest.alkalinity < DEFAULT_RANGES.alkalinity.min,
+      condition: latest.alkalinity != null && latest.alkalinity < DEFAULT_RANGES.alkalinity.min,
       msg: 'Low alkalinity — pH will be unstable.',
       action: 'Add sodium bicarbonate.',
       severity: 'warning'
@@ -152,7 +154,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'alk_high',
       type: 'alkalinity',
-      condition: latest.alkalinity > DEFAULT_RANGES.alkalinity.max,
+      condition: latest.alkalinity != null && latest.alkalinity > DEFAULT_RANGES.alkalinity.max,
       msg: 'Alkalinity is too high.',
       action: 'Add pH decreaser or partially drain.',
       severity: 'warning'
@@ -160,7 +162,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
     {
       id: 'dp_high',
       type: 'pressure',
-      condition: latest.differentialPressure > DEFAULT_RANGES.differentialPressure.max,
+      condition: latest.differentialPressure != null && latest.differentialPressure > DEFAULT_RANGES.differentialPressure.max,
       msg: 'Filter pressure elevated — flow restricted.',
       action: 'Backwash filter or clean cartridges immediately.',
       severity: 'critical'
@@ -200,10 +202,10 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
   };
 
   const getTrendData = (key: keyof Reading) => {
-    return readings.slice(0, 7).map(r => {
-      const val = r[key];
-      return typeof val === 'number' && !isNaN(val) ? val : 0;
-    }).reverse();
+    return readings.slice(0, 7)
+      .map(r => r[key])
+      .filter((v): v is number => typeof v === 'number' && !isNaN(v))
+      .reverse();
   };
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -346,8 +348,9 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
             {/* Status Grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div className={`card anim-scan border col-span-2 md:col-span-1 flex flex-col justify-between p-4 ${
-                lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' : 
-                lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' : 
+                lsiScore == null ? 'text-ink-dim border-border-dim bg-surface' :
+                lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' :
+                lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
                 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
               }`}>
                 <div className="flex items-center justify-between">
@@ -355,51 +358,51 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
                   <Sparkles size={14} className={isLsiLoading ? 'animate-spin' : ''} />
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-4xl font-bold font-mono">{lsiScore}</span>
+                  <span className="text-4xl font-bold font-mono">{lsiScore ?? '—'}</span>
                   <span className="text-[10px] uppercase tracking-widest opacity-70">
-                    {lsiScore < -0.3 ? 'Corrosive' : lsiScore > 0.3 ? 'Scale Forming' : 'Balanced'}
+                    {lsiScore == null ? 'Insufficient data' : lsiScore < -0.3 ? 'Corrosive' : lsiScore > 0.3 ? 'Scale Forming' : 'Balanced'}
                   </span>
                 </div>
                 <p className="text-[9px] mt-2 italic opacity-80 line-clamp-2">
-                  {isLsiLoading ? 'AI analyzing saturation...' : lsiAnalysis}
+                  {lsiScore == null ? 'Log pH, temperature, calcium hardness, and alkalinity to compute LSI.' : isLsiLoading ? 'AI analyzing saturation...' : lsiAnalysis}
                 </p>
               </div>
-              <StatusCard 
-                label="Free Chlorine" 
-                value={latest?.chlorine} 
-                unit="ppm" 
-                status={latest ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
+              <StatusCard
+                label="Free Chlorine"
+                value={latest?.chlorine ?? null}
+                unit="ppm"
+                status={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
                 trend={getTrendData('chlorine')}
                 ideal="1–3"
               />
-              <StatusCard 
-                label="pH Level" 
-                value={latest?.ph} 
-                unit="" 
-                status={latest ? getStatus(latest.ph, DEFAULT_RANGES.ph.min, DEFAULT_RANGES.ph.max) : 'good'}
+              <StatusCard
+                label="pH Level"
+                value={latest?.ph ?? null}
+                unit=""
+                status={latest?.ph != null ? getStatus(latest.ph, DEFAULT_RANGES.ph.min, DEFAULT_RANGES.ph.max) : 'good'}
                 trend={getTrendData('ph')}
                 ideal="7.2–7.6"
               />
-              <StatusCard 
-                label="Alkalinity" 
-                value={latest?.alkalinity} 
-                unit="ppm" 
-                status={latest ? getStatus(latest.alkalinity, DEFAULT_RANGES.alkalinity.min, DEFAULT_RANGES.alkalinity.max) : 'good'}
+              <StatusCard
+                label="Alkalinity"
+                value={latest?.alkalinity ?? null}
+                unit="ppm"
+                status={latest?.alkalinity != null ? getStatus(latest.alkalinity, DEFAULT_RANGES.alkalinity.min, DEFAULT_RANGES.alkalinity.max) : 'good'}
                 trend={getTrendData('alkalinity')}
                 ideal="80–120"
               />
-              <StatusCard 
-                label="Diff Pressure" 
-                value={latest?.differentialPressure} 
-                unit="kPa" 
-                status={latest ? getStatus(latest.differentialPressure, DEFAULT_RANGES.differentialPressure.min, DEFAULT_RANGES.differentialPressure.max) : 'good'}
+              <StatusCard
+                label="Diff Pressure"
+                value={latest?.differentialPressure ?? null}
+                unit="kPa"
+                status={latest?.differentialPressure != null ? getStatus(latest.differentialPressure, DEFAULT_RANGES.differentialPressure.min, DEFAULT_RANGES.differentialPressure.max) : 'good'}
                 trend={getTrendData('differentialPressure')}
                 ideal="55–140"
               />
               <div className="card bg-[#0a1628] border-border-dim flex flex-col justify-between p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-bold text-accent font-mono">{latest?.temperature ?? '--'}</span>
+                  <span className="text-3xl font-bold text-accent font-mono">{latest?.temperature ?? '—'}</span>
                   <span className="text-xs text-ink-dim">°C</span>
                 </div>
               </div>
@@ -582,19 +585,19 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
                     <div className="flex gap-4 text-[10px] font-mono">
                       <div className="text-center">
                         <p className="text-ink-dim mb-0.5">CL</p>
-                        <p className="font-bold text-accent">{reading.chlorine}</p>
+                        <p className="font-bold text-accent">{reading.chlorine ?? '—'}</p>
                       </div>
                       <div className="text-center">
                         <p className="text-ink-dim mb-0.5">PH</p>
-                        <p className="font-bold text-accent">{reading.ph}</p>
+                        <p className="font-bold text-accent">{reading.ph ?? '—'}</p>
                       </div>
                       <div className="text-center">
                         <p className="text-ink-dim mb-0.5">kPa</p>
-                        <p className="font-bold text-accent">{reading.differentialPressure}</p>
+                        <p className="font-bold text-accent">{reading.differentialPressure ?? '—'}</p>
                       </div>
                       <div className="text-center">
                         <p className="text-ink-dim mb-0.5">TEMP</p>
-                        <p className="font-bold text-accent">{reading.temperature}°</p>
+                        <p className="font-bold text-accent">{reading.temperature == null ? '—' : `${reading.temperature}°`}</p>
                       </div>
                     </div>
                   </div>
@@ -659,7 +662,7 @@ function Sparkline({ values, color }: { values: number[], color: string }) {
   );
 }
 
-function StatusCard({ label, value, unit, status, trend, ideal }: { label: string, value?: number, unit: string, status: Status, trend: number[], ideal: string }) {
+function StatusCard({ label, value, unit, status, trend, ideal }: { label: string, value: number | null, unit: string, status: Status, trend: number[], ideal: string }) {
   const statusColors = {
     good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
     warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
@@ -672,19 +675,21 @@ function StatusCard({ label, value, unit, status, trend, ideal }: { label: strin
     critical: '#ef4444',
   };
 
+  const isMissing = value == null;
+
   return (
-    <div className={`card anim-scan border ${statusColors[status]} flex flex-col gap-2 p-4`}>
+    <div className={`card anim-scan border ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} flex flex-col gap-2 p-4`}>
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
         <Sparkline values={trend} color={sparklineColors[status]} />
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold font-mono">{value?.toFixed(label === 'pH Level' ? 1 : 0) ?? '--'}</span>
+        <span className="text-3xl font-bold font-mono">{isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}</span>
         <span className="text-[10px] text-ink-dim font-medium">{unit}</span>
       </div>
       <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest">
         <span className="text-ink-dim">Ideal: {ideal}</span>
-        <span className="opacity-80">{status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
+        <span className="opacity-80">{isMissing ? 'Not measured' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
       </div>
     </div>
   );
