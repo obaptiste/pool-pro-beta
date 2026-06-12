@@ -4,6 +4,7 @@ import { X, Printer, FileText } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
 import { calculateLSI } from '../lib/lsi';
+import SpokenReportControls from './SpokenReportControls';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1100,6 +1101,156 @@ function ReportC({ d }: { d: ReportData }) {
   );
 }
 
+// ── Narration text builder ────────────────────────────────────────────────────
+
+function buildNarration(d: ReportData): { full: string; summary: string } {
+  // ── Shared helpers ────────────────────────────────────────────────────────
+  const statusLabel = ({ good: 'Good', watch: 'Watch', warning: 'Action Required', critical: 'Critical' } as const)[d.status.overall];
+  const lsiVal = d.status.lsi;
+
+  const lsiNarr = lsiVal == null
+    ? 'The saturation index could not be calculated this period.'
+    : Math.abs(lsiVal) <= 0.1
+    ? 'The water is well-balanced.'
+    : lsiVal < -0.3
+    ? 'Water chemistry is notably corrosive. pH, alkalinity, or calcium hardness should be increased to restore balance.'
+    : lsiVal > 0.3
+    ? 'Water is significantly scale-forming. A reduction in pH or alkalinity is recommended.'
+    : lsiVal < 0
+    ? 'Water is slightly corrosive. Monitor and adjust as needed at the next service visit.'
+    : 'Water is slightly scale-forming. A small pH reduction is advisable.';
+
+  const measuredMetrics = d.telemetry.filter(m => m.status !== 'unknown' && !isNaN(m.avg));
+
+  const reorderItems = d.inventory.filter(i => i.action === 'REORDER');
+
+  // ── Full professional narration ───────────────────────────────────────────
+  const parts: string[] = [];
+
+  parts.push(
+    `This is your PoolStatus weekly maintenance briefing for ${d.facility.name}, covering ${d.facility.period}.`
+  );
+
+  parts.push(
+    `Overall pool status: ${statusLabel}. ${d.status.headline}. ` +
+    `This report is based on ${d.status.readings} reading${d.status.readings !== 1 ? 's' : ''} ` +
+    `recorded over the period, with ${d.status.uptime} percent monitoring uptime.`
+  );
+
+  parts.push(
+    lsiVal != null
+      ? `Water balance — the Langelier Saturation Index this week is ${lsiVal >= 0 ? 'plus' : 'minus'} ${Math.abs(lsiVal).toFixed(2)}, ` +
+        `rated as ${d.status.lsiLabel}. ${lsiNarr}`
+      : `Water balance — ${lsiNarr}`
+  );
+
+  if (measuredMetrics.length > 0) {
+    const metricLines = measuredMetrics.map(m => {
+      const unitStr = m.unit === '' ? '' : ` ${m.unit}`;
+      const statusDesc = ({
+        good:     'within the target range',
+        watch:    'slightly outside the target range and worth monitoring',
+        warning:  'outside the target range and requires attention',
+        critical: 'critically out of range and needs immediate correction',
+      } as const)[m.status];
+      return `${m.label}: ${m.avg}${unitStr}, ${statusDesc}.`;
+    });
+    parts.push(`Parameter summary. ${metricLines.join(' ')}`);
+  } else {
+    parts.push('No individual parameter data was recorded this week.');
+  }
+
+  if (d.advisories.length > 0) {
+    const advLines = d.advisories.map(a =>
+      a.tier === 'good'
+        ? a.msg
+        : `${a.title}. ${a.msg} Recommended action: ${a.action}`
+    );
+    parts.push(`Advisories. ${advLines.join(' ')}`);
+  }
+
+  if (d.nextSteps.length > 0) {
+    const stepLines = d.nextSteps.map(
+      n => `${n.title}: ${n.detail} This should be addressed ${n.due.toLowerCase()}.`
+    );
+    parts.push(`Recommended next steps. ${stepLines.join(' ')}`);
+  }
+
+  parts.push(
+    reorderItems.length > 0
+      ? `Inventory alert. ${reorderItems.map(i => i.name).join(' and ')} ` +
+        `${reorderItems.length === 1 ? 'is' : 'are'} below minimum stock and should be reordered before the next service.`
+      : 'Inventory. All chemical stocks are within acceptable levels.'
+  );
+
+  parts.push(
+    `That concludes this week's PoolStatus briefing. ` +
+    `Report ID ${d.facility.reportId}, generated ${d.facility.generatedAt}.`
+  );
+
+  const full = parts.join(' ');
+
+  // ── Short reassuring summary ──────────────────────────────────────────────
+  const summaryParts: string[] = [];
+
+  summaryParts.push(`Here is your brief pool maintenance summary for ${d.facility.period}.`);
+
+  const opening = ({
+    good:     'The pool is in good condition this week, with all monitored parameters within their target ranges.',
+    watch:    'The pool is generally stable this week, though a few items are worth keeping an eye on.',
+    warning:  'There are some parameters this week that require your attention before the next service visit.',
+    critical: 'There are critical water chemistry issues this week that need to be addressed promptly.',
+  } as const)[d.status.overall];
+  summaryParts.push(opening);
+
+  const chlorM  = d.telemetry.find(m => m.key === 'chlorine');
+  const phM2    = d.telemetry.find(m => m.key === 'ph');
+  const pressM2 = d.telemetry.find(m => m.key === 'press');
+
+  const keyVals = [
+    chlorM  && !isNaN(chlorM.avg)  ? `free chlorine at ${chlorM.avg} ppm`                 : null,
+    phM2    && !isNaN(phM2.avg)    ? `pH at ${phM2.avg}`                                   : null,
+    pressM2 && !isNaN(pressM2.avg) ? `filter pressure at ${pressM2.avg} kilopascals`       : null,
+  ].filter((v): v is string => v !== null);
+
+  if (keyVals.length > 0) {
+    summaryParts.push(`Key readings this week: ${keyVals.join(', ')}.`);
+  }
+
+  const topAdvisory =
+    d.advisories.find(a => a.tier === 'critical') ??
+    d.advisories.find(a => a.tier === 'warning')  ??
+    d.advisories.find(a => a.tier === 'watch');
+
+  if (topAdvisory && topAdvisory.tier !== 'good') {
+    summaryParts.push(`Main advisory: ${topAdvisory.title}. ${topAdvisory.action}`);
+  }
+
+  const topStep =
+    d.nextSteps.find(n => n.priority === 'high') ?? d.nextSteps[0];
+  if (topStep) {
+    summaryParts.push(`Priority action: ${topStep.title}. ${topStep.detail}`);
+  }
+
+  if (reorderItems.length > 0) {
+    summaryParts.push(
+      `Please reorder: ${reorderItems.map(i => i.name).join(' and ')}.`
+    );
+  }
+
+  const closing = ({
+    good:     'The pool has been left in a clear, balanced, and stable condition.',
+    watch:    'The pool is currently stable. Continue to monitor flagged parameters at the next service visit.',
+    warning:  'Please address the highlighted items at the next scheduled service.',
+    critical: 'Please contact your service technician to resolve the outstanding issues as soon as possible.',
+  } as const)[d.status.overall];
+  summaryParts.push(closing);
+
+  const summary = summaryParts.join(' ');
+
+  return { full, summary };
+}
+
 // ── Main WeeklyReport component ───────────────────────────────────────────────
 
 interface WeeklyReportProps {
@@ -1125,6 +1276,8 @@ export default function WeeklyReport({ isOpen, onClose, readings, inventory, use
     () => deriveReportData(readings, inventory, user),
     [readings, inventory, user],
   );
+
+  const narration = useMemo(() => buildNarration(data), [data]);
 
   return (
     <AnimatePresence>
@@ -1176,6 +1329,14 @@ export default function WeeklyReport({ isOpen, onClose, readings, inventory, use
                 <Printer size={16} />
               </button>
             </div>
+          </div>
+
+          {/* Audio briefing */}
+          <div className="max-w-[1180px] mx-auto mt-4 px-4">
+            <SpokenReportControls
+              fullReportText={narration.full}
+              summaryReportText={narration.summary}
+            />
           </div>
 
           {/* Report content */}
