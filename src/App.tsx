@@ -555,7 +555,11 @@ export default function App() {
       });
       markSaved(`Saved ${item.name}`);
     } catch (err) {
-      toast.error(`Could not save ${item.name}`);
+      if (err instanceof Error && err.message === 'Wishlist item name is required.') {
+        toast.error(err.message);
+        return;
+      }
+      toast.error(`Could not save ${item.name || 'wishlist item'}`);
       handleFirestoreError(err, OperationType.WRITE, `wishlist/${item.id}`);
     }
   };
