@@ -761,6 +761,7 @@ export default function App() {
           onToggleGeoAutoStart={setGeoAutoStartEnabled}
         />
         <Dashboard 
+          userId={user.uid}
           readings={readings} 
           tasks={tasks}
           schedule={schedule}
