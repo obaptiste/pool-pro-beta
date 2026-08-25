@@ -29,6 +29,7 @@ import { calculateLSI } from '../lib/lsi';
 import { generateContentWithRetry } from '../lib/gemini';
 
 interface Props {
+  userId: string;
   readings: Reading[];
   tasks: MaintenanceTask[];
   schedule: MaintenanceSchedule;
@@ -45,7 +46,7 @@ interface Props {
   onAddTask: (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => void;
 }
 
-export default function Dashboard({ readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask }: Props) {
+export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask }: Props) {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
   const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [isAddingTask, setIsAddingTask] = React.useState(false);
@@ -612,7 +613,7 @@ export default function Dashboard({ readings, tasks, schedule, inventory, equipm
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
-            <TrendCharts readings={readings} />
+            <TrendCharts readings={readings} userId={userId} onLogReading={onLogReading} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -41,6 +41,7 @@ export default function App() {
 
   const [isLogging, setIsLogging] = useState(false);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
+  const [returnToHistoryAfterEdit, setReturnToHistoryAfterEdit] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
@@ -365,8 +366,8 @@ export default function App() {
   const handleUpdateReading = async (
     id: string,
     updates: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
-  ) => {
-    if (!user) return;
+  ): Promise<boolean> => {
+    if (!user) return false;
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -379,11 +380,12 @@ export default function App() {
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
       });
-      setEditingReading(null);
       markSaved('Reading updated');
+      return true;
     } catch (err) {
       toast.error('Could not update reading');
       handleFirestoreError(err, OperationType.UPDATE, `readings/${id}`);
+      return false;
     }
   };
 
@@ -512,31 +514,52 @@ export default function App() {
   const handleUpdateWishlist = async (item: WishlistItem) => {
     if (!user) return;
     try {
-      const cleanOptions = (item.purchaseOptions || []).map(opt => ({
-        id: opt.id,
-        vendor: opt.vendor || '',
-        url: opt.url || '',
-        price: opt.price ?? null,
-        currency: opt.currency || '',
-        qualityRating: opt.qualityRating ?? null,
-        availability: opt.availability || '',
-        notes: opt.notes || '',
+      const isFiniteNumber = (value: unknown): value is number =>
+        typeof value === 'number' && Number.isFinite(value);
+
+      const name = item.name.trim();
+      if (!name) {
+        throw new Error('Wishlist item name is required.');
+      }
+
+      const createdAt =
+        item.createdAt instanceof Date && !Number.isNaN(item.createdAt.getTime())
+          ? item.createdAt
+          : new Date();
+
+      const priority = ['low', 'medium', 'high', 'critical'].includes(item.priority) ? item.priority : 'medium';
+      const quantity = isFiniteNumber(item.quantity) ? Math.max(1, item.quantity) : 1;
+      const estimatedCost = isFiniteNumber(item.estimatedCost) ? item.estimatedCost : null;
+
+      const cleanOptions = (item.purchaseOptions || []).map((opt) => ({
+        id: typeof opt.id === 'string' && opt.id ? opt.id : crypto.randomUUID(),
+        vendor: typeof opt.vendor === 'string' ? opt.vendor : '',
+        url: typeof opt.url === 'string' ? opt.url : '',
+        price: isFiniteNumber(opt.price) ? opt.price : null,
+        currency: typeof opt.currency === 'string' ? opt.currency : '',
+        qualityRating: isFiniteNumber(opt.qualityRating) ? opt.qualityRating : null,
+        availability: typeof opt.availability === 'string' ? opt.availability : '',
+        notes: typeof opt.notes === 'string' ? opt.notes : '',
       }));
       await setDoc(doc(db, 'wishlist', item.id), {
         id: item.id,
-        name: item.name,
+        name,
         description: item.description || '',
-        priority: item.priority,
-        quantity: item.quantity,
-        estimatedCost: item.estimatedCost ?? null,
+        priority,
+        quantity,
+        estimatedCost,
         currency: item.currency || '',
         purchaseOptions: cleanOptions,
         uid: user.uid,
-        createdAt: Timestamp.fromDate(item.createdAt || new Date()),
+        createdAt: Timestamp.fromDate(createdAt),
       });
       markSaved(`Saved ${item.name}`);
     } catch (err) {
-      toast.error(`Could not save ${item.name}`);
+      if (err instanceof Error && err.message === 'Wishlist item name is required.') {
+        toast.error(err.message);
+        return;
+      }
+      toast.error(`Could not save ${item.name || 'wishlist item'}`);
       handleFirestoreError(err, OperationType.WRITE, `wishlist/${item.id}`);
     }
   };
@@ -627,6 +650,14 @@ export default function App() {
       input.value = '';
     };
     reader.readAsText(file);
+  };
+
+  const closeReadingEditAndReturnToHistoryIfNeeded = () => {
+    setEditingReading(null);
+    if (returnToHistoryAfterEdit) {
+      setIsHistoryOpen(true);
+      setReturnToHistoryAfterEdit(false);
+    }
   };
 
   if (!isAuthReady) {
@@ -730,6 +761,7 @@ export default function App() {
           onToggleGeoAutoStart={setGeoAutoStartEnabled}
         />
         <Dashboard 
+          userId={user.uid}
           readings={readings} 
           tasks={tasks}
           schedule={schedule}
@@ -779,6 +811,19 @@ export default function App() {
       />
 
       <AnimatePresence>
+        {isHistoryOpen && (
+          <History
+            readings={readings}
+            onBack={() => setIsHistoryOpen(false)}
+            onDelete={handleDeleteReading}
+            onEdit={(reading) => {
+              setReturnToHistoryAfterEdit(true);
+              setIsHistoryOpen(false);
+              setEditingReading(reading);
+            }}
+          />
+        )}
+
         {isLogging && (
           <ReadingForm
             onSave={handleSaveReading}
@@ -790,20 +835,12 @@ export default function App() {
           <ReadingForm
             key={editingReading.id}
             initialReading={editingReading}
-            onSave={(updates) => handleUpdateReading(editingReading.id, updates)}
-            onCancel={() => setEditingReading(null)}
-          />
-        )}
-
-        {isHistoryOpen && (
-          <History
-            readings={readings}
-            onBack={() => setIsHistoryOpen(false)}
-            onDelete={handleDeleteReading}
-            onEdit={(reading) => {
-              setIsHistoryOpen(false);
-              setEditingReading(reading);
+            onSave={async (updates) => {
+              const updated = await handleUpdateReading(editingReading.id, updates);
+              if (!updated) return;
+              closeReadingEditAndReturnToHistoryIfNeeded();
             }}
+            onCancel={closeReadingEditAndReturnToHistoryIfNeeded}
           />
         )}
       </AnimatePresence>
