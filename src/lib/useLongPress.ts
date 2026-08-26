@@ -1,5 +1,23 @@
 import { useCallback, useRef, useState } from 'react';
 
+const INTERACTIVE_SELECTOR = 'button, a[href], input, textarea, select';
+
+/**
+ * True if `target` is (or sits inside) a real interactive control between
+ * itself and `boundary` — e.g. an "Amend"/"Delete" `<button>` nested inside
+ * a long-press-enabled row. Stops at `boundary` (exclusive) so the row's own
+ * `role="button"` never counts as a match; only a genuine nested control
+ * (not incidental icons/text) causes long-press handling to be skipped.
+ */
+function isFromNestedControl(target: EventTarget | null, boundary: Element): boolean {
+  let el = target instanceof Element ? target : null;
+  while (el && el !== boundary) {
+    if (el.matches(INTERACTIVE_SELECTOR)) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+
 interface UseLongPressOptions {
   /** Fired once the pointer has been held down past `thresholdMs`. */
   onLongPress: () => void;
@@ -47,6 +65,7 @@ export function useLongPress({
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return; // primary button/touch/pen only
+    if (isFromNestedControl(e.target, e.currentTarget)) return;
     firedRef.current = false;
     startPos.current = { x: e.clientX, y: e.clientY };
     setIsPressing(true);
@@ -79,10 +98,7 @@ export function useLongPress({
   }, []);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Ignore Enter/Space bubbled up from a nested interactive child (e.g. an
-    // "Amend"/"Delete" button inside a long-press-enabled row) — only the
-    // element these handlers are bound to should trigger the long press.
-    if (e.target !== e.currentTarget) return;
+    if (isFromNestedControl(e.target, e.currentTarget)) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onLongPress();

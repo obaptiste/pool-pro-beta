@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
@@ -317,17 +317,59 @@ function CalendarDayLogRow({
   );
 }
 
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 function ConfirmEditDialog({ pendingEdit, onConfirm, onCancel }: { pendingEdit: PendingEdit; onConfirm: () => void; onCancel: () => void }) {
   const { reading, focusField } = pendingEdit;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
+    return () => {
+      previouslyFocused.current?.focus?.();
+    };
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+      return;
+    }
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    // Trap Tab/Shift+Tab inside the dialog so it stays reachable while it's open.
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="card bg-surface border-border-dim max-w-sm w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="amend-confirm-title"
+        onKeyDown={handleKeyDown}
+        className="card bg-surface border-border-dim max-w-sm w-full p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-accent">
             <Pencil size={16} />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-ink">Amend This Log?</h3>
+            <h3 id="amend-confirm-title" className="text-xs font-bold uppercase tracking-widest text-ink">Amend This Log?</h3>
           </div>
-          <button onClick={onCancel} className="text-ink-dim hover:text-ink transition-colors"><X size={16} /></button>
+          <button onClick={onCancel} aria-label="Cancel" className="text-ink-dim hover:text-ink transition-colors"><X size={16} /></button>
         </div>
         <p className="text-xs text-ink-muted leading-relaxed">
           This opens the log from {format(reading.timestamp, "MMM d, yyyy 'at' HH:mm")} for editing

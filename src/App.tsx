@@ -18,7 +18,7 @@ import { auth, db, signIn, logout, handleFirestoreError, OperationType } from '.
 import { useToast } from './lib/toast';
 import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValidation';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, deleteField, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText, ListChecks } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
@@ -383,6 +383,7 @@ export default function App() {
     }
     const hasNumericChanges = Object.keys(previousValues).length > 0;
     const notesChanged = (previous.notes ?? '') !== (updates.notes ?? '');
+    const isEdit = hasNumericChanges || notesChanged;
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -394,8 +395,12 @@ export default function App() {
         calciumHardness: updates.calciumHardness,
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
-        ...(hasNumericChanges ? { previousValues } : {}),
-        ...(hasNumericChanges || notesChanged ? { editedAt: Timestamp.now() } : {}),
+        // previousValues always tracks *this* edit's numeric diff, never a
+        // stale one from an earlier edit — a later notes-only amendment
+        // clears it rather than leaving an old value paired with the new
+        // editedAt timestamp.
+        ...(hasNumericChanges ? { previousValues } : isEdit ? { previousValues: deleteField() } : {}),
+        ...(isEdit ? { editedAt: Timestamp.now() } : {}),
       });
       markSaved('Reading updated');
       return true;
