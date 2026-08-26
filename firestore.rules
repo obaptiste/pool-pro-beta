@@ -19,6 +19,8 @@ service cloud.firestore {
     //   - calciumHardness: number | null (optional — null/missing means "not measured")
     //   - cyanuricAcid: number | null (optional — null/missing means "not measured")
     //   - notes: string (optional)
+    //   - editedAt: timestamp (optional — set when the log is amended after creation)
+    //   - previousValues: map (optional — field -> prior numeric value, from the last edit)
     //
     // Collection: tasks
     // Document ID: auto-generated
@@ -119,6 +121,8 @@ service cloud.firestore {
              isNumericOrNull(data, 'differentialPressure') &&
              isNumericOrNull(data, 'calciumHardness') &&
              isNumericOrNull(data, 'cyanuricAcid') &&
+             (!('editedAt' in data) || data.editedAt is timestamp) &&
+             (!('previousValues' in data) || data.previousValues is map) &&
              data.uid == request.auth.uid;
     }
 

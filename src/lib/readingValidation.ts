@@ -42,7 +42,7 @@ const HARD_MAX_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
   sanitisationMv: 1200,
 };
 
-const FIELD_LABEL: Record<NumericReadingField, string> = {
+export const FIELD_LABEL: Record<NumericReadingField, string> = {
   chlorine: 'Chlorine',
   ph: 'pH',
   alkalinity: 'Alkalinity',
