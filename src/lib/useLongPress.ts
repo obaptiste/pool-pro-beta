@@ -79,6 +79,10 @@ export function useLongPress({
   }, []);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Ignore Enter/Space bubbled up from a nested interactive child (e.g. an
+    // "Amend"/"Delete" button inside a long-press-enabled row) — only the
+    // element these handlers are bound to should trigger the long press.
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onLongPress();

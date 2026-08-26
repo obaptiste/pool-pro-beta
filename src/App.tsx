@@ -381,7 +381,8 @@ export default function App() {
         previousValues[field] = previous[field] ?? null;
       }
     }
-    const hasChanges = Object.keys(previousValues).length > 0;
+    const hasNumericChanges = Object.keys(previousValues).length > 0;
+    const notesChanged = (previous.notes ?? '') !== (updates.notes ?? '');
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -393,7 +394,8 @@ export default function App() {
         calciumHardness: updates.calciumHardness,
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
-        ...(hasChanges ? { previousValues, editedAt: Timestamp.now() } : {}),
+        ...(hasNumericChanges ? { previousValues } : {}),
+        ...(hasNumericChanges || notesChanged ? { editedAt: Timestamp.now() } : {}),
       });
       markSaved('Reading updated');
       return true;
