@@ -27,6 +27,8 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { generateContentWithRetry } from '../lib/gemini';
+import { NumericReadingField } from '../lib/readingValidation';
+import { useLongPress } from '../lib/useLongPress';
 
 interface Props {
   userId: string;
@@ -35,7 +37,7 @@ interface Props {
   schedule: MaintenanceSchedule;
   inventory: InventoryItem[];
   equipment: EquipmentItem[];
-  onLogReading: () => void;
+  onLogReading: (focusField?: NumericReadingField) => void;
   onOpenCheatSheet: () => void;
   onOpenGlossary: () => void;
   onViewHistory: () => void;
@@ -370,43 +372,45 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
               </div>
               <StatusCard
                 label="Free Chlorine"
+                field="chlorine"
                 value={latest?.chlorine ?? null}
                 unit="ppm"
                 status={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
                 trend={getTrendData('chlorine')}
                 ideal="1–3"
+                onLongPress={onLogReading}
               />
               <StatusCard
                 label="pH Level"
+                field="ph"
                 value={latest?.ph ?? null}
                 unit=""
                 status={latest?.ph != null ? getStatus(latest.ph, DEFAULT_RANGES.ph.min, DEFAULT_RANGES.ph.max) : 'good'}
                 trend={getTrendData('ph')}
                 ideal="7.2–7.6"
+                onLongPress={onLogReading}
               />
               <StatusCard
                 label="Alkalinity"
+                field="alkalinity"
                 value={latest?.alkalinity ?? null}
                 unit="ppm"
                 status={latest?.alkalinity != null ? getStatus(latest.alkalinity, DEFAULT_RANGES.alkalinity.min, DEFAULT_RANGES.alkalinity.max) : 'good'}
                 trend={getTrendData('alkalinity')}
                 ideal="80–120"
+                onLongPress={onLogReading}
               />
               <StatusCard
                 label="Diff Pressure"
+                field="differentialPressure"
                 value={latest?.differentialPressure ?? null}
                 unit="kPa"
                 status={latest?.differentialPressure != null ? getStatus(latest.differentialPressure, DEFAULT_RANGES.differentialPressure.min, DEFAULT_RANGES.differentialPressure.max) : 'good'}
                 trend={getTrendData('differentialPressure')}
                 ideal="55–140"
+                onLongPress={onLogReading}
               />
-              <div className="card bg-[#0a1628] border-border-dim flex flex-col justify-between p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-bold text-accent font-mono">{latest?.temperature ?? '—'}</span>
-                  <span className="text-xs text-ink-dim">°C</span>
-                </div>
-              </div>
+              <TemperatureCard value={latest?.temperature ?? null} onLongPress={onLogReading} />
             </div>
 
             {/* Maintenance Checklist */}
@@ -619,8 +623,8 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       </AnimatePresence>
 
       {/* Quick Action FAB */}
-      <button 
-        onClick={onLogReading}
+      <button
+        onClick={() => onLogReading()}
         className="fixed bottom-6 right-6 w-14 h-14 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print anim-fab-pulse"
       >
         <Plus size={28} />
@@ -663,7 +667,7 @@ function Sparkline({ values, color }: { values: number[], color: string }) {
   );
 }
 
-function StatusCard({ label, value, unit, status, trend, ideal }: { label: string, value: number | null, unit: string, status: Status, trend: number[], ideal: string }) {
+function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPress }: { label: string, field: NumericReadingField, value: number | null, unit: string, status: Status, trend: number[], ideal: string, onLongPress: (field: NumericReadingField) => void }) {
   const statusColors = {
     good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
     warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
@@ -677,9 +681,17 @@ function StatusCard({ label, value, unit, status, trend, ideal }: { label: strin
   };
 
   const isMissing = value == null;
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress(field) });
 
   return (
-    <div className={`card anim-scan border ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} flex flex-col gap-2 p-4`}>
+    <div
+      {...handlers}
+      role="button"
+      tabIndex={0}
+      aria-label={`${label}. Hold to log a new reading for this field.`}
+      title="Hold to log a new reading for this field"
+      className={`card anim-scan border select-none cursor-pointer transition-transform ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} flex flex-col gap-2 p-4`}
+    >
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
         <Sparkline values={trend} color={sparklineColors[status]} />
@@ -691,6 +703,26 @@ function StatusCard({ label, value, unit, status, trend, ideal }: { label: strin
       <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest">
         <span className="text-ink-dim">Ideal: {ideal}</span>
         <span className="opacity-80">{isMissing ? 'Not measured' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
+      </div>
+    </div>
+  );
+}
+
+function TemperatureCard({ value, onLongPress }: { value: number | null, onLongPress: (field: NumericReadingField) => void }) {
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress('temperature') });
+  return (
+    <div
+      {...handlers}
+      role="button"
+      tabIndex={0}
+      aria-label="Temperature. Hold to log a new reading for this field."
+      title="Hold to log a new reading for this field"
+      className={`card bg-[#0a1628] border-border-dim select-none cursor-pointer transition-transform flex flex-col justify-between p-4 ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''}`}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
+      <div className="flex items-baseline gap-1">
+        <span className="text-3xl font-bold text-accent font-mono">{value ?? '—'}</span>
+        <span className="text-xs text-ink-dim">°C</span>
       </div>
     </div>
   );

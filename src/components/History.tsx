@@ -1,15 +1,26 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil } from 'lucide-react';
+import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { addDays, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
-import { getSoftWarning } from '../lib/readingValidation';
+import { getSoftWarning, NumericReadingField, FIELD_LABEL } from '../lib/readingValidation';
+import { useLongPress } from '../lib/useLongPress';
 
 interface Props {
   readings: Reading[];
   onBack: () => void;
   onDelete: (id: string) => void;
-  onEdit: (reading: Reading) => void;
+  onEdit: (reading: Reading, focusField?: NumericReadingField) => void;
+}
+
+interface PendingEdit {
+  reading: Reading;
+  focusField?: NumericReadingField;
+}
+
+function getPreviousValue(reading: Reading, field: NumericReadingField): number | null | undefined {
+  if (!reading.previousValues || !(field in reading.previousValues)) return undefined;
+  return reading.previousValues[field];
 }
 
 export default function History({ readings, onBack, onDelete, onEdit }: Props) {
@@ -17,6 +28,7 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(initialSelectedDay ?? new Date()));
   const [selectedDay, setSelectedDay] = useState<Date | null>(initialSelectedDay);
+  const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
 
   const uniqueVisitDays = new Set(readings.map((reading) => format(reading.timestamp, 'yyyy-MM-dd'))).size;
   const firstVisit = readings.length ? readings[readings.length - 1].timestamp : null;
@@ -113,15 +125,13 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
               <button disabled className="w-full rounded-lg border border-border-dim p-2 text-xs text-ink-dim flex items-center justify-center gap-2"><ImagePlus size={13} />Bulk photo upload (coming soon)</button>
               <div className="space-y-2 max-h-[24rem] overflow-y-auto pr-1">
                 {selectedDayReadings.map((reading) => (
-                  <div key={reading.id} className="rounded border border-border-dim p-2 space-y-1">
-                    <p className="text-[10px] text-ink-dim">{format(reading.timestamp, 'HH:mm:ss')}</p>
-                    <p className="text-xs text-ink">pH {reading.ph ?? '—'} • ORP {reading.sanitisationMv ?? '—'} mV • FC {reading.chlorine ?? '—'} ppm</p>
-                    {reading.notes ? <p className="text-[11px] text-ink-muted">{reading.notes}</p> : null}
-                    <div className="flex justify-end items-center gap-3 pt-1">
-                      <button onClick={() => onEdit(reading)} className="text-[9px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors flex items-center gap-1"><Pencil size={10} />Amend</button>
-                      <button onClick={() => onDelete(reading.id)} className="text-[9px] font-bold uppercase tracking-widest text-critical/50 hover:text-critical transition-colors flex items-center gap-1"><Trash2 size={10} />Delete</button>
-                    </div>
-                  </div>
+                  <CalendarDayLogRow
+                    key={reading.id}
+                    reading={reading}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onRequestEdit={(r) => setPendingEdit({ reading: r })}
+                  />
                 ))}
                 {selectedDayReadings.length === 0 ? <p className="text-xs text-ink-dim">No logs for this day yet.</p> : null}
               </div>
@@ -147,24 +157,33 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
                         <Clock size={14} />
                         <span className="text-[10px] font-bold font-mono uppercase tracking-widest">{format(reading.timestamp, 'HH:mm:ss')}</span>
                       </div>
+                      {reading.editedAt && (
+                        <div className="flex items-center gap-1.5 text-ink-dim/70 mt-2">
+                          <Pencil size={11} />
+                          <span className="text-[9px] italic">Edited {format(reading.editedAt, 'MMM d, HH:mm')}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4">
                       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
-                        <DataPoint label="Chlorine" value={reading.chlorine} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" />
+                        <DataPoint label="Chlorine" field="chlorine" value={reading.chlorine} previousValue={getPreviousValue(reading, 'chlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
                         <DataPoint
                           label="Sanitisation / ORP"
+                          field="sanitisationMv"
                           value={reading.sanitisationMv ?? null}
+                          previousValue={getPreviousValue(reading, 'sanitisationMv')}
                           unit="mV"
                           icon={<Droplets size={12} />}
                           color="text-blue-300"
                           warning={reading.sanitisationMv != null ? getSoftWarning('sanitisationMv', reading.sanitisationMv) : null}
+                          onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })}
                         />
-                        <DataPoint label="pH Level" value={reading.ph} unit="" icon={<Activity size={12} />} color="text-emerald-400" />
-                        <DataPoint label="Alkalinity" value={reading.alkalinity} unit="ppm" icon={<TrendingUp size={12} />} color="text-amber-400" />
-                        <DataPoint label="Temp" value={reading.temperature} unit="°C" icon={<Thermometer size={12} />} color="text-red-400" />
-                        <DataPoint label="Pressure" value={reading.differentialPressure} unit="PSI" icon={<Gauge size={12} />} color="text-indigo-400" />
-                        <DataPoint label="Calcium" value={reading.calciumHardness} unit="ppm" icon={<Waves size={12} />} color="text-cyan-400" />
-                        <DataPoint label="CYA" value={reading.cyanuricAcid} unit="ppm" icon={<Sun size={12} />} color="text-yellow-400" />
+                        <DataPoint label="pH Level" field="ph" value={reading.ph} previousValue={getPreviousValue(reading, 'ph')} unit="" icon={<Activity size={12} />} color="text-emerald-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Alkalinity" field="alkalinity" value={reading.alkalinity} previousValue={getPreviousValue(reading, 'alkalinity')} unit="ppm" icon={<TrendingUp size={12} />} color="text-amber-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Temp" field="temperature" value={reading.temperature} previousValue={getPreviousValue(reading, 'temperature')} unit="°C" icon={<Thermometer size={12} />} color="text-red-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Pressure" field="differentialPressure" value={reading.differentialPressure} previousValue={getPreviousValue(reading, 'differentialPressure')} unit="PSI" icon={<Gauge size={12} />} color="text-indigo-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Calcium" field="calciumHardness" value={reading.calciumHardness} previousValue={getPreviousValue(reading, 'calciumHardness')} unit="ppm" icon={<Waves size={12} />} color="text-cyan-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="CYA" field="cyanuricAcid" value={reading.cyanuricAcid} previousValue={getPreviousValue(reading, 'cyanuricAcid')} unit="ppm" icon={<Sun size={12} />} color="text-yellow-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
                       </div>
                       {reading.notes && (
                         <div className="flex gap-2 p-3 bg-bg/60 rounded-lg border border-border-dim/30">
@@ -190,41 +209,139 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
           </div>
         )}
       </div>
+      {pendingEdit && (
+        <ConfirmEditDialog
+          pendingEdit={pendingEdit}
+          onCancel={() => setPendingEdit(null)}
+          onConfirm={() => {
+            onEdit(pendingEdit.reading, pendingEdit.focusField);
+            setPendingEdit(null);
+          }}
+        />
+      )}
     </motion.div>
   );
 }
 
 function DataPoint({
   label,
+  field,
   value,
+  previousValue,
   unit,
   icon,
   color,
-  warning
+  warning,
+  onRequestEdit,
 }: {
   label: string;
+  field: NumericReadingField;
   value: number | null;
+  /** Prior value from the last edit, if this field changed; undefined = unedited. */
+  previousValue?: number | null;
   unit: string;
   icon: React.ReactNode;
   color: string;
   warning?: { message: string } | null;
+  onRequestEdit: (field: NumericReadingField) => void;
 }) {
   const isMissing = value == null;
+  const wasEdited = previousValue !== undefined;
+  const fixedDigits = label === 'pH Level' ? 1 : 0;
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onRequestEdit(field) });
   return (
-    <div className="space-y-1">
+    <div
+      {...handlers}
+      role="button"
+      tabIndex={0}
+      aria-label={`${label}. Hold to amend this log's ${FIELD_LABEL[field]}.`}
+      title="Hold to amend this reading"
+      className={`space-y-1 rounded-lg p-1 -m-1 select-none cursor-pointer transition-transform ${isPressing ? 'scale-[0.95] ring-2 ring-accent/50' : ''}`}
+    >
       <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-ink-dim">
         {icon}
         {label}
       </div>
-      <div className="flex items-baseline gap-1">
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        {wasEdited && (
+          <span className="text-xs font-mono text-ink-dim/50 line-through decoration-critical/50">
+            {previousValue == null ? '—' : previousValue.toFixed(fixedDigits)}
+          </span>
+        )}
         <span className={`text-lg font-bold font-mono ${isMissing ? 'text-ink-dim' : color}`}>
-          {isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}
+          {isMissing ? '—' : value.toFixed(fixedDigits)}
         </span>
         <span className="text-[9px] text-ink-dim font-bold uppercase">{unit}</span>
       </div>
       {warning && !isMissing ? (
         <p className="text-[9px] text-amber-300 leading-tight">{warning.message}</p>
       ) : null}
+    </div>
+  );
+}
+
+function CalendarDayLogRow({
+  reading,
+  onEdit,
+  onDelete,
+  onRequestEdit,
+}: {
+  reading: Reading;
+  onEdit: (reading: Reading, focusField?: NumericReadingField) => void;
+  onDelete: (id: string) => void;
+  onRequestEdit: (reading: Reading) => void;
+}) {
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onRequestEdit(reading) });
+  return (
+    <div
+      {...handlers}
+      role="button"
+      tabIndex={0}
+      aria-label="Hold to amend this log entry."
+      title="Hold to amend this log entry"
+      className={`rounded border border-border-dim p-2 space-y-1 select-none transition-transform ${isPressing ? 'scale-[0.98] ring-2 ring-accent/50' : ''}`}
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-ink-dim">{format(reading.timestamp, 'HH:mm:ss')}</p>
+        {reading.editedAt && (
+          <span className="text-[9px] italic text-ink-dim/70 flex items-center gap-1"><Pencil size={9} />Edited</span>
+        )}
+      </div>
+      <p className="text-xs text-ink">pH {reading.ph ?? '—'} • ORP {reading.sanitisationMv ?? '—'} mV • FC {reading.chlorine ?? '—'} ppm</p>
+      {reading.notes ? <p className="text-[11px] text-ink-muted">{reading.notes}</p> : null}
+      <div className="flex justify-end items-center gap-3 pt-1">
+        <button onClick={() => onEdit(reading)} className="text-[9px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors flex items-center gap-1"><Pencil size={10} />Amend</button>
+        <button onClick={() => onDelete(reading.id)} className="text-[9px] font-bold uppercase tracking-widest text-critical/50 hover:text-critical transition-colors flex items-center gap-1"><Trash2 size={10} />Delete</button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmEditDialog({ pendingEdit, onConfirm, onCancel }: { pendingEdit: PendingEdit; onConfirm: () => void; onCancel: () => void }) {
+  const { reading, focusField } = pendingEdit;
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="card bg-surface border-border-dim max-w-sm w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-accent">
+            <Pencil size={16} />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-ink">Amend This Log?</h3>
+          </div>
+          <button onClick={onCancel} className="text-ink-dim hover:text-ink transition-colors"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-ink-muted leading-relaxed">
+          This opens the log from {format(reading.timestamp, "MMM d, yyyy 'at' HH:mm")} for editing
+          {focusField ? <> — jumping straight to <span className="text-ink font-bold">{FIELD_LABEL[focusField]}</span></> : null}.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest text-ink-dim border border-border-dim hover:text-ink transition-colors">
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-accent text-primary hover:bg-accent/90 transition-colors">
+            Amend Log
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

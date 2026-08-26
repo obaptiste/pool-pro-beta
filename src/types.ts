@@ -15,6 +15,16 @@ export interface Reading {
   cyanuricAcid: number | null;
   notes?: string;
   uid: string;
+  /** Set when this log was amended after creation; timestamp of the most recent edit. */
+  editedAt?: Date;
+  /**
+   * Values overwritten by the most recent edit, keyed by field. Only fields
+   * that actually changed are present — used to show a "was X, now Y" trail.
+   */
+  previousValues?: Partial<Record<
+    'chlorine' | 'sanitisationMv' | 'ph' | 'alkalinity' | 'temperature' | 'differentialPressure' | 'calciumHardness' | 'cyanuricAcid',
+    number | null
+  >>;
 }
 
 export interface MaintenanceTask {

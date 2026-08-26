@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
   AlertCircle,
@@ -24,6 +24,8 @@ interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
   onCancel: () => void;
   initialReading?: Reading;
+  /** Field to scroll to and focus on open — e.g. jumping in from a long-press on one reading. */
+  focusField?: NumericField;
 }
 
 const NUMERIC_FIELDS = NUMERIC_READING_FIELDS;
@@ -56,8 +58,9 @@ const INITIAL_RAW: Record<NumericField, string> = {
   cyanuricAcid: '',
 };
 
-export default function ReadingForm({ onSave, onCancel, initialReading }: Props) {
+export default function ReadingForm({ onSave, onCancel, initialReading, focusField }: Props) {
   const isEditing = !!initialReading;
+  const formRef = useRef<HTMLFormElement>(null);
   const [formData, setFormData] = useState<FormData>(() => {
     if (!initialReading) return INITIAL_FORM;
     return {
@@ -134,6 +137,14 @@ export default function ReadingForm({ onSave, onCancel, initialReading }: Props)
   };
 
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusField) return;
+    const el = formRef.current?.querySelector<HTMLInputElement>(`input[name="${focusField}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.focus({ preventScroll: true });
+  }, [focusField]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -332,7 +343,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
           </div>
         </header>
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
+        <form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
             <InputField label="Sanitisation / ORP (mV)" name="sanitisationMv" value={rawInputs.sanitisationMv} unit="mV" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.sanitisationMv} min={0} max={1200} step="any" isEmpty={rawInputs.sanitisationMv === ''} />

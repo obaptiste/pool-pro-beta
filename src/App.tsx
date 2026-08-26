@@ -16,6 +16,7 @@ import WorkTracker from './components/WorkTracker';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { useToast } from './lib/toast';
+import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValidation';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText, ListChecks } from 'lucide-react';
@@ -40,7 +41,9 @@ export default function App() {
   });
 
   const [isLogging, setIsLogging] = useState(false);
+  const [logFocusField, setLogFocusField] = useState<NumericReadingField | undefined>(undefined);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
+  const [editFocusField, setEditFocusField] = useState<NumericReadingField | undefined>(undefined);
   const [returnToHistoryAfterEdit, setReturnToHistoryAfterEdit] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
@@ -95,7 +98,8 @@ export default function App() {
       setReadings(snapshot.docs.map(doc => ({
         ...doc.data(),
         sanitisationMv: doc.data().sanitisationMv ?? null,
-        timestamp: (doc.data().timestamp as Timestamp).toDate()
+        timestamp: (doc.data().timestamp as Timestamp).toDate(),
+        editedAt: doc.data().editedAt ? (doc.data().editedAt as Timestamp).toDate() : undefined,
       } as Reading)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
 
@@ -365,9 +369,20 @@ export default function App() {
 
   const handleUpdateReading = async (
     id: string,
+    previous: Reading,
     updates: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
   ): Promise<boolean> => {
     if (!user) return false;
+    // Track which fields actually changed so History can show what the
+    // reading used to say, struck through, next to the amended value.
+    const previousValues: Partial<Record<NumericReadingField, number | null>> = {};
+    for (const field of NUMERIC_READING_FIELDS) {
+      if (previous[field] !== updates[field]) {
+        previousValues[field] = previous[field] ?? null;
+      }
+    }
+    const hasNumericChanges = Object.keys(previousValues).length > 0;
+    const notesChanged = (previous.notes ?? '') !== (updates.notes ?? '');
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
@@ -379,6 +394,8 @@ export default function App() {
         calciumHardness: updates.calciumHardness,
         cyanuricAcid: updates.cyanuricAcid,
         notes: updates.notes ?? '',
+        ...(hasNumericChanges ? { previousValues } : {}),
+        ...(hasNumericChanges || notesChanged ? { editedAt: Timestamp.now() } : {}),
       });
       markSaved('Reading updated');
       return true;
@@ -654,6 +671,7 @@ export default function App() {
 
   const closeReadingEditAndReturnToHistoryIfNeeded = () => {
     setEditingReading(null);
+    setEditFocusField(undefined);
     if (returnToHistoryAfterEdit) {
       setIsHistoryOpen(true);
       setReturnToHistoryAfterEdit(false);
@@ -767,7 +785,10 @@ export default function App() {
           schedule={schedule}
           inventory={inventory}
           equipment={equipment}
-          onLogReading={() => setIsLogging(true)}
+          onLogReading={(focusField) => {
+            setLogFocusField(focusField);
+            setIsLogging(true);
+          }}
           onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
           onOpenGlossary={() => setIsGlossaryOpen(true)}
           onViewHistory={() => setIsHistoryOpen(true)}
@@ -816,9 +837,10 @@ export default function App() {
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
-            onEdit={(reading) => {
+            onEdit={(reading, focusField) => {
               setReturnToHistoryAfterEdit(true);
               setIsHistoryOpen(false);
+              setEditFocusField(focusField);
               setEditingReading(reading);
             }}
           />
@@ -826,6 +848,7 @@ export default function App() {
 
         {isLogging && (
           <ReadingForm
+            focusField={logFocusField}
             onSave={handleSaveReading}
             onCancel={() => setIsLogging(false)}
           />
@@ -835,8 +858,9 @@ export default function App() {
           <ReadingForm
             key={editingReading.id}
             initialReading={editingReading}
+            focusField={editFocusField}
             onSave={async (updates) => {
-              const updated = await handleUpdateReading(editingReading.id, updates);
+              const updated = await handleUpdateReading(editingReading.id, editingReading, updates);
               if (!updated) return;
               closeReadingEditAndReturnToHistoryIfNeeded();
             }}
