@@ -21,9 +21,19 @@ export async function callAiWithFallback(
     // However, in a real app, any persistent failure is a good reason to fallback.
     
     try {
-      const prompt = typeof params.contents === 'string' 
-        ? params.contents 
+      const prompt = typeof params.contents === 'string'
+        ? params.contents
         : JSON.stringify(params.contents);
+
+      // Gemini's structured-output contract (responseSchema/responseMimeType)
+      // doesn't exist on Claude/OpenAI — tell the server-side fallback about
+      // it explicitly so it can ask for (and validate) JSON there too,
+      // instead of handing back prose that breaks JSON.parse() on callers
+      // like GeminiAssistant that expect a JSON object back.
+      const expectJson = params.config?.responseMimeType === 'application/json';
+      const responseSchema = params.config?.responseSchema
+        ? JSON.stringify(params.config.responseSchema)
+        : undefined;
 
       const response = await fetch("/api/ai/fallback", {
         method: "POST",
@@ -33,6 +43,8 @@ export async function callAiWithFallback(
         body: JSON.stringify({
           prompt,
           systemInstruction: systemInstruction || params.config?.systemInstruction,
+          expectJson,
+          responseSchema,
         }),
       });
 

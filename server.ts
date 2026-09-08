@@ -31,8 +31,11 @@ async function startServer() {
   // serverless function at api/ai/fallback.ts so local dev (this Express
   // server) and production (Vercel) behave identically.
   app.post("/api/ai/fallback", async (req, res) => {
-    const { prompt, systemInstruction } = req.body;
-    const result = await runAiFallback(prompt, systemInstruction);
+    const { prompt, systemInstruction, expectJson, responseSchema } = req.body;
+    const result = await runAiFallback(prompt, systemInstruction, {
+      expectJson,
+      responseSchemaDescription: responseSchema,
+    });
     res.status(result.status).json(result.body);
   });
 
