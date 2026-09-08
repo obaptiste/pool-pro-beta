@@ -19,6 +19,17 @@ const MAX_PROMPT_LENGTH = 20000;
 const MAX_SYSTEM_INSTRUCTION_LENGTH = 20000;
 const MAX_RESPONSE_SCHEMA_LENGTH = 5000;
 
+// Both SDKs default to a multi-minute timeout with automatic retries. On a
+// Vercel serverless function with a much shorter execution deadline, a
+// stalled Claude request left on those defaults would get killed by the
+// platform before the catch block ever falls through to try OpenAI —
+// defeating the fallback precisely when it's needed most (an Anthropic
+// outage). Bound each leg explicitly, with no SDK-level retries (the
+// Claude -> OpenAI fallback below is already the retry), so both legs can
+// run sequentially within one invocation with room to spare.
+const PROVIDER_TIMEOUT_MS = 8000;
+const PROVIDER_MAX_RETRIES = 0;
+
 /**
  * Checks `value` against one node of a Gemini-style responseSchema
  * (Type.STRING/NUMBER/INTEGER/BOOLEAN/ARRAY/OBJECT, with `properties`,
@@ -171,12 +182,15 @@ export async function runAiFallback(
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
 
-      const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system: effectiveSystemInstruction,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const message = await anthropic.messages.create(
+        {
+          model: "claude-sonnet-4-6",
+          max_tokens: 4096,
+          system: effectiveSystemInstruction,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { timeout: PROVIDER_TIMEOUT_MS, maxRetries: PROVIDER_MAX_RETRIES }
+      );
 
       const content = message.content[0];
       if (content.type === "text") {
@@ -203,23 +217,26 @@ export async function runAiFallback(
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: effectiveSystemInstruction || "You are a helpful assistant." },
-          { role: "user", content: prompt },
-        ],
-        // Matches the Claude branch's max_tokens: 4096 — without an
-        // explicit cap here, a direct caller could ask for a response up
-        // to the model's own output limit, so the input-size/rate-limit
-        // guards elsewhere wouldn't bound the paid output of a single call.
-        max_tokens: 4096,
-        // Only force JSON mode when the caller actually asked for structured
-        // output — forcing it on a plain-text request (e.g. Dashboard's
-        // one-sentence LSI recommendation) would hand back a serialized
-        // JSON envelope where the UI renders response.text verbatim.
-        ...(expectJson ? { response_format: { type: "json_object" as const } } : {}),
-      });
+      const completion = await openai.chat.completions.create(
+        {
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: effectiveSystemInstruction || "You are a helpful assistant." },
+            { role: "user", content: prompt },
+          ],
+          // Matches the Claude branch's max_tokens: 4096 — without an
+          // explicit cap here, a direct caller could ask for a response up
+          // to the model's own output limit, so the input-size/rate-limit
+          // guards elsewhere wouldn't bound the paid output of a single call.
+          max_tokens: 4096,
+          // Only force JSON mode when the caller actually asked for structured
+          // output — forcing it on a plain-text request (e.g. Dashboard's
+          // one-sentence LSI recommendation) would hand back a serialized
+          // JSON envelope where the UI renders response.text verbatim.
+          ...(expectJson ? { response_format: { type: "json_object" as const } } : {}),
+        },
+        { timeout: PROVIDER_TIMEOUT_MS, maxRetries: PROVIDER_MAX_RETRIES }
+      );
 
       const text = completion.choices[0].message.content ?? "";
       if (expectJson) {

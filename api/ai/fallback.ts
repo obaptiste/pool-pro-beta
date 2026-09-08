@@ -1,6 +1,13 @@
 import { runAiFallback } from "../_lib/aiFallback";
 import { isRateLimited } from "../_lib/rateLimit";
 
+// Vercel's default Serverless Function execution deadline (10s on Hobby)
+// is shorter than the two provider legs run sequentially: each is bounded
+// to 8s in aiFallback.ts, so trying Claude then OpenAI can take up to ~16s
+// plus overhead. Raise the ceiling so a stalled Claude leg doesn't get the
+// whole function killed before it can fall through to OpenAI.
+export const config = { maxDuration: 30 };
+
 // This endpoint calls out to the app's own paid Anthropic/OpenAI accounts,
 // so an unauthenticated caller hammering it directly (bypassing the UI)
 // can run up provider bills and starve real users of quota. Throttle by
