@@ -119,11 +119,26 @@ export async function runAiFallback(
   systemInstruction: string | undefined,
   options: AiFallbackOptions = {}
 ): Promise<AiFallbackResult> {
-  if (!prompt) {
+  // The TypeScript parameter types only describe the happy path — this is
+  // a public HTTP endpoint parsing an untrusted JSON body, and nothing
+  // stops a direct caller from sending e.g. prompt: [{"type":"text","text":
+  // "<huge text>"}] instead of a string. Anthropic's SDK accepts an array
+  // of content blocks as message/system content, so that would sail past
+  // the .length checks below (array length, not character count) and get
+  // forwarded — and billed — in full. Reject anything that isn't actually
+  // a string before measuring or using it.
+  if (typeof prompt !== "string" || prompt.length === 0) {
     return { status: 400, body: { error: "Prompt is required" } };
+  }
+  if (systemInstruction !== undefined && typeof systemInstruction !== "string") {
+    return { status: 400, body: { error: "systemInstruction must be a string" } };
   }
 
   const { expectJson, responseSchemaDescription } = options;
+
+  if (responseSchemaDescription !== undefined && typeof responseSchemaDescription !== "string") {
+    return { status: 400, body: { error: "responseSchema must be a string" } };
+  }
 
   if (
     prompt.length > MAX_PROMPT_LENGTH ||
