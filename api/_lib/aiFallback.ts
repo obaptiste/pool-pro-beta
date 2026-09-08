@@ -18,17 +18,39 @@ export interface AiFallbackOptions {
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_SYSTEM_INSTRUCTION_LENGTH = 20000;
 
-function extractJsonText(text: string): string | null {
-  // Claude sometimes wraps JSON in a ```json ... ``` fence despite being
-  // asked not to; unwrap it before validating/handing back to the client.
+/**
+ * Unwraps a possible ```json ... ``` fence, checks the result parses as
+ * JSON, and — when the caller told us which top-level keys are required
+ * (from Gemini's responseSchema) — checks they're all present. Returns
+ * the unwrapped JSON text on success, or null if it doesn't qualify as a
+ * usable structured response. A provider that passes syntax but is
+ * missing a required key (e.g. `checklist`) is rejected here rather than
+ * handed back as a false success that crashes the client later.
+ */
+function extractValidJson(text: string, schemaDescription?: string): string | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = (fenced ? fenced[1] : text).trim();
+
+  let parsed: any;
   try {
-    JSON.parse(candidate);
-    return candidate;
+    parsed = JSON.parse(candidate);
   } catch {
     return null;
   }
+
+  if (schemaDescription) {
+    try {
+      const schema = JSON.parse(schemaDescription);
+      const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
+      if (parsed == null || typeof parsed !== "object" || !required.every((key) => key in parsed)) {
+        return null;
+      }
+    } catch {
+      // Schema description wasn't parseable JSON — fall back to the syntax-only check above.
+    }
+  }
+
+  return candidate;
 }
 
 /**
@@ -54,9 +76,10 @@ export async function runAiFallback(
 
   // Gemini's structured-output contract (responseSchema/responseMimeType)
   // doesn't carry over to Claude or OpenAI automatically — callers that
-  // need JSON back must say so explicitly here, or the raw prose a plain
-  // fallback returns breaks JSON.parse() on the client.
-  const claudeSystemInstruction = expectJson
+  // need JSON back must say so explicitly here, or a plain fallback
+  // returns prose that breaks JSON.parse() on the client. Applied to
+  // both providers' system instruction so neither silently drops it.
+  const effectiveSystemInstruction = expectJson
     ? [
         systemInstruction,
         "IMPORTANT: Respond with ONLY a single valid JSON object. No markdown code fences, no prose before or after the JSON.",
@@ -77,16 +100,16 @@ export async function runAiFallback(
       const message = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 4096,
-        system: claudeSystemInstruction,
+        system: effectiveSystemInstruction,
         messages: [{ role: "user", content: prompt }],
       });
 
       const content = message.content[0];
       if (content.type === "text") {
         if (expectJson) {
-          const validJson = extractJsonText(content.text);
+          const validJson = extractValidJson(content.text, responseSchemaDescription);
           if (validJson == null) {
-            throw new Error("Claude fallback did not return valid JSON");
+            throw new Error("Claude fallback did not return valid JSON matching the required shape");
           }
           return { status: 200, body: { text: validJson, provider: "claude" } };
         }
@@ -109,21 +132,21 @@ export async function runAiFallback(
       const completion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: systemInstruction || "You are a helpful assistant." },
+          { role: "system", content: effectiveSystemInstruction || "You are a helpful assistant." },
           { role: "user", content: prompt },
         ],
-        // Assuming we want JSON since the app uses it. OpenAI's json_object
-        // mode guarantees syntactically valid JSON when requested; when the
-        // caller didn't ask for JSON this still forces JSON-shaped prose,
-        // matching the pre-existing behavior of this fallback.
-        response_format: { type: "json_object" },
+        // Only force JSON mode when the caller actually asked for structured
+        // output — forcing it on a plain-text request (e.g. Dashboard's
+        // one-sentence LSI recommendation) would hand back a serialized
+        // JSON envelope where the UI renders response.text verbatim.
+        ...(expectJson ? { response_format: { type: "json_object" as const } } : {}),
       });
 
       const text = completion.choices[0].message.content ?? "";
       if (expectJson) {
-        const validJson = extractJsonText(text);
+        const validJson = extractValidJson(text, responseSchemaDescription);
         if (validJson == null) {
-          throw new Error("OpenAI fallback did not return valid JSON");
+          throw new Error("OpenAI fallback did not return valid JSON matching the required shape");
         }
         return { status: 200, body: { text: validJson, provider: "openai" } };
       }
