@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
-import { generateContentWithRetry } from '../lib/gemini';
+import { callAiWithFallback } from '../lib/ai';
 import { NumericReadingField } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -77,7 +77,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     if (!latest || isLsiLoading || lsiScore == null) return;
     setIsLsiLoading(true);
     try {
-      const response = await generateContentWithRetry({
+      const response = await callAiWithFallback({
         model: "gemini-2.0-flash",
         contents: `Analyze this LSI score of ${lsiScore} for a pool.
         Context: pH ${fmtField(latest.ph)}, Temp ${fmtField(latest.temperature)}°C, CH ${fmtField(latest.calciumHardness)}, TA ${fmtField(latest.alkalinity)}.
