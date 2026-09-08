@@ -209,6 +209,11 @@ export async function runAiFallback(
           { role: "system", content: effectiveSystemInstruction || "You are a helpful assistant." },
           { role: "user", content: prompt },
         ],
+        // Matches the Claude branch's max_tokens: 4096 — without an
+        // explicit cap here, a direct caller could ask for a response up
+        // to the model's own output limit, so the input-size/rate-limit
+        // guards elsewhere wouldn't bound the paid output of a single call.
+        max_tokens: 4096,
         // Only force JSON mode when the caller actually asked for structured
         // output — forcing it on a plain-text request (e.g. Dashboard's
         // one-sentence LSI recommendation) would hand back a serialized

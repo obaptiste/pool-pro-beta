@@ -30,6 +30,15 @@ import { callAiWithFallback } from '../lib/ai';
 import { NumericReadingField } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
+// Per AGENTS.md's pool chemistry safety rules: keep dosing guidance
+// conservative, never state a specific amount without volume/concentration
+// context, and don't dress up guesswork as certainty. Passed as the system
+// instruction for the LSI recommendation so this holds whether Gemini
+// answers directly or the request falls back to Claude/OpenAI (which have
+// no other exposure to this app's domain rules for this particular call).
+const LSI_SAFETY_INSTRUCTION =
+  'You are a professional pool-chemistry advisor. Give one conservative, technically accurate sentence of guidance based on the LSI and readings provided. Never state a specific chemical dosing amount unless pool volume and product concentration are given — speak in relative terms (e.g. "add a small amount of muriatic acid") instead. Recommend retesting after any adjustment before swimming. If a reading needed for a confident recommendation is missing, say so instead of guessing.';
+
 interface Props {
   userId: string;
   readings: Reading[];
@@ -82,6 +91,9 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
         contents: `Analyze this LSI score of ${lsiScore} for a pool.
         Context: pH ${fmtField(latest.ph)}, Temp ${fmtField(latest.temperature)}°C, CH ${fmtField(latest.calciumHardness)}, TA ${fmtField(latest.alkalinity)}.
         Provide a 1-sentence technical recommendation.`,
+        config: {
+          systemInstruction: LSI_SAFETY_INSTRUCTION,
+        },
       }, process.env.GEMINI_API_KEY!);
       setLsiAnalysis(response.text || "Analysis unavailable.");
     } catch (e) {
