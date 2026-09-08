@@ -17,15 +17,71 @@ export interface AiFallbackOptions {
 // costs — independent of the per-caller rate limit in api/ai/fallback.ts.
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_SYSTEM_INSTRUCTION_LENGTH = 20000;
+const MAX_RESPONSE_SCHEMA_LENGTH = 5000;
+
+/**
+ * Checks `value` against one node of a Gemini-style responseSchema
+ * (Type.STRING/NUMBER/INTEGER/BOOLEAN/ARRAY/OBJECT, with `properties`,
+ * `required`, and `items`), recursing into object properties and array
+ * items. Used to catch a syntactically-valid-JSON response whose fields
+ * are the wrong shape — e.g. `checklist: null` passes a presence-only
+ * check but still crashes `insight.checklist.length` on the client.
+ */
+function matchesSchema(value: any, schema: any): boolean {
+  if (!schema || typeof schema !== "object") return true;
+
+  switch (schema.type) {
+    case "STRING":
+      if (typeof value !== "string") return false;
+      break;
+    case "NUMBER":
+    case "INTEGER":
+      if (typeof value !== "number" || Number.isNaN(value)) return false;
+      break;
+    case "BOOLEAN":
+      if (typeof value !== "boolean") return false;
+      break;
+    case "ARRAY":
+      if (!Array.isArray(value)) return false;
+      if (schema.items) {
+        for (const item of value) {
+          if (!matchesSchema(item, schema.items)) return false;
+        }
+      }
+      break;
+    case "OBJECT":
+      if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+      {
+        const required: string[] = Array.isArray(schema.required) ? schema.required : [];
+        for (const key of required) {
+          if (!(key in value)) return false;
+        }
+        if (schema.properties) {
+          for (const key of Object.keys(schema.properties)) {
+            if (key in value && !matchesSchema(value[key], schema.properties[key])) {
+              return false;
+            }
+          }
+        }
+      }
+      break;
+    default:
+      // Unknown/unspecified type node — nothing further to check.
+      break;
+  }
+
+  return true;
+}
 
 /**
  * Unwraps a possible ```json ... ``` fence, checks the result parses as
- * JSON, and — when the caller told us which top-level keys are required
- * (from Gemini's responseSchema) — checks they're all present. Returns
- * the unwrapped JSON text on success, or null if it doesn't qualify as a
- * usable structured response. A provider that passes syntax but is
- * missing a required key (e.g. `checklist`) is rejected here rather than
- * handed back as a false success that crashes the client later.
+ * JSON, and — when the caller supplied a responseSchema — validates it
+ * against that schema (required keys present, values the right type,
+ * recursively). Returns the unwrapped JSON text on success, or null if
+ * it doesn't qualify as a usable structured response. A provider that
+ * passes syntax but returns the wrong shape (missing/mistyped fields)
+ * is rejected here rather than handed back as a false success that
+ * crashes the client later.
  */
 function extractValidJson(text: string, schemaDescription?: string): string | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -41,8 +97,7 @@ function extractValidJson(text: string, schemaDescription?: string): string | nu
   if (schemaDescription) {
     try {
       const schema = JSON.parse(schemaDescription);
-      const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
-      if (parsed == null || typeof parsed !== "object" || !required.every((key) => key in parsed)) {
+      if (!matchesSchema(parsed, schema)) {
         return null;
       }
     } catch {
@@ -68,11 +123,15 @@ export async function runAiFallback(
     return { status: 400, body: { error: "Prompt is required" } };
   }
 
-  if (prompt.length > MAX_PROMPT_LENGTH || (systemInstruction?.length ?? 0) > MAX_SYSTEM_INSTRUCTION_LENGTH) {
+  const { expectJson, responseSchemaDescription } = options;
+
+  if (
+    prompt.length > MAX_PROMPT_LENGTH ||
+    (systemInstruction?.length ?? 0) > MAX_SYSTEM_INSTRUCTION_LENGTH ||
+    (responseSchemaDescription?.length ?? 0) > MAX_RESPONSE_SCHEMA_LENGTH
+  ) {
     return { status: 413, body: { error: "Request too large" } };
   }
-
-  const { expectJson, responseSchemaDescription } = options;
 
   // Gemini's structured-output contract (responseSchema/responseMimeType)
   // doesn't carry over to Claude or OpenAI automatically — callers that
