@@ -1,9 +1,32 @@
 const CACHE_NAME = 'pool-pro-shell-v2';
 const APP_SHELL = ['/', '/index.html'];
 
+// Precache the hashed JS/CSS this shell actually references, not just the
+// shell itself. Activation below evicts every older cache (v1's included),
+// so if a device goes offline before it has organically requested the new
+// bundle, an app shell with no matching assets to serve would leave it
+// unable to start at all.
+async function precacheShellAssets(cache) {
+  try {
+    const indexResponse = await cache.match('/index.html');
+    if (!indexResponse) return;
+    const html = await indexResponse.clone().text();
+    const assetUrls = Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g), (m) => m[1]);
+    if (assetUrls.length) {
+      await cache.addAll(assetUrls);
+    }
+  } catch {
+    // Best-effort: the asset fetch handler below will cache these lazily
+    // on first request if precaching fails for any reason.
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)),
+    caches.open(CACHE_NAME).then(async (cache) => {
+      await cache.addAll(APP_SHELL);
+      await precacheShellAssets(cache);
+    }),
   );
   self.skipWaiting();
 });
@@ -34,7 +57,11 @@ self.addEventListener('fetch', (event) => {
         .then((networkResponse) => {
           if (networkResponse.ok) {
             const clonedResponse = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clonedResponse));
+            // Keep the worker alive until the cache write finishes — without
+            // waitUntil, respondWith settles as soon as networkResponse is
+            // returned and the worker can be killed mid-write, leaving a
+            // subsequent offline launch stuck with the stale cached shell.
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clonedResponse)));
           }
           return networkResponse;
         })
