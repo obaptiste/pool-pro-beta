@@ -20,14 +20,33 @@ async function cacheReferencedAssets(cache, htmlResponse) {
   return assetUrls;
 }
 
-// Delete any previously cached hashed asset no longer referenced by the
-// shell just committed. Without this, a run of deploys that never happen
-// to change sw.js itself (so activate/eviction never runs) would keep
+// Every hashed asset referenced by any HTML document currently in the
+// cache (not just the one most recently committed) — e.g. "/" and
+// "/index.html" normally stay identical, but nothing here assumes only
+// one distinct navigation URL is ever cached.
+async function collectReferencedAssets(cache) {
+  const requests = await cache.keys();
+  const referenced = new Set();
+  await Promise.all(
+    requests.map(async (request) => {
+      if (new URL(request.url).pathname.startsWith('/assets/')) return;
+      const response = await cache.match(request);
+      if (!response) return;
+      const html = await response.clone().text();
+      for (const url of extractAssetUrls(html)) referenced.add(url);
+    }),
+  );
+  return referenced;
+}
+
+// Delete any cached hashed asset no longer referenced by any HTML document
+// still in the cache. Without this, a run of deploys that never happen to
+// change sw.js itself (so activate/eviction never runs) would keep
 // appending every historical bundle to the same cache forever, until
 // storage quota pressure makes further cache writes fail outright and
 // offline support stops updating for good.
-async function pruneStaleAssets(cache, currentAssetUrls) {
-  const keep = new Set(currentAssetUrls);
+async function pruneStaleAssets(cache) {
+  const keep = await collectReferencedAssets(cache);
   const requests = await cache.keys();
   await Promise.all(
     requests
@@ -91,7 +110,7 @@ self.addEventListener('fetch', (event) => {
             // still-complete shell in place rather than a broken new one.
             event.waitUntil(
               caches.open(CACHE_NAME).then(async (cache) => {
-                const assetUrls = await cacheReferencedAssets(cache, forAssets);
+                await cacheReferencedAssets(cache, forAssets);
                 await cache.put(event.request, forRequestKey);
                 // Also refresh the canonical /index.html fallback used
                 // below when offline at a URL that was never explicitly
@@ -99,7 +118,12 @@ self.addEventListener('fetch', (event) => {
                 // otherwise it stays frozen at whatever was last cached
                 // when this worker itself was installed.
                 await cache.put('/index.html', forCanonical);
-                await pruneStaleAssets(cache, assetUrls);
+                // Prune only after every retained HTML document (this one
+                // included) has its own assets safely cached, and scan all
+                // of them — not just this one — so an asset still
+                // referenced by some other still-cached page never gets
+                // deleted out from under it.
+                await pruneStaleAssets(cache);
               }),
             );
           }
