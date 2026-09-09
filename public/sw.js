@@ -155,13 +155,20 @@ self.addEventListener('fetch', (event) => {
             event.waitUntil(
               serializeCacheUpdate(() =>
                 caches.open(CACHE_NAME).then(async (cache) => {
-                  const claimedRequestKey = claimIfNewer(event.request.url, seq);
+                  // Normalized to the same absolute form cache.put() actually
+                  // addresses: a navigation whose own request IS "/index.html"
+                  // must contend on one identity, not two, or a stale claim on
+                  // its "own" key can silently win back the very entry a
+                  // newer navigation's canonical claim just correctly denied it.
+                  const requestKeyId = new URL(event.request.url, event.request.url).href;
+                  const canonicalKeyId = new URL('/index.html', event.request.url).href;
+                  const claimedRequestKey = claimIfNewer(requestKeyId, seq);
                   // Also refresh the canonical /index.html fallback used
                   // below when offline at a URL that was never explicitly
                   // requested online (or wasn't the one just fetched) —
                   // otherwise it stays frozen at whatever was last cached
                   // when this worker itself was installed.
-                  const claimedCanonical = claimIfNewer('/index.html', seq);
+                  const claimedCanonical = claimIfNewer(canonicalKeyId, seq);
                   if (!claimedRequestKey && !claimedCanonical) {
                     // A navigation that started after this one already won
                     // every key this one would write to — its result is
