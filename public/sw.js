@@ -132,12 +132,22 @@ self.addEventListener('install', (event) => {
       await serializeCacheUpdate(async () => {
         const live = await caches.open(CACHE_NAME);
         const staged = await staging.keys();
-        await Promise.all(
-          staged.map(async (request) => {
-            const response = await staging.match(request);
-            await live.put(request, response);
-          }),
-        );
+        const [assetEntries, shellEntries] = [
+          staged.filter((request) => new URL(request.url).pathname.startsWith('/assets/')),
+          staged.filter((request) => !new URL(request.url).pathname.startsWith('/assets/')),
+        ];
+        // Copy assets before shell documents, sequentially rather than in
+        // parallel: this cache has no multi-key transaction, so a
+        // mid-batch failure (e.g. storage quota, momentarily doubled by
+        // staging + live both holding a copy) can't be rolled back. If a
+        // copy fails partway through, failing before any shell entry is
+        // written keeps the live cache's HTML from ever pointing at an
+        // asset it doesn't actually have — same ordering guarantee used
+        // for navigation-triggered updates above, just applied here too.
+        for (const request of [...assetEntries, ...shellEntries]) {
+          const response = await staging.match(request);
+          await live.put(request, response);
+        }
         await pruneStaleAssets(live);
       });
       await caches.delete(STAGING_CACHE_NAME);
@@ -173,7 +183,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
-          if (networkResponse.ok) {
+          // request.mode is "navigate" for ANY top-level browser
+          // navigation, regardless of what the URL actually serves — a
+          // direct visit to /sw.js or a hashed JS bundle is a navigation
+          // too. Only a response whose own Content-Type says it's HTML is
+          // safe to promote to the app shell; anything else (production
+          // serves static files directly, so this isn't hypothetical) is
+          // returned to the browser as-is without touching the cache.
+          const isHtml = (networkResponse.headers.get('content-type') || '').includes('text/html');
+          if (networkResponse.ok && isHtml) {
             const forAssets = networkResponse.clone();
             const forRequestKey = networkResponse.clone();
             const forCanonical = networkResponse.clone();
