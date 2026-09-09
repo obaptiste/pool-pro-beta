@@ -1,23 +1,20 @@
 const CACHE_NAME = 'pool-pro-shell-v2';
 const APP_SHELL = ['/', '/index.html'];
 
-// Precache the hashed JS/CSS this shell actually references, not just the
-// shell itself. Activation below evicts every older cache (v1's included),
-// so if a device goes offline before it has organically requested the new
-// bundle, an app shell with no matching assets to serve would leave it
-// unable to start at all.
-async function precacheShellAssets(cache) {
-  try {
-    const indexResponse = await cache.match('/index.html');
-    if (!indexResponse) return;
-    const html = await indexResponse.clone().text();
-    const assetUrls = Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g), (m) => m[1]);
-    if (assetUrls.length) {
-      await cache.addAll(assetUrls);
-    }
-  } catch {
-    // Best-effort: the asset fetch handler below will cache these lazily
-    // on first request if precaching fails for any reason.
+function extractAssetUrls(html) {
+  return Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g), (m) => m[1]);
+}
+
+// Cache the hashed JS/CSS an HTML shell references. Callers must do this
+// *before* committing that HTML as the cached shell (below) — if asset
+// caching fails partway through, whatever shell was already cached (still
+// pointing at its own, still-cached assets) should stay the one served
+// offline, rather than a newer HTML with nothing to run.
+async function cacheReferencedAssets(cache, htmlResponse) {
+  const html = await htmlResponse.clone().text();
+  const assetUrls = extractAssetUrls(html);
+  if (assetUrls.length) {
+    await cache.addAll(assetUrls);
   }
 }
 
@@ -25,7 +22,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(APP_SHELL);
-      await precacheShellAssets(cache);
+      // Deliberately not caught: if precaching the shell's own assets
+      // fails, this install should fail and retry rather than activate
+      // (skipWaiting below) into a shell with nothing to run offline.
+      const indexResponse = await cache.match('/index.html');
+      await cacheReferencedAssets(cache, indexResponse);
     }),
   );
   self.skipWaiting();
@@ -57,11 +58,20 @@ self.addEventListener('fetch', (event) => {
         .then((networkResponse) => {
           if (networkResponse.ok) {
             const clonedResponse = networkResponse.clone();
-            // Keep the worker alive until the cache write finishes — without
-            // waitUntil, respondWith settles as soon as networkResponse is
-            // returned and the worker can be killed mid-write, leaving a
-            // subsequent offline launch stuck with the stale cached shell.
-            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clonedResponse)));
+            // Keep the worker alive until this finishes — without waitUntil,
+            // respondWith settles as soon as networkResponse is returned and
+            // the worker can be killed mid-write. This also covers deploys
+            // that don't change sw.js at all (so no new install/precache
+            // ever runs): the assets a fresh index.html references are
+            // cached here before that HTML replaces the previously cached
+            // shell, never after — so an interruption leaves the old,
+            // still-complete shell in place rather than a broken new one.
+            event.waitUntil(
+              caches.open(CACHE_NAME).then(async (cache) => {
+                await cacheReferencedAssets(cache, clonedResponse);
+                await cache.put(event.request, clonedResponse);
+              }),
+            );
           }
           return networkResponse;
         })
