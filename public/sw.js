@@ -141,6 +141,16 @@ const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
+      // Captured before any of this install's own network activity, for
+      // the same reason a navigation captures its timestamp before its
+      // fetch (above): staging this shell (network fetches for APP_SHELL
+      // plus its assets) and then waiting for the promotion lock can both
+      // take a while, and a navigation on the currently-active worker can
+      // fetch and commit a *later* deploy in that window. Timestamping at
+      // promotion time instead would make this stale content look newer
+      // than what that navigation already correctly published, purely
+      // because the wait for the lock happened to run late.
+      const timestamp = Date.now();
       await caches.delete(STAGING_CACHE_NAME); // leftover from an earlier failed install, if any
       const staging = await caches.open(STAGING_CACHE_NAME);
       await staging.addAll(APP_SHELL);
@@ -155,7 +165,6 @@ self.addEventListener('install', (event) => {
       // transactions use, so this can't interleave with one of those.
       await serializeCacheUpdate(async () => {
         const live = await caches.open(CACHE_NAME);
-        const timestamp = Date.now();
         const staged = await staging.keys();
         const [assetEntries, shellEntries] = [
           staged.filter((request) => new URL(request.url).pathname.startsWith('/assets/')),
