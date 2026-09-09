@@ -81,6 +81,24 @@ function serializeCacheUpdate(task) {
   return result;
 }
 
+// Serialization alone only stops transactions from corrupting each other —
+// it doesn't stop an older, slower navigation from committing *after* a
+// newer one and reverting a cache key to stale content, since transactions
+// run in whatever order their network fetches happen to resolve, not the
+// order they started in. Track each cache key's highest sequence number
+// (assigned when its navigation *started*, not when it resolved) and only
+// let a write through if it's newer than whatever last won that key, so a
+// late-arriving response from an older deploy can't stomp a newer one that
+// already committed. Two independent navigation URLs never contend for
+// each other's key, only for the shared canonical "/index.html" fallback.
+const latestSeqByKey = new Map();
+function claimIfNewer(key, seq) {
+  if (seq <= (latestSeqByKey.get(key) ?? 0)) return false;
+  latestSeqByKey.set(key, seq);
+  return true;
+}
+let navigationSeq = 0;
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
@@ -116,6 +134,9 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = event.request.mode === 'navigate' || event.request.destination === 'document';
 
   if (isNavigation) {
+    // Assigned synchronously, at navigation *start* — reflects real arrival
+    // order regardless of how long the network fetch below takes.
+    const seq = ++navigationSeq;
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
@@ -134,14 +155,23 @@ self.addEventListener('fetch', (event) => {
             event.waitUntil(
               serializeCacheUpdate(() =>
                 caches.open(CACHE_NAME).then(async (cache) => {
-                  await cacheReferencedAssets(cache, forAssets);
-                  await cache.put(event.request, forRequestKey);
+                  const claimedRequestKey = claimIfNewer(event.request.url, seq);
                   // Also refresh the canonical /index.html fallback used
                   // below when offline at a URL that was never explicitly
                   // requested online (or wasn't the one just fetched) —
                   // otherwise it stays frozen at whatever was last cached
                   // when this worker itself was installed.
-                  await cache.put('/index.html', forCanonical);
+                  const claimedCanonical = claimIfNewer('/index.html', seq);
+                  if (!claimedRequestKey && !claimedCanonical) {
+                    // A navigation that started after this one already won
+                    // every key this one would write to — its result is
+                    // stale by the time it arrived, so leave the newer
+                    // shell already in the cache alone.
+                    return;
+                  }
+                  await cacheReferencedAssets(cache, forAssets);
+                  if (claimedRequestKey) await cache.put(event.request, forRequestKey);
+                  if (claimedCanonical) await cache.put('/index.html', forCanonical);
                   // Prune only after every retained HTML document (this one
                   // included) has its own assets safely cached, and scan all
                   // of them — not just this one — so an asset still
