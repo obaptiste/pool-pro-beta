@@ -58,6 +58,29 @@ async function pruneStaleAssets(cache) {
   );
 }
 
+// Two tabs can navigate at once, each running its own independent "cache
+// assets, commit HTML, prune" transaction against the same shared cache.
+// Interleaved (not serialized), one navigation's prune can run between
+// another's asset-caching and HTML-commit steps and delete assets the
+// other is about to reference, or a slower, older-deploy response can
+// commit after a newer one and prune the newer bundle out from under the
+// shell it just wrote — either way leaving cached HTML pointing at assets
+// that no longer exist. Routing every such transaction through this
+// single, module-scoped queue makes them run one at a time, in full, so
+// each one always sees a self-consistent cache and never observes (or
+// leaves behind) a shell whose assets were pruned mid-transaction.
+let cacheUpdateQueue = Promise.resolve();
+function serializeCacheUpdate(task) {
+  const result = cacheUpdateQueue.then(task, task);
+  // Chain the next task off this one regardless of outcome, so one
+  // rejected transaction doesn't wedge every transaction queued after it.
+  cacheUpdateQueue = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
@@ -109,22 +132,24 @@ self.addEventListener('fetch', (event) => {
             // shell, never after — so an interruption leaves the old,
             // still-complete shell in place rather than a broken new one.
             event.waitUntil(
-              caches.open(CACHE_NAME).then(async (cache) => {
-                await cacheReferencedAssets(cache, forAssets);
-                await cache.put(event.request, forRequestKey);
-                // Also refresh the canonical /index.html fallback used
-                // below when offline at a URL that was never explicitly
-                // requested online (or wasn't the one just fetched) —
-                // otherwise it stays frozen at whatever was last cached
-                // when this worker itself was installed.
-                await cache.put('/index.html', forCanonical);
-                // Prune only after every retained HTML document (this one
-                // included) has its own assets safely cached, and scan all
-                // of them — not just this one — so an asset still
-                // referenced by some other still-cached page never gets
-                // deleted out from under it.
-                await pruneStaleAssets(cache);
-              }),
+              serializeCacheUpdate(() =>
+                caches.open(CACHE_NAME).then(async (cache) => {
+                  await cacheReferencedAssets(cache, forAssets);
+                  await cache.put(event.request, forRequestKey);
+                  // Also refresh the canonical /index.html fallback used
+                  // below when offline at a URL that was never explicitly
+                  // requested online (or wasn't the one just fetched) —
+                  // otherwise it stays frozen at whatever was last cached
+                  // when this worker itself was installed.
+                  await cache.put('/index.html', forCanonical);
+                  // Prune only after every retained HTML document (this one
+                  // included) has its own assets safely cached, and scan all
+                  // of them — not just this one — so an asset still
+                  // referenced by some other still-cached page never gets
+                  // deleted out from under it.
+                  await pruneStaleAssets(cache);
+                }),
+              ),
             );
           }
           return networkResponse;
