@@ -29,7 +29,10 @@ async function collectReferencedAssets(cache) {
   const referenced = new Set();
   await Promise.all(
     requests.map(async (request) => {
-      if (new URL(request.url).pathname.startsWith('/assets/')) return;
+      const { pathname } = new URL(request.url);
+      // Hashed assets aren't HTML documents to scan, and the generation
+      // markers below aren't either — they're plain numeric timestamps.
+      if (pathname.startsWith('/assets/') || pathname.startsWith('/__sw_generation__')) return;
       const response = await cache.match(request);
       if (!response) return;
       const html = await response.clone().text();
@@ -96,20 +99,30 @@ function serializeCacheUpdate(task) {
 // it doesn't stop an older, slower navigation from committing *after* a
 // newer one and reverting a cache key to stale content, since transactions
 // run in whatever order their network fetches happen to resolve, not the
-// order they started in. Track each cache key's highest sequence number
-// (assigned when its navigation *started*, not when it resolved) and only
-// let a write through if it's newer than whatever last won that key, so a
-// late-arriving response from an older deploy can't stomp a newer one that
-// already committed. Two independent navigation URLs never contend for
-// each other's key, only for the shared "/" and "/index.html" aliases
-// every navigation also writes through.
-const latestSeqByKey = new Map();
-function claimIfNewer(key, seq) {
-  if (seq <= (latestSeqByKey.get(key) ?? 0)) return false;
-  latestSeqByKey.set(key, seq);
+// order they started in.
+//
+// An in-memory "highest sequence number per key" map has the same problem
+// Web Locks fixed above: it's module-scoped, so a still-active old worker
+// and a newly-installing one don't share it — an old worker's navigation
+// that was already in flight when a redeploy happened can resolve *after*
+// the new worker finished promoting its shell, see nothing in its own
+// local map saying otherwise, and revert the just-published shell to
+// stale content. What actually needs comparing is durable and shared: a
+// timestamp (comparable across any execution context on this device,
+// unlike a per-instance counter) persisted *in the cache itself*, read
+// and written under the same lock every transaction already takes above —
+// so "is this claim newer than the last one this key saw" is answered
+// from state every worker instance, old or new, actually shares.
+function generationKeyFor(key) {
+  return `/__sw_generation__?key=${encodeURIComponent(key)}`;
+}
+async function claimIfNewer(cache, key, timestamp) {
+  const existing = await cache.match(generationKeyFor(key));
+  const existingTimestamp = existing ? Number(await existing.text()) : 0;
+  if (timestamp <= existingTimestamp) return false;
+  await cache.put(generationKeyFor(key), new Response(String(timestamp)));
   return true;
 }
-let navigationSeq = 0;
 
 // A future edit to this file that keeps CACHE_NAME unchanged (easy to
 // forget — nothing enforces bumping it) would otherwise have install open
@@ -142,11 +155,24 @@ self.addEventListener('install', (event) => {
       // transactions use, so this can't interleave with one of those.
       await serializeCacheUpdate(async () => {
         const live = await caches.open(CACHE_NAME);
+        const timestamp = Date.now();
         const staged = await staging.keys();
         const [assetEntries, shellEntries] = [
           staged.filter((request) => new URL(request.url).pathname.startsWith('/assets/')),
           staged.filter((request) => !new URL(request.url).pathname.startsWith('/assets/')),
         ];
+        // Claim generation for each shell key up front. An old worker's
+        // navigation that was already in flight when this deploy went out
+        // can otherwise resolve after this install finishes and revert
+        // the shell it just published — claiming here first means a
+        // later, genuinely-stale claim from that old navigation loses
+        // against this timestamp instead of silently winning.
+        const claims = new Map();
+        for (const request of shellEntries) {
+          const key = new URL(request.url, request.url).href;
+          claims.set(request, await claimIfNewer(live, key, timestamp));
+        }
+        if (![...claims.values()].some(Boolean)) return; // everything here is already stale relative to something newer already live
         // Copy assets before shell documents, sequentially rather than in
         // parallel: this cache has no multi-key transaction, so a
         // mid-batch failure (e.g. storage quota, momentarily doubled by
@@ -155,7 +181,12 @@ self.addEventListener('install', (event) => {
         // written keeps the live cache's HTML from ever pointing at an
         // asset it doesn't actually have — same ordering guarantee used
         // for navigation-triggered updates above, just applied here too.
-        for (const request of [...assetEntries, ...shellEntries]) {
+        for (const request of assetEntries) {
+          const response = await staging.match(request);
+          await live.put(request, response);
+        }
+        for (const [request, isClaimed] of claims) {
+          if (!isClaimed) continue;
           const response = await staging.match(request);
           await live.put(request, response);
         }
@@ -188,9 +219,12 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = event.request.mode === 'navigate' || event.request.destination === 'document';
 
   if (isNavigation) {
-    // Assigned synchronously, at navigation *start* — reflects real arrival
-    // order regardless of how long the network fetch below takes.
-    const seq = ++navigationSeq;
+    // Captured synchronously, at navigation *start* — reflects real
+    // arrival order regardless of how long the network fetch below takes,
+    // and (unlike a per-instance counter) is directly comparable against
+    // a claim made by any other execution context on this device, since
+    // they all share the same system clock.
+    const timestamp = Date.now();
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
@@ -227,7 +261,7 @@ self.addEventListener('fetch', (event) => {
                   const requestKeyId = new URL(event.request.url, event.request.url).href;
                   const canonicalKeyId = new URL('/index.html', event.request.url).href;
                   const rootKeyId = new URL('/', event.request.url).href;
-                  const claimedRequestKey = claimIfNewer(requestKeyId, seq);
+                  const claimedRequestKey = await claimIfNewer(cache, requestKeyId, timestamp);
                   // Also refresh the canonical /index.html fallback used
                   // below when offline at a URL that was never explicitly
                   // requested online (or wasn't the one just fetched), and
@@ -236,8 +270,8 @@ self.addEventListener('fetch', (event) => {
                   // this worker itself was installed, and an offline exact-
                   // match lookup on that stale "/" would never even reach
                   // the (correctly fresh) canonical fallback.
-                  const claimedCanonical = claimIfNewer(canonicalKeyId, seq);
-                  const claimedRoot = rootKeyId === requestKeyId ? claimedRequestKey : claimIfNewer(rootKeyId, seq);
+                  const claimedCanonical = await claimIfNewer(cache, canonicalKeyId, timestamp);
+                  const claimedRoot = rootKeyId === requestKeyId ? claimedRequestKey : await claimIfNewer(cache, rootKeyId, timestamp);
                   if (!claimedRequestKey && !claimedCanonical && !claimedRoot) {
                     // A navigation that started after this one already won
                     // every key this one would write to — its result is
