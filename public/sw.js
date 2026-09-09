@@ -90,7 +90,8 @@ function serializeCacheUpdate(task) {
 // let a write through if it's newer than whatever last won that key, so a
 // late-arriving response from an older deploy can't stomp a newer one that
 // already committed. Two independent navigation URLs never contend for
-// each other's key, only for the shared canonical "/index.html" fallback.
+// each other's key, only for the shared "/" and "/index.html" aliases
+// every navigation also writes through.
 const latestSeqByKey = new Map();
 function claimIfNewer(key, seq) {
   if (seq <= (latestSeqByKey.get(key) ?? 0)) return false;
@@ -99,16 +100,48 @@ function claimIfNewer(key, seq) {
 }
 let navigationSeq = 0;
 
+// A future edit to this file that keeps CACHE_NAME unchanged (easy to
+// forget — nothing enforces bumping it) would otherwise have install open
+// the very cache the currently-active worker may still be serving live
+// requests from, and start overwriting "/" and "/index.html" in place
+// before their assets are confirmed cached. Failing that install (per the
+// asset-precache guarantee above) stops the new worker from activating,
+// but can't undo a cache write that already happened — so the live cache
+// would be left with HTML referencing assets that were never actually
+// cached, breaking offline start even under the previously-active worker.
+// Building the new shell in an isolated staging cache first, and only
+// publishing it into CACHE_NAME once every asset is confirmed cached,
+// keeps a failed install from touching the live cache at all.
+const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(APP_SHELL);
+    (async () => {
+      await caches.delete(STAGING_CACHE_NAME); // leftover from an earlier failed install, if any
+      const staging = await caches.open(STAGING_CACHE_NAME);
+      await staging.addAll(APP_SHELL);
       // Deliberately not caught: if precaching the shell's own assets
-      // fails, this install should fail and retry rather than activate
-      // (skipWaiting below) into a shell with nothing to run offline.
-      const indexResponse = await cache.match('/index.html');
-      await cacheReferencedAssets(cache, indexResponse);
-    }),
+      // fails, this install should fail and retry rather than promote
+      // (skipWaiting below) a shell with nothing to run offline.
+      const indexResponse = await staging.match('/index.html');
+      await cacheReferencedAssets(staging, indexResponse);
+
+      // Only now, with the staged shell fully built and verified, publish
+      // it into the live cache — through the same queue navigation
+      // transactions use, so this can't interleave with one of those.
+      await serializeCacheUpdate(async () => {
+        const live = await caches.open(CACHE_NAME);
+        const staged = await staging.keys();
+        await Promise.all(
+          staged.map(async (request) => {
+            const response = await staging.match(request);
+            await live.put(request, response);
+          }),
+        );
+        await pruneStaleAssets(live);
+      });
+      await caches.delete(STAGING_CACHE_NAME);
+    })(),
   );
   self.skipWaiting();
 });
@@ -144,6 +177,7 @@ self.addEventListener('fetch', (event) => {
             const forAssets = networkResponse.clone();
             const forRequestKey = networkResponse.clone();
             const forCanonical = networkResponse.clone();
+            const forRoot = networkResponse.clone();
             // Keep the worker alive until this finishes — without waitUntil,
             // respondWith settles as soon as networkResponse is returned and
             // the worker can be killed mid-write. This also covers deploys
@@ -157,19 +191,25 @@ self.addEventListener('fetch', (event) => {
                 caches.open(CACHE_NAME).then(async (cache) => {
                   // Normalized to the same absolute form cache.put() actually
                   // addresses: a navigation whose own request IS "/index.html"
-                  // must contend on one identity, not two, or a stale claim on
-                  // its "own" key can silently win back the very entry a
-                  // newer navigation's canonical claim just correctly denied it.
+                  // (or "/") must contend on one identity, not two, or a
+                  // stale claim on its "own" key can silently win back the
+                  // very entry a newer navigation's canonical claim just
+                  // correctly denied it.
                   const requestKeyId = new URL(event.request.url, event.request.url).href;
                   const canonicalKeyId = new URL('/index.html', event.request.url).href;
+                  const rootKeyId = new URL('/', event.request.url).href;
                   const claimedRequestKey = claimIfNewer(requestKeyId, seq);
                   // Also refresh the canonical /index.html fallback used
                   // below when offline at a URL that was never explicitly
-                  // requested online (or wasn't the one just fetched) —
-                  // otherwise it stays frozen at whatever was last cached
-                  // when this worker itself was installed.
+                  // requested online (or wasn't the one just fetched), and
+                  // the "/" alias APP_SHELL seeded at install — otherwise
+                  // either stays frozen at whatever was last cached when
+                  // this worker itself was installed, and an offline exact-
+                  // match lookup on that stale "/" would never even reach
+                  // the (correctly fresh) canonical fallback.
                   const claimedCanonical = claimIfNewer(canonicalKeyId, seq);
-                  if (!claimedRequestKey && !claimedCanonical) {
+                  const claimedRoot = rootKeyId === requestKeyId ? claimedRequestKey : claimIfNewer(rootKeyId, seq);
+                  if (!claimedRequestKey && !claimedCanonical && !claimedRoot) {
                     // A navigation that started after this one already won
                     // every key this one would write to — its result is
                     // stale by the time it arrived, so leave the newer
@@ -179,6 +219,7 @@ self.addEventListener('fetch', (event) => {
                   await cacheReferencedAssets(cache, forAssets);
                   if (claimedRequestKey) await cache.put(event.request, forRequestKey);
                   if (claimedCanonical) await cache.put('/index.html', forCanonical);
+                  if (claimedRoot && rootKeyId !== requestKeyId) await cache.put('/', forRoot);
                   // Prune only after every retained HTML document (this one
                   // included) has its own assets safely cached, and scan all
                   // of them — not just this one — so an asset still
