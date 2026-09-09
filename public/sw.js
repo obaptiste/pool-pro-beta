@@ -5,17 +5,38 @@ function extractAssetUrls(html) {
   return Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g), (m) => m[1]);
 }
 
-// Cache the hashed JS/CSS an HTML shell references. Callers must do this
-// *before* committing that HTML as the cached shell (below) — if asset
-// caching fails partway through, whatever shell was already cached (still
-// pointing at its own, still-cached assets) should stay the one served
-// offline, rather than a newer HTML with nothing to run.
+// Cache the hashed JS/CSS an HTML shell references, returning the URLs
+// cached. Callers must do this *before* committing that HTML as the cached
+// shell (below) — if asset caching fails partway through, whatever shell
+// was already cached (still pointing at its own, still-cached assets)
+// should stay the one served offline, rather than a newer HTML with
+// nothing to run.
 async function cacheReferencedAssets(cache, htmlResponse) {
   const html = await htmlResponse.clone().text();
   const assetUrls = extractAssetUrls(html);
   if (assetUrls.length) {
     await cache.addAll(assetUrls);
   }
+  return assetUrls;
+}
+
+// Delete any previously cached hashed asset no longer referenced by the
+// shell just committed. Without this, a run of deploys that never happen
+// to change sw.js itself (so activate/eviction never runs) would keep
+// appending every historical bundle to the same cache forever, until
+// storage quota pressure makes further cache writes fail outright and
+// offline support stops updating for good.
+async function pruneStaleAssets(cache, currentAssetUrls) {
+  const keep = new Set(currentAssetUrls);
+  const requests = await cache.keys();
+  await Promise.all(
+    requests
+      .filter((request) => {
+        const path = new URL(request.url).pathname;
+        return path.startsWith('/assets/') && !keep.has(path);
+      })
+      .map((request) => cache.delete(request)),
+  );
 }
 
 self.addEventListener('install', (event) => {
@@ -57,7 +78,9 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request)
         .then((networkResponse) => {
           if (networkResponse.ok) {
-            const clonedResponse = networkResponse.clone();
+            const forAssets = networkResponse.clone();
+            const forRequestKey = networkResponse.clone();
+            const forCanonical = networkResponse.clone();
             // Keep the worker alive until this finishes — without waitUntil,
             // respondWith settles as soon as networkResponse is returned and
             // the worker can be killed mid-write. This also covers deploys
@@ -68,8 +91,15 @@ self.addEventListener('fetch', (event) => {
             // still-complete shell in place rather than a broken new one.
             event.waitUntil(
               caches.open(CACHE_NAME).then(async (cache) => {
-                await cacheReferencedAssets(cache, clonedResponse);
-                await cache.put(event.request, clonedResponse);
+                const assetUrls = await cacheReferencedAssets(cache, forAssets);
+                await cache.put(event.request, forRequestKey);
+                // Also refresh the canonical /index.html fallback used
+                // below when offline at a URL that was never explicitly
+                // requested online (or wasn't the one just fetched) —
+                // otherwise it stays frozen at whatever was last cached
+                // when this worker itself was installed.
+                await cache.put('/index.html', forCanonical);
+                await pruneStaleAssets(cache, assetUrls);
               }),
             );
           }
