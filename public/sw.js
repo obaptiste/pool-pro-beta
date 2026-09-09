@@ -1,5 +1,4 @@
 const CACHE_NAME = 'pool-pro-shell-v2';
-const APP_SHELL = ['/', '/index.html'];
 
 function extractAssetUrls(html) {
   return Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g), (m) => m[1]);
@@ -116,6 +115,24 @@ function serializeCacheUpdate(task) {
 function generationKeyFor(key) {
   return `/__sw_generation__?key=${encodeURIComponent(key)}`;
 }
+
+// Date.now() can jump backward if the device's wall clock is corrected
+// (NTP sync after a wrong date, a user fixing a stuck RTC) — once that
+// happens, every future claim would compare against a generation value
+// stamped using the old, artificially-advanced clock and lose, freezing
+// the offline shell indefinitely until wall time caught back up.
+// performance.now() is monotonic and immune to such corrections within a
+// context's lifetime; timeOrigin anchors it to an absolute, comparable
+// value (still just as good as Date.now() for comparing across separate
+// worker instances, since both derive from the same underlying clock at
+// each context's creation).
+function monotonicTimestamp() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.timeOrigin + performance.now();
+  }
+  return Date.now();
+}
+
 async function claimIfNewer(cache, key, timestamp) {
   const existing = await cache.match(generationKeyFor(key));
   const existingTimestamp = existing ? Number(await existing.text()) : 0;
@@ -150,10 +167,20 @@ self.addEventListener('install', (event) => {
       // promotion time instead would make this stale content look newer
       // than what that navigation already correctly published, purely
       // because the wait for the lock happened to run late.
-      const timestamp = Date.now();
+      const timestamp = monotonicTimestamp();
       await caches.delete(STAGING_CACHE_NAME); // leftover from an earlier failed install, if any
       const staging = await caches.open(STAGING_CACHE_NAME);
-      await staging.addAll(APP_SHELL);
+      // Fetch the shell once and stage it under both APP_SHELL aliases,
+      // rather than two independent requests (cache.addAll would issue
+      // one per URL): if a deploy cutover happened to straddle those two
+      // fetches — landing on different edge nodes mid-propagation — they
+      // could each return a different deployment's HTML, and only one of
+      // them would get its assets precached below, leaving the other
+      // alias pointing at bundles that were never staged.
+      const shellResponse = await fetch('/index.html');
+      if (!shellResponse.ok) throw new Error(`Failed to fetch app shell: ${shellResponse.status}`);
+      await staging.put('/index.html', shellResponse.clone());
+      await staging.put('/', shellResponse.clone());
       // Deliberately not caught: if precaching the shell's own assets
       // fails, this install should fail and retry rather than promote
       // (skipWaiting below) a shell with nothing to run offline.
@@ -231,9 +258,8 @@ self.addEventListener('fetch', (event) => {
     // Captured synchronously, at navigation *start* — reflects real
     // arrival order regardless of how long the network fetch below takes,
     // and (unlike a per-instance counter) is directly comparable against
-    // a claim made by any other execution context on this device, since
-    // they all share the same system clock.
-    const timestamp = Date.now();
+    // a claim made by any other execution context on this device.
+    const timestamp = monotonicTimestamp();
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
