@@ -5,11 +5,19 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(),
-  }),
-});
+export const db = initializeFirestore(
+  app,
+  {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  },
+  // Firestore defaults to the "(default)" database when no databaseId is
+  // given. This project's data lives in the named database provisioned by
+  // AI Studio, so it must be passed explicitly or reads silently return
+  // empty results from the wrong database (e.g. trend charts with no data).
+  firebaseConfig.firestoreDatabaseId,
+);
 export const googleProvider = new GoogleAuthProvider();
 
 export const signIn = () => signInWithPopup(auth, googleProvider);
