@@ -65,12 +65,23 @@ async function pruneStaleAssets(cache) {
 // other is about to reference, or a slower, older-deploy response can
 // commit after a newer one and prune the newer bundle out from under the
 // shell it just wrote — either way leaving cached HTML pointing at assets
-// that no longer exist. Routing every such transaction through this
-// single, module-scoped queue makes them run one at a time, in full, so
-// each one always sees a self-consistent cache and never observes (or
-// leaves behind) a shell whose assets were pruned mid-transaction.
+// that no longer exist. A newly-installing worker's staging→live
+// promotion is exactly the same hazard again: it runs in a completely
+// separate global scope from whatever worker is still active and
+// handling navigations, so an in-memory queue alone can't coordinate
+// between them — each worker instance would hold its own, unconnected
+// queue object. The Web Locks API is the browser's actual primitive for
+// this: a named lock serializes every holder across origin-wide contexts,
+// active worker and installing worker included, not just within one.
+// Falls back to an in-memory, single-instance queue where Web Locks isn't
+// available — still correct for concurrent navigations within one worker,
+// just not across a worker update in progress.
+const CACHE_UPDATE_LOCK = 'pool-pro-shell-cache-update';
 let cacheUpdateQueue = Promise.resolve();
 function serializeCacheUpdate(task) {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request(CACHE_UPDATE_LOCK, task);
+  }
   const result = cacheUpdateQueue.then(task, task);
   // Chain the next task off this one regardless of outcome, so one
   // rejected transaction doesn't wedge every transaction queued after it.
