@@ -1,4 +1,4 @@
-import { cert, initializeApp, type App } from 'firebase-admin/app';
+import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldPath, getFirestore, Timestamp, type Query } from 'firebase-admin/firestore';
 import firebaseConfig from '../../../firebase-applet-config.json';
@@ -45,7 +45,13 @@ const numOrNull = (value: unknown): number | null => (typeof value === 'number' 
  * has already been told the server is healthy.
  */
 export async function createFirestoreSource(): Promise<PoolDataSource> {
-  const app = initializeApp({ credential: cert(loadServiceAccount()), projectId: firebaseConfig.projectId });
+  // api/mcp.ts retries a failed create by calling this again on the next
+  // request — if initializeApp() already succeeded on a prior attempt
+  // that then failed later (e.g. a transient owner-email lookup), calling
+  // it again would throw "the default Firebase app already exists"
+  // instead of actually retrying the lookup. Reuse the existing default
+  // app rather than recreate it.
+  const app = getApps()[0] ?? initializeApp({ credential: cert(loadServiceAccount()), projectId: firebaseConfig.projectId });
   const ownerUid = await resolveOwnerUid(app);
   // Same named database the client app targets (see src/firebase.ts).
   const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);

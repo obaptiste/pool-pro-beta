@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Reading } from '../../../src/types';
 import { handleMcpRequest } from './handler';
+import { MAX_TREND_ROWS } from './server';
 import type { ListReadingsOptions, PoolDataSource } from './types';
 
 const TOKEN = 'test-token-123';
@@ -263,10 +264,11 @@ describe('MCP tools', () => {
 
   it('get_reading_trends summarises the window including derived metrics', async () => {
     const client = await connect(TOKEN);
-    const out = structured<{ readings_considered: number; metrics: Record<string, { count: number; latest: number | null; average: number | null; direction: string | null; status: string | null }> }>(
+    const out = structured<{ readings_considered: number; truncated: boolean; metrics: Record<string, { count: number; latest: number | null; average: number | null; direction: string | null; status: string | null }> }>(
       await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 7 } }),
     );
     assert.equal(out.readings_considered, 3); // r4 is 10 days old
+    assert.equal(out.truncated, false);
     assert.equal(out.metrics.chlorine.count, 3);
     assert.equal(out.metrics.chlorine.latest, 1);
     assert.equal(out.metrics.chlorine.average, 1.83);
@@ -279,6 +281,48 @@ describe('MCP tools', () => {
     assert.equal(out.metrics.cyanuricAcid.count, 0);
     assert.equal(out.metrics.cyanuricAcid.latest, null);
     await client.close();
+  });
+
+  it('get_reading_trends reports truncation and adjusts from when the window exceeds the row cap', async () => {
+    // A dedicated in-memory source with more rows than MAX_TREND_ROWS, one
+    // minute apart — isolated from the shared fixture above so this
+    // doesn't perturb readings_considered in the other trends test.
+    const bigSource: PoolDataSource = {
+      async listReadings({ limit }: ListReadingsOptions) {
+        const total = MAX_TREND_ROWS + 50;
+        return Array.from({ length: Math.min(limit, total) }, (_, i) =>
+          reading(`big${i}`, i / (24 * 60), { chlorine: 2 }),
+        );
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const bigServer = createServer((req, res) => {
+      handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => bigSource }).catch((error) => {
+        res.writeHead(500).end(String(error));
+      });
+    });
+    await new Promise<void>((resolve) => bigServer.listen(0, '127.0.0.1', resolve));
+    const { port } = bigServer.address() as { port: number };
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/`), {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    }));
+
+    const out = structured<{ readings_considered: number; truncated: boolean; from: string }>(
+      await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } }),
+    );
+    assert.equal(out.readings_considered, MAX_TREND_ROWS);
+    assert.equal(out.truncated, true);
+    // 'from' should be the oldest row actually included (MAX_TREND_ROWS - 1
+    // minutes ago) rather than the full 1-day requested window.
+    const fromAgeMinutes = (Date.now() - new Date(out.from).getTime()) / 60_000;
+    assert.ok(Math.abs(fromAgeMinutes - (MAX_TREND_ROWS - 1)) < 1, `expected 'from' ~${MAX_TREND_ROWS - 1} min ago, got ${fromAgeMinutes}`);
+
+    await client.close();
+    bigServer.close();
   });
 
   it('list_tasks filters by status and frequency', async () => {

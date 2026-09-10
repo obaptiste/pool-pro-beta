@@ -20,8 +20,10 @@ export const SERVER_VERSION = '1.0.0';
 const MAX_LIST_LIMIT = 100;
 const MAX_TREND_DAYS = 90;
 // Enough readings for a 90-day window at several tests a day; anything
-// beyond this is summarised from the most recent rows.
-const MAX_TREND_ROWS = 500;
+// beyond this is summarised from the most recent rows (and reported as
+// `truncated`, with `from` adjusted to match — see poolstatus_get_reading_trends).
+// Exported so tests can exercise the truncation path without hardcoding it twice.
+export const MAX_TREND_ROWS = 500;
 
 const ResponseFormat = z.enum(['markdown', 'json']).default('markdown')
   .describe("Output format: 'markdown' for a human-readable summary, 'json' for the raw structured data.");
@@ -255,8 +257,9 @@ Args:
   - days (1–${MAX_TREND_DAYS}, default 7)
   - response_format ('markdown' | 'json'): default 'markdown'
 
-Returns: { days, readings_considered, from, to, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status } } }.
+Returns: { days, readings_considered, from, to, truncated, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status } } }.
 direction compares the newest value with the oldest in the window: 'rising' | 'falling' | 'flat' (within 2% of the target span).
+truncated is true if the window holds more than ${MAX_TREND_ROWS} readings — in that case only the most recent ${MAX_TREND_ROWS} are summarised, and 'from' is adjusted to the oldest of those (not the full requested window) so it always matches what was actually averaged. Narrow 'days', or use poolstatus_list_readings to page through everything, if that happens.
 
 Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`,
       inputSchema: {
@@ -267,8 +270,17 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
     },
     async ({ days, response_format }) => {
       const to = new Date();
-      const from = new Date(to.getTime() - days * 86_400_000);
-      const rows = await source.listReadings({ since: from, until: to, limit: MAX_TREND_ROWS });
+      const requestedFrom = new Date(to.getTime() - days * 86_400_000);
+      // Ask for one more than the cap so a window that has exactly
+      // MAX_TREND_ROWS readings isn't mistaken for a truncated one.
+      const fetched = await source.listReadings({ since: requestedFrom, until: to, limit: MAX_TREND_ROWS + 1 });
+      const truncated = fetched.length > MAX_TREND_ROWS;
+      // Newest-first, so capping at MAX_TREND_ROWS keeps the most recent
+      // readings and drops the oldest ones in the window — reflected below
+      // by reporting 'from' as the oldest reading actually included,
+      // rather than the full requested window, whenever that happens.
+      const rows = truncated ? fetched.slice(0, MAX_TREND_ROWS) : fetched;
+      const from = truncated ? rows[rows.length - 1].timestamp : requestedFrom;
 
       type Series = { label: string; unit: string; values: number[]; target: { min: number; max: number } | null };
       const series: Record<string, Series> = {};
@@ -318,12 +330,13 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
         }),
       );
 
-      const output = { days, readings_considered: rows.length, from: from.toISOString(), to: to.toISOString(), metrics };
+      const output = { days, readings_considered: rows.length, from: from.toISOString(), to: to.toISOString(), truncated, metrics };
       if (rows.length === 0) return toolResult(output, `No readings in the last ${days} day${days === 1 ? '' : 's'}.`);
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [
             `## Trends over the last ${days} day${days === 1 ? '' : 's'} (${rows.length} reading${rows.length === 1 ? '' : 's'})`,
+            ...(truncated ? [`_Window has more than ${MAX_TREND_ROWS} readings — showing only the most recent ${MAX_TREND_ROWS}, from ${output.from}._`] : []),
             '',
             '| Metric | Latest | Avg | Min | Max | Direction | Target | Status |',
             '|---|---|---|---|---|---|---|---|',
