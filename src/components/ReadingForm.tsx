@@ -12,20 +12,27 @@ import {
   Mic,
   MicOff,
   Waves,
-  Sun
+  Sun,
+  CalendarClock
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { GoogleGenAI } from "@google/genai";
+import { format } from 'date-fns';
 import { Reading, DEFAULT_RANGES } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
 
+type ReadingDraft = Omit<Reading, 'id' | 'timestamp' | 'uid'>;
+
 interface Props {
-  onSave: (reading: Omit<Reading, 'id' | 'timestamp'>) => void;
+  onSave: (reading: ReadingDraft, timestamp: Date) => void;
   onCancel: () => void;
+  initialTimestamp?: Date;
 }
 
-export default function ReadingForm({ onSave, onCancel }: Props) {
-  const [formData, setFormData] = useState({
+export default function ReadingForm({ onSave, onCancel, initialTimestamp }: Props) {
+  const isHistoricEntry = initialTimestamp !== undefined;
+  const [timestamp, setTimestamp] = useState(() => initialTimestamp ? new Date(initialTimestamp) : new Date());
+  const [timestampError, setTimestampError] = useState('');
+  const [formData, setFormData] = useState<ReadingDraft>({
     chlorine: 1.5,
     ph: 7.4,
     alkalinity: 100,
@@ -34,7 +41,6 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
     calciumHardness: 300,
     cyanuricAcid: 40,
     notes: '',
-    uid: '',
   });
 
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -69,7 +75,18 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    if (timestamp.getTime() > Date.now()) {
+      setTimestampError('The log time cannot be in the future.');
+      return;
+    }
+    onSave(formData, timestamp);
+  };
+
+  const handleTimestampChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextTimestamp = new Date(event.target.value);
+    if (Number.isNaN(nextTimestamp.getTime())) return;
+    setTimestamp(nextTimestamp);
+    setTimestampError(nextTimestamp.getTime() > Date.now() ? 'The log time cannot be in the future.' : '');
   };
 
   const handleVoiceInput = async (targetField: 'all' | 'notes' = 'all') => {
@@ -152,7 +169,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 z-50 bg-[#060e1a] overflow-y-auto"
+      className="fixed inset-0 z-[60] bg-[#060e1a] overflow-y-auto"
     >
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
@@ -161,15 +178,50 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
             className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors"
           >
             <ChevronLeft size={16} />
-            Back to Dashboard
+            {isHistoricEntry ? 'Back to History' : 'Back to Dashboard'}
           </button>
           <div className="text-right">
-            <h1 className="text-lg font-bold text-ink tracking-tight">New Reading</h1>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">Manual Data Entry</p>
+            <h1 className="text-lg font-bold text-ink tracking-tight">{isHistoricEntry ? 'Historic Reading' : 'New Reading'}</h1>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">
+              {isHistoricEntry ? format(timestamp, 'd MMMM yyyy') : 'Manual Data Entry'}
+            </p>
           </div>
         </header>
 
         <form onSubmit={handleSubmit} className="space-y-10 pb-32">
+          {isHistoricEntry ? (
+            <div className="card bg-[#0a1628] border-accent/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <CalendarClock size={18} />
+                  </div>
+                  <div>
+                    <label htmlFor="reading-timestamp" className="text-[10px] font-bold uppercase tracking-widest text-white">
+                      Log timestamp
+                    </label>
+                    <p className="mt-0.5 text-[9px] text-ink-dim">Selected from the history calendar</p>
+                  </div>
+                </div>
+                <input
+                  id="reading-timestamp"
+                  type="datetime-local"
+                  required
+                  max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+                  value={format(timestamp, "yyyy-MM-dd'T'HH:mm")}
+                  onChange={handleTimestampChange}
+                  className={`input w-full bg-[#0d1f38] px-3 py-2 text-sm sm:w-auto ${timestampError ? 'border-critical' : 'border-border-dim'}`}
+                />
+              </div>
+              {timestampError ? (
+                <p className="mt-3 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-critical">
+                  <AlertCircle size={11} />
+                  {timestampError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField 
               label="Free Chlorine" 
@@ -308,7 +360,7 @@ export default function ReadingForm({ onSave, onCancel }: Props) {
                 className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
               >
                 <Save size={18} />
-                Commit to Database
+                {isHistoricEntry ? 'Save Historic Log' : 'Commit to Database'}
               </button>
             </div>
           </div>

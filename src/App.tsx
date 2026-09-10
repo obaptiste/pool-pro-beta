@@ -69,6 +69,7 @@ export default function App() {
   });
 
   const [isLogging, setIsLogging] = useState(false);
+  const [historicLogTimestamp, setHistoricLogTimestamp] = useState<Date | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
@@ -176,42 +177,49 @@ export default function App() {
     }
   }, [schedule]);
 
-  const handleSaveReading = async (newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => {
+  const handleSaveReading = async (
+    newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
+    formTimestamp: Date,
+  ) => {
     if (!user) return;
-    const now = new Date();
+    const isHistoricEntry = historicLogTimestamp !== null;
+    const timestamp = isHistoricEntry ? formTimestamp : new Date();
     const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
       id,
-      timestamp: now,
+      timestamp,
       uid: user.uid
     };
 
     try {
       await setDoc(doc(db, 'readings', id), {
         ...reading,
-        timestamp: Timestamp.fromDate(now)
+        timestamp: Timestamp.fromDate(timestamp)
       });
-      
-      // Update schedule
-      const daysToAdd = {
-        daily: 1,
-        weekly: 7,
-        biweekly: 14,
-        monthly: 30,
-      }[schedule.testFrequency];
 
-      const nextTest = new Date(now);
-      nextTest.setDate(nextTest.getDate() + daysToAdd);
+      if (!isHistoricEntry) {
+        const daysToAdd = {
+          daily: 1,
+          weekly: 7,
+          biweekly: 14,
+          monthly: 30,
+        }[schedule.testFrequency];
 
-      await setDoc(doc(db, 'schedules', user.uid), {
-        ...schedule,
-        uid: user.uid,
-        lastTestDate: Timestamp.fromDate(now),
-        nextTestDate: Timestamp.fromDate(nextTest),
-      }, { merge: true });
+        const nextTest = new Date(timestamp);
+        nextTest.setDate(nextTest.getDate() + daysToAdd);
 
+        await setDoc(doc(db, 'schedules', user.uid), {
+          ...schedule,
+          uid: user.uid,
+          lastTestDate: Timestamp.fromDate(timestamp),
+          nextTestDate: Timestamp.fromDate(nextTest),
+        }, { merge: true });
+      }
+
+      setLastSaved(new Date());
       setIsLogging(false);
+      setHistoricLogTimestamp(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
     }
@@ -412,7 +420,10 @@ export default function App() {
           schedule={schedule}
           inventory={inventory}
           equipment={equipment}
-          onLogReading={() => setIsLogging(true)}
+          onLogReading={() => {
+            setHistoricLogTimestamp(null);
+            setIsLogging(true);
+          }}
           onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
           onOpenGlossary={() => setIsGlossaryOpen(true)}
           onViewHistory={() => setIsHistoryOpen(true)}
@@ -447,18 +458,26 @@ export default function App() {
       />
 
       <AnimatePresence>
-        {isLogging && (
-          <ReadingForm 
-            onSave={handleSaveReading}
-            onCancel={() => setIsLogging(false)}
-          />
-        )}
-        
         {isHistoryOpen && (
           <History 
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
+            onAddHistoricReading={(timestamp) => {
+              setHistoricLogTimestamp(timestamp);
+              setIsLogging(true);
+            }}
+          />
+        )}
+
+        {isLogging && (
+          <ReadingForm
+            onSave={handleSaveReading}
+            onCancel={() => {
+              setIsLogging(false);
+              setHistoricLogTimestamp(null);
+            }}
+            initialTimestamp={historicLogTimestamp ?? undefined}
           />
         )}
       </AnimatePresence>
