@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   Droplets, 
   Thermometer, 
@@ -20,7 +20,8 @@ import {
   X,
   Sparkles,
   Bell,
-  Calendar
+  Calendar,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
@@ -38,6 +39,19 @@ import { useLongPress } from '../lib/useLongPress';
 // no other exposure to this app's domain rules for this particular call).
 const LSI_SAFETY_INSTRUCTION =
   'You are a professional pool-chemistry advisor. Give one conservative, technically accurate sentence of guidance based on the LSI and readings provided. Never state a specific chemical dosing amount unless pool volume and product concentration are given — speak in relative terms (e.g. "add a small amount of muriatic acid") instead. Recommend retesting after any adjustment before swimming. If a reading needed for a confident recommendation is missing, say so instead of guessing.';
+
+// Combined chlorine (chloramines) = total − free. Not a stored field, so it
+// has no DEFAULT_RANGES entry: under 0.5 ppm is the usual commercial target,
+// and above 1 ppm is the point at which bathers notice it (the "chlorine
+// smell" is actually chloramines) and a shock/superchlorination is due.
+const COMBINED_CHLORINE_OK_MAX = 0.5;
+const COMBINED_CHLORINE_MAX = 1;
+
+const combinedChlorineOf = (free: number | null | undefined, total: number | null | undefined): number | null =>
+  free == null || total == null ? null : Math.max(0, total - free);
+
+const getCombinedChlorineStatus = (value: number): Status =>
+  value > COMBINED_CHLORINE_MAX ? 'critical' : value > COMBINED_CHLORINE_OK_MAX ? 'warning' : 'good';
 
 interface Props {
   userId: string;
@@ -223,6 +237,11 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       .reverse();
   };
 
+  const combinedChlorineTrend = readings.slice(0, 7)
+    .map(r => combinedChlorineOf(r.chlorine, r.totalChlorine))
+    .filter((v): v is number => v != null)
+    .reverse();
+
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.title.trim()) return;
@@ -361,8 +380,8 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       </div>
 
             {/* Status Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div className={`card anim-scan border col-span-2 md:col-span-1 flex flex-col justify-between p-4 ${
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className={`card anim-scan border col-span-2 flex flex-col justify-between p-4 ${
                 lsiScore == null ? 'text-ink-dim border-border-dim bg-surface' :
                 lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' :
                 lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
@@ -390,6 +409,14 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                 status={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
                 trend={getTrendData('chlorine')}
                 ideal="1–3"
+                onLongPress={onLogReading}
+              />
+              <CombinedChlorineCard
+                free={latest?.chlorine ?? null}
+                total={latest?.totalChlorine ?? null}
+                freeStatus={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
+                totalStatus={latest?.totalChlorine != null ? getStatus(latest.totalChlorine, DEFAULT_RANGES.totalChlorine.min, DEFAULT_RANGES.totalChlorine.max) : 'good'}
+                trend={combinedChlorineTrend}
                 onLongPress={onLogReading}
               />
               <StatusCard
@@ -716,6 +743,107 @@ function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPre
         <span className="text-ink-dim">Ideal: {ideal}</span>
         <span className="opacity-80">{isMissing ? 'Not measured' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
       </div>
+    </div>
+  );
+}
+
+const STATUS_TEXT = {
+  good: 'text-emerald-400',
+  warning: 'text-amber-400',
+  critical: 'text-red-400',
+};
+
+const DOUBLE_TAP_MS = 350;
+
+// Combined chlorine derived from the latest free + total readings. A
+// double-tap (or double-click) expands the card to show the two inputs;
+// a long press logs a new reading like every other status card. Detected
+// from two short taps rather than the native dblclick event, which iOS
+// Safari doesn't reliably fire for touch.
+function CombinedChlorineCard({ free, total, freeStatus, totalStatus, trend, onLongPress }: {
+  free: number | null,
+  total: number | null,
+  freeStatus: Status,
+  totalStatus: Status,
+  trend: number[],
+  onLongPress: (field: NumericReadingField) => void,
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const lastTapAt = useRef(0);
+  const statusColors = {
+    good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
+    warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
+    critical: 'text-red-400 border-red-500/30 bg-red-500/5',
+  };
+  const sparklineColors = { good: '#10b981', warning: '#f59e0b', critical: '#ef4444' };
+
+  const combined = combinedChlorineOf(free, total);
+  const isMissing = combined == null;
+  const status: Status = isMissing ? 'good' : getCombinedChlorineStatus(combined);
+
+  const onTap = () => {
+    const now = Date.now();
+    if (now - lastTapAt.current < DOUBLE_TAP_MS) {
+      lastTapAt.current = 0;
+      setExpanded(v => !v);
+    } else {
+      lastTapAt.current = now;
+    }
+  };
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress('totalChlorine'), onClick: onTap });
+
+  return (
+    <div
+      {...handlers}
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      aria-label="Combined chlorine. Double-tap to show free and total chlorine. Hold to log a new reading."
+      title="Double-tap to show free and total chlorine. Hold to log a new reading."
+      className={`card anim-scan border select-none touch-manipulation cursor-pointer transition-transform ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} flex flex-col gap-2 p-4`}
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Combined Chlorine</p>
+        <Sparkline values={trend} color={sparklineColors[status]} />
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-3xl font-bold font-mono">{isMissing ? '—' : combined.toFixed(1)}</span>
+        <span className="text-[10px] text-ink-dim font-medium">ppm</span>
+      </div>
+      <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest">
+        <span className="text-ink-dim">Ideal: &lt; {COMBINED_CHLORINE_OK_MAX}</span>
+        <span className="flex items-center gap-1 opacity-80">
+          {isMissing ? 'Needs free + total' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Shock'}
+          <ChevronDown size={10} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </span>
+      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border-dim/40">
+              {([
+                ['Free', free, freeStatus, DEFAULT_RANGES.chlorine],
+                ['Total', total, totalStatus, DEFAULT_RANGES.totalChlorine],
+              ] as const).map(([label, value, valueStatus, range]) => (
+                <div key={label}>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
+                  <p className={`text-lg font-bold font-mono ${value == null ? 'text-ink-dim' : STATUS_TEXT[valueStatus]}`}>
+                    {value == null ? '—' : value.toFixed(1)}
+                    <span className="text-[9px] text-ink-dim font-medium ml-1">ppm</span>
+                  </p>
+                  <p className="text-[9px] text-ink-dim">Ideal: {range.min}–{range.max}</p>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
