@@ -7,6 +7,7 @@ const reading = (id: string, timestamp: string, ph: number | null): Reading => (
   id,
   timestamp: new Date(timestamp),
   chlorine: null,
+  totalChlorine: null,
   sanitisationMv: null,
   ph,
   alkalinity: null,

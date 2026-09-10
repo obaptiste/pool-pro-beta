@@ -39,6 +39,8 @@ src/
     TrendCharts.tsx         7-day trend charts (Recharts)
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
+  sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
+  serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
 firestore.rules             Firestore security rules with field validation
 ```
 
@@ -48,7 +50,7 @@ firestore.rules             Firestore security rules with field validation
 npm install          # Install dependencies
 npm run dev          # Start Express + Vite dev server on :3000
 npm run build        # Production Vite build → dist/
-npm run lint         # TypeScript type-check (tsc --noEmit)
+npm run lint         # TypeScript type-check (tsc --noEmit, app + service worker)
 npm run preview      # Preview production build
 ```
 

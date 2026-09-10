@@ -23,6 +23,7 @@ interface Props {
 
 const METRICS: { key: TrendMetricKey; title: string; color: string; unit: string }[] = [
   { key: 'chlorine', title: 'Free Chlorine', color: '#4fc3f7', unit: 'ppm' },
+  { key: 'totalChlorine', title: 'Total Chlorine', color: '#7dd3fc', unit: 'ppm' },
   { key: 'sanitisationMv', title: 'Sanitisation / ORP', color: '#60a5fa', unit: 'mV' },
   { key: 'ph', title: 'pH Level', color: '#10b981', unit: '' },
   { key: 'alkalinity', title: 'Total Alkalinity', color: '#f59e0b', unit: 'ppm' },

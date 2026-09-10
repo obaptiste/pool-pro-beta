@@ -18,7 +18,7 @@ import {
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
-import { getHardValidationError, getSoftWarning, NUMERIC_READING_FIELDS, NumericReadingField } from '../lib/readingValidation';
+import { getHardValidationError, getSoftWarning, getCombinedChlorineWarning, NUMERIC_READING_FIELDS, NumericReadingField, SoftValidationWarning } from '../lib/readingValidation';
 
 interface Props {
   onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
@@ -37,6 +37,7 @@ type FormData = Record<NumericField, number | null> & {
 
 const INITIAL_FORM: FormData = {
   chlorine: null,
+  totalChlorine: null,
   sanitisationMv: null,
   ph: null,
   alkalinity: null,
@@ -49,6 +50,7 @@ const INITIAL_FORM: FormData = {
 
 const INITIAL_RAW: Record<NumericField, string> = {
   chlorine: '',
+  totalChlorine: '',
   sanitisationMv: '',
   ph: '',
   alkalinity: '',
@@ -65,6 +67,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
     if (!initialReading) return INITIAL_FORM;
     return {
       chlorine: initialReading.chlorine,
+      totalChlorine: initialReading.totalChlorine ?? null,
       sanitisationMv: initialReading.sanitisationMv ?? null,
       ph: initialReading.ph,
       alkalinity: initialReading.alkalinity,
@@ -80,6 +83,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
     const fromValue = (v: number | null) => (v == null ? '' : String(v));
     return {
       chlorine: fromValue(initialReading.chlorine),
+      totalChlorine: fromValue(initialReading.totalChlorine ?? null),
       sanitisationMv: fromValue(initialReading.sanitisationMv ?? null),
       ph: fromValue(initialReading.ph),
       alkalinity: fromValue(initialReading.alkalinity),
@@ -137,6 +141,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
   };
 
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const combinedWarning = getCombinedChlorineWarning(formData.chlorine, formData.totalChlorine);
 
   useEffect(() => {
     if (!focusField) return;
@@ -219,7 +224,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
               {
                 text: isNotes
                   ? "Transcribe the following pool maintenance observations or chemical additions. Return ONLY the transcribed text."
-                    : "Transcribe the following pool reading. Extract values for Chlorine, ORP sanitisation mV, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
+                    : "Transcribe the following pool reading. Extract values for Free Chlorine, Total Chlorine, ORP sanitisation mV, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, totalChlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
               }
             ],
             config: {
@@ -287,7 +292,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
           },
           {
             text: `Extract pool report details from this image. Return ONLY a JSON object with keys:
-chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
+chlorine, totalChlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
 missingInventory and missingEquipment should be arrays of strings when identifiable.`
           }
         ],
@@ -346,6 +351,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         <form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
+            <InputField label="Total Chlorine" name="totalChlorine" value={rawInputs.totalChlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.totalChlorine} min={0} max={10} step="any" isEmpty={rawInputs.totalChlorine === ''} warning={combinedWarning} />
             <InputField label="Sanitisation / ORP (mV)" name="sanitisationMv" value={rawInputs.sanitisationMv} unit="mV" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.sanitisationMv} min={0} max={1200} step="any" isEmpty={rawInputs.sanitisationMv === ''} />
             <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={rawInputs.ph === ''} />
             <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={rawInputs.alkalinity === ''} />
@@ -414,6 +420,12 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                   <span className="text-xs text-critical">{submitError}</span>
                 </div>
               )}
+              {combinedWarning && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-400/40">
+                  <AlertCircle size={14} className="text-amber-300 flex-shrink-0" />
+                  <span className="text-xs text-amber-200">{combinedWarning.message} You can still save this reading.</span>
+                </div>
+              )}
               {NUMERIC_FIELDS.some((field) => {
                 const v = formData[field];
                 return typeof v === 'number' && !getHardValidationError(field, v) && !!getSoftWarning(field, v);
@@ -451,13 +463,15 @@ interface InputFieldProps {
   max?: number;
   step?: string;
   isEmpty: boolean;
+  /** Cross-field warning that takes precedence over this field's own range check. */
+  warning?: SoftValidationWarning | null;
 }
 
-function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty }: InputFieldProps) {
+function InputField({ label, name, value, unit, icon, onChange, onBlur, error, min, max, step, isEmpty, warning }: InputFieldProps) {
   const parsedValue = value === '' ? null : Number(value);
   const softWarning =
     parsedValue != null && Number.isFinite(parsedValue) && !error
-      ? getSoftWarning(name, parsedValue)
+      ? warning ?? getSoftWarning(name, parsedValue)
       : null;
   return (
     <div className="space-y-3">

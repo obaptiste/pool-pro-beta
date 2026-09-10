@@ -12,6 +12,7 @@ service cloud.firestore {
     //   - timestamp: timestamp (required)
     //   - uid: string (required)
     //   - chlorine: number | null (optional — null/missing means "not measured")
+    //   - totalChlorine: number | null (optional — null/missing means "not measured")
     //   - ph: number | null (optional — null/missing means "not measured")
     //   - alkalinity: number | null (optional — null/missing means "not measured")
     //   - temperature: number | null (optional — null/missing means "not measured")
@@ -115,6 +116,7 @@ service cloud.firestore {
              data.id is string &&
              data.timestamp is timestamp &&
              isNumericOrNull(data, 'chlorine') &&
+             isNumericOrNull(data, 'totalChlorine') &&
              isNumericOrNull(data, 'ph') &&
              isNumericOrNull(data, 'alkalinity') &&
              isNumericOrNull(data, 'temperature') &&
