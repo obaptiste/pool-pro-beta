@@ -52,6 +52,7 @@ export default function App() {
   });
 
   const [isLogging, setIsLogging] = useState(false);
+  const [historicLogTimestamp, setHistoricLogTimestamp] = useState<Date | null>(null);
   const [logFocusField, setLogFocusField] = useState<NumericReadingField | undefined>(undefined);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
   const [editFocusField, setEditFocusField] = useState<NumericReadingField | undefined>(undefined);
@@ -353,14 +354,20 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [geoAutoStartEnabled, user, activeSession]);
 
-  const handleSaveReading = async (newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => {
+  const handleSaveReading = async (
+    newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
+    formTimestamp: Date,
+  ) => {
     if (!user) return;
-    const now = new Date();
+    // A historic entry (added from a past day in the calendar) keeps the
+    // timestamp the user picked and must not move the test schedule forward.
+    const isHistoricEntry = historicLogTimestamp !== null;
+    const timestamp = isHistoricEntry ? formTimestamp : new Date();
     const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
       id,
-      timestamp: now,
+      timestamp,
       uid: user.uid
     };
     // A reading with no actual measurements doesn't count as a completed water
@@ -379,35 +386,39 @@ export default function App() {
     try {
       await setDoc(doc(db, 'readings', id), {
         ...reading,
-        timestamp: Timestamp.fromDate(now)
+        timestamp: Timestamp.fromDate(timestamp)
       });
 
       if (!hasMeasurement) {
         markSaved('Note saved to database');
         setIsLogging(false);
+        setHistoricLogTimestamp(null);
         return;
       }
 
-      // Update schedule
-      const daysToAdd = {
-        daily: 1,
-        weekly: 7,
-        biweekly: 14,
-        monthly: 30,
-      }[schedule.testFrequency];
+      if (!isHistoricEntry) {
+        // Update schedule
+        const daysToAdd = {
+          daily: 1,
+          weekly: 7,
+          biweekly: 14,
+          monthly: 30,
+        }[schedule.testFrequency];
 
-      const nextTest = new Date(now);
-      nextTest.setDate(nextTest.getDate() + daysToAdd);
+        const nextTest = new Date(timestamp);
+        nextTest.setDate(nextTest.getDate() + daysToAdd);
 
-      await setDoc(doc(db, 'schedules', user.uid), {
-        ...schedule,
-        uid: user.uid,
-        lastTestDate: Timestamp.fromDate(now),
-        nextTestDate: Timestamp.fromDate(nextTest),
-      }, { merge: true });
+        await setDoc(doc(db, 'schedules', user.uid), {
+          ...schedule,
+          uid: user.uid,
+          lastTestDate: Timestamp.fromDate(timestamp),
+          nextTestDate: Timestamp.fromDate(nextTest),
+        }, { merge: true });
+      }
 
       markSaved('Reading saved to database');
       setIsLogging(false);
+      setHistoricLogTimestamp(null);
     } catch (err) {
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
@@ -949,6 +960,7 @@ export default function App() {
           onRequestProtocol={handleRequestProtocol}
           onExecuteProtocol={requestExecuteProtocol}
           onLogReading={(focusField) => {
+            setHistoricLogTimestamp(null);
             setLogFocusField(focusField);
             setIsLogging(true);
           }}
@@ -1076,6 +1088,11 @@ export default function App() {
               setEditFocusField(focusField);
               setEditingReading(reading);
             }}
+            onAddHistoricReading={(timestamp) => {
+              setHistoricLogTimestamp(timestamp);
+              setLogFocusField(undefined);
+              setIsLogging(true);
+            }}
           />
         )}
 
@@ -1083,7 +1100,11 @@ export default function App() {
           <ReadingForm
             focusField={logFocusField}
             onSave={handleSaveReading}
-            onCancel={() => setIsLogging(false)}
+            onCancel={() => {
+              setIsLogging(false);
+              setHistoricLogTimestamp(null);
+            }}
+            initialTimestamp={historicLogTimestamp ?? undefined}
           />
         )}
 

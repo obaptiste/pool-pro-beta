@@ -14,16 +14,21 @@ import {
   Waves,
   Sun,
   MinusCircle,
+  CalendarClock,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { format } from 'date-fns';
 import { Reading } from '../types';
 import { generateContentWithRetry } from '../lib/gemini';
 import { getHardValidationError, getSoftWarning, getCombinedChlorineWarning, NUMERIC_READING_FIELDS, NumericReadingField, SoftValidationWarning } from '../lib/readingValidation';
 
 interface Props {
-  onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => void;
+  /** `timestamp` is the chosen log time; only a historic entry (see `initialTimestamp`) uses it. */
+  onSave: (reading: Omit<Reading, 'id' | 'timestamp' | 'uid'>, timestamp: Date) => void;
   onCancel: () => void;
   initialReading?: Reading;
+  /** Pre-dates a new log to a past day picked in the History calendar. */
+  initialTimestamp?: Date;
   /** Field to scroll to and focus on open — e.g. jumping in from a long-press on one reading. */
   focusField?: NumericField;
 }
@@ -60,8 +65,11 @@ const INITIAL_RAW: Record<NumericField, string> = {
   cyanuricAcid: '',
 };
 
-export default function ReadingForm({ onSave, onCancel, initialReading, focusField }: Props) {
+export default function ReadingForm({ onSave, onCancel, initialReading, initialTimestamp, focusField }: Props) {
   const isEditing = !!initialReading;
+  const isHistoricEntry = !isEditing && initialTimestamp !== undefined;
+  const [timestamp, setTimestamp] = useState(() => (initialTimestamp ? new Date(initialTimestamp) : new Date()));
+  const [timestampError, setTimestampError] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
   const [formData, setFormData] = useState<FormData>(() => {
     if (!initialReading) return INITIAL_FORM;
@@ -185,8 +193,19 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
       setSubmitError('Fix invalid values before saving.');
       return;
     }
+    if (isHistoricEntry && timestamp.getTime() > Date.now()) {
+      setTimestampError('The log time cannot be in the future.');
+      return;
+    }
     setSubmitError(null);
-    onSave(flushed);
+    onSave(flushed, timestamp);
+  };
+
+  const handleTimestampChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextTimestamp = new Date(event.target.value);
+    if (Number.isNaN(nextTimestamp.getTime())) return;
+    setTimestamp(nextTimestamp);
+    setTimestampError(nextTimestamp.getTime() > Date.now() ? 'The log time cannot be in the future.' : '');
   };
 
   const handleVoiceInput = async (targetField: 'all' | 'notes' = 'all') => {
@@ -340,15 +359,50 @@ missingInventory and missingEquipment should be arrays of strings when identifia
             className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors"
           >
             <ChevronLeft size={16} />
-            Back to Dashboard
+            {isHistoricEntry ? 'Back to History' : 'Back to Dashboard'}
           </button>
           <div className="text-right">
-            <h1 className="text-lg font-bold text-ink tracking-tight">{isEditing ? 'Amend Reading' : 'New Reading'}</h1>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">{isEditing ? 'Edit Existing Log' : 'Manual Data Entry'}</p>
+            <h1 className="text-lg font-bold text-ink tracking-tight">{isEditing ? 'Amend Reading' : isHistoricEntry ? 'Historic Reading' : 'New Reading'}</h1>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">
+              {isEditing ? 'Edit Existing Log' : isHistoricEntry ? format(timestamp, 'd MMMM yyyy') : 'Manual Data Entry'}
+            </p>
           </div>
         </header>
 
         <form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
+          {isHistoricEntry ? (
+            <div className="card bg-surface border-accent/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <CalendarClock size={18} />
+                  </div>
+                  <div>
+                    <label htmlFor="reading-timestamp" className="text-[10px] font-bold uppercase tracking-widest text-white">
+                      Log timestamp
+                    </label>
+                    <p className="mt-0.5 text-[9px] text-ink-dim">Selected from the history calendar</p>
+                  </div>
+                </div>
+                <input
+                  id="reading-timestamp"
+                  type="datetime-local"
+                  required
+                  max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+                  value={format(timestamp, "yyyy-MM-dd'T'HH:mm")}
+                  onChange={handleTimestampChange}
+                  className={`input w-full px-3 py-2 text-sm sm:w-auto ${timestampError ? 'border-critical' : 'border-border-dim'}`}
+                />
+              </div>
+              {timestampError ? (
+                <p className="mt-3 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-critical">
+                  <AlertCircle size={11} />
+                  {timestampError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
             <InputField label="Total Chlorine" name="totalChlorine" value={rawInputs.totalChlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.totalChlorine} min={0} max={10} step="any" isEmpty={rawInputs.totalChlorine === ''} warning={combinedWarning} />
@@ -440,7 +494,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                 className="btn btn-primary w-full py-5 text-xs font-bold uppercase tracking-[0.2em] gap-3 shadow-2xl shadow-accent/20"
               >
                 <Save size={18} />
-                {isEditing ? 'Save Changes' : 'Commit to Database'}
+                {isEditing ? 'Save Changes' : isHistoricEntry ? 'Save Historic Log' : 'Commit to Database'}
               </button>
             </div>
           </div>
