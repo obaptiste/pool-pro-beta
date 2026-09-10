@@ -28,7 +28,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
-import { NumericReadingField } from '../lib/readingValidation';
+import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
 // Per AGENTS.md's pool chemistry safety rules: keep dosing guidance
@@ -39,19 +39,6 @@ import { useLongPress } from '../lib/useLongPress';
 // no other exposure to this app's domain rules for this particular call).
 const LSI_SAFETY_INSTRUCTION =
   'You are a professional pool-chemistry advisor. Give one conservative, technically accurate sentence of guidance based on the LSI and readings provided. Never state a specific chemical dosing amount unless pool volume and product concentration are given — speak in relative terms (e.g. "add a small amount of muriatic acid") instead. Recommend retesting after any adjustment before swimming. If a reading needed for a confident recommendation is missing, say so instead of guessing.';
-
-// Combined chlorine (chloramines) = total − free. Not a stored field, so it
-// has no DEFAULT_RANGES entry: under 0.5 ppm is the usual commercial target,
-// and above 1 ppm is the point at which bathers notice it (the "chlorine
-// smell" is actually chloramines) and a shock/superchlorination is due.
-const COMBINED_CHLORINE_OK_MAX = 0.5;
-const COMBINED_CHLORINE_MAX = 1;
-
-const combinedChlorineOf = (free: number | null | undefined, total: number | null | undefined): number | null =>
-  free == null || total == null ? null : Math.max(0, total - free);
-
-const getCombinedChlorineStatus = (value: number): Status =>
-  value > COMBINED_CHLORINE_MAX ? 'critical' : value > COMBINED_CHLORINE_OK_MAX ? 'warning' : 'good';
 
 interface Props {
   userId: string;

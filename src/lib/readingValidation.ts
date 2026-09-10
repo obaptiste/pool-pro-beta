@@ -1,4 +1,4 @@
-import { DEFAULT_RANGES, Reading } from '../types';
+import { DEFAULT_RANGES, Reading, Status } from '../types';
 
 export type SoftValidationLevel = 'warning' | 'elevated';
 
@@ -70,6 +70,43 @@ export function getHardValidationError(field: NumericReadingField, value: number
     return `${label} cannot exceed ${max}.`;
   }
   return '';
+}
+
+// Combined chlorine (chloramines) = total − free. It isn't a stored field,
+// so it has no DEFAULT_RANGES entry: under 0.5 ppm is the usual commercial
+// target, and above 1 ppm is where bathers notice it (the "chlorine smell"
+// is actually chloramines) and a shock/superchlorination is due.
+export const COMBINED_CHLORINE_OK_MAX = 0.5;
+export const COMBINED_CHLORINE_MAX = 1;
+
+// Rounded to 0.01 so binary float noise (1.6 − 1.1 = 0.5000000000000001)
+// can't tip a value over a threshold it visibly sits on.
+export const combinedChlorineOf = (free: number | null | undefined, total: number | null | undefined): number | null =>
+  free == null || total == null ? null : Math.max(0, Math.round((total - free) * 100) / 100);
+
+export const getCombinedChlorineStatus = (value: number): Status =>
+  value > COMBINED_CHLORINE_MAX ? 'critical' : value > COMBINED_CHLORINE_OK_MAX ? 'warning' : 'good';
+
+/**
+ * Cross-field check for free vs total chlorine. Each value can sit inside its
+ * own range while their difference is still a problem (FC 1 / TC 3 is 2 ppm
+ * combined), and total below free is a measurement error. Non-blocking, like
+ * every other soft warning — the reading still saves.
+ */
+export function getCombinedChlorineWarning(free: number | null | undefined, total: number | null | undefined): SoftValidationWarning | null {
+  if (free == null || total == null || !Number.isFinite(free) || !Number.isFinite(total)) return null;
+  const field = 'totalChlorine';
+  if (total < free) {
+    return { field, level: 'warning', message: 'Total chlorine is below free chlorine — it can\'t be. Re-test both.' };
+  }
+  const combined = combinedChlorineOf(free, total) as number;
+  if (combined > COMBINED_CHLORINE_MAX) {
+    return { field, level: 'warning', message: `Combined chlorine ${combined.toFixed(1)} ppm (>${COMBINED_CHLORINE_MAX}) — chloramines high. Shock and retest before swimming.` };
+  }
+  if (combined > COMBINED_CHLORINE_OK_MAX) {
+    return { field, level: 'elevated', message: `Combined chlorine ${combined.toFixed(1)} ppm — ideal is under ${COMBINED_CHLORINE_OK_MAX}. Watch it on the next test.` };
+  }
+  return null;
 }
 
 export function getSoftWarning(field: NumericReadingField, value: number): SoftValidationWarning | null {

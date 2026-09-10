@@ -3,7 +3,7 @@ import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, Trending
 import { motion } from 'motion/react';
 import { Reading } from '../types';
 import { addDays, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
-import { getSoftWarning, NumericReadingField, FIELD_LABEL } from '../lib/readingValidation';
+import { getSoftWarning, getCombinedChlorineWarning, NumericReadingField, FIELD_LABEL } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
 interface Props {
@@ -167,7 +167,7 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
                     <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4">
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-4">
                         <DataPoint label="Free Chlorine" field="chlorine" value={reading.chlorine} previousValue={getPreviousValue(reading, 'chlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
-                        <DataPoint label="Total Chlorine" field="totalChlorine" value={reading.totalChlorine ?? null} previousValue={getPreviousValue(reading, 'totalChlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-300" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Total Chlorine" field="totalChlorine" value={reading.totalChlorine ?? null} previousValue={getPreviousValue(reading, 'totalChlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-300" warning={getCombinedChlorineWarning(reading.chlorine, reading.totalChlorine)} onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
                         <DataPoint
                           label="Sanitisation / ORP"
                           field="sanitisationMv"
