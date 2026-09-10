@@ -1,0 +1,450 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { calculateLSI } from '../../../src/lib/lsi';
+import {
+  COMBINED_CHLORINE_OK_MAX,
+  combinedChlorineOf,
+  getCombinedChlorineStatus,
+  getCombinedChlorineWarning,
+  NUMERIC_READING_FIELDS,
+  type NumericReadingField,
+} from '../../../src/lib/readingValidation';
+import { DEFAULT_RANGES, type EquipmentItem, type Reading, type Status } from '../../../src/types';
+import type { PoolDataSource } from './types';
+
+export const SERVER_NAME = 'poolstatus-mcp-server';
+export const SERVER_VERSION = '1.0.0';
+
+const MAX_LIST_LIMIT = 100;
+const MAX_TREND_DAYS = 90;
+// Enough readings for a 90-day window at several tests a day; anything
+// beyond this is summarised from the most recent rows.
+const MAX_TREND_ROWS = 500;
+
+const ResponseFormat = z.enum(['markdown', 'json']).default('markdown')
+  .describe("Output format: 'markdown' for a human-readable summary, 'json' for the raw structured data.");
+
+const IsoDate = z.string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), 'Must be an ISO-8601 date or date-time, e.g. 2026-09-01 or 2026-09-01T08:00:00Z');
+
+const parseDate = (value?: string): Date | undefined => (value == null ? undefined : new Date(value));
+
+// Same banding the dashboard's status cards use: outside the target range
+// is critical; within 10% of either edge is a warning.
+function getRangeStatus(value: number, min: number, max: number): Status {
+  if (value < min || value > max) return 'critical';
+  const buffer = (max - min) * 0.1;
+  if (value < min + buffer || value > max - buffer) return 'warning';
+  return 'good';
+}
+
+const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : Math.abs(lsi) > 0.1 ? 'warning' : 'good');
+const lsiLabel = (lsi: number): string => (lsi < -0.3 ? 'corrosive' : lsi > 0.3 ? 'scale-forming' : 'balanced');
+
+const fmt = (value: number | null | undefined, digits = 1): string => (value == null ? '—' : value.toFixed(digits));
+const iso = (date: Date | null | undefined): string | null => (date ? date.toISOString() : null);
+
+function serializeReading(reading: Reading) {
+  const lsi = calculateLSI(reading);
+  const combined = combinedChlorineOf(reading.chlorine, reading.totalChlorine);
+  const combinedWarning = getCombinedChlorineWarning(reading.chlorine, reading.totalChlorine);
+  const fieldStatus: Partial<Record<NumericReadingField, Status>> = {};
+  for (const field of NUMERIC_READING_FIELDS) {
+    const value = reading[field];
+    if (value == null) continue;
+    fieldStatus[field] = getRangeStatus(value, DEFAULT_RANGES[field].min, DEFAULT_RANGES[field].max);
+  }
+  return {
+    id: reading.id,
+    timestamp: reading.timestamp.toISOString(),
+    editedAt: iso(reading.editedAt),
+    measurements: {
+      chlorine: reading.chlorine,
+      totalChlorine: reading.totalChlorine,
+      sanitisationMv: reading.sanitisationMv,
+      ph: reading.ph,
+      alkalinity: reading.alkalinity,
+      temperature: reading.temperature,
+      differentialPressure: reading.differentialPressure,
+      calciumHardness: reading.calciumHardness,
+      cyanuricAcid: reading.cyanuricAcid,
+    },
+    notes: reading.notes ?? null,
+    derived: {
+      lsi,
+      lsiStatus: lsi == null ? null : lsiStatus(lsi),
+      lsiLabel: lsi == null ? null : lsiLabel(lsi),
+      combinedChlorine: combined,
+      combinedChlorineStatus: combined == null ? null : getCombinedChlorineStatus(combined),
+      combinedChlorineWarning: combinedWarning?.message ?? null,
+    },
+    fieldStatus,
+  };
+}
+
+type SerializedReading = ReturnType<typeof serializeReading>;
+
+const UNITS: Record<NumericReadingField, string> = Object.fromEntries(
+  NUMERIC_READING_FIELDS.map((field) => [field, DEFAULT_RANGES[field].unit]),
+) as Record<NumericReadingField, string>;
+
+const LABELS: Record<NumericReadingField, string> = {
+  chlorine: 'Free chlorine',
+  totalChlorine: 'Total chlorine',
+  sanitisationMv: 'ORP / sanitisation',
+  ph: 'pH',
+  alkalinity: 'Total alkalinity',
+  temperature: 'Temperature',
+  differentialPressure: 'Differential pressure',
+  calciumHardness: 'Calcium hardness',
+  cyanuricAcid: 'Cyanuric acid',
+};
+
+function readingToMarkdown(reading: SerializedReading): string {
+  const lines = [`### Reading ${reading.timestamp}${reading.editedAt ? ' (amended)' : ''}`];
+  for (const field of NUMERIC_READING_FIELDS) {
+    const value = reading.measurements[field];
+    if (value == null) continue;
+    const status = reading.fieldStatus[field];
+    lines.push(`- ${LABELS[field]}: ${value} ${UNITS[field]}${status && status !== 'good' ? ` (${status})` : ''}`);
+  }
+  const { derived } = reading;
+  if (derived.lsi != null) lines.push(`- LSI: ${derived.lsi} (${derived.lsiLabel})`);
+  if (derived.combinedChlorine != null) {
+    lines.push(`- Combined chlorine: ${fmt(derived.combinedChlorine)} ppm (${derived.combinedChlorineStatus})`);
+  }
+  if (derived.combinedChlorineWarning) lines.push(`- ⚠ ${derived.combinedChlorineWarning}`);
+  if (reading.notes) lines.push(`- Notes: ${reading.notes}`);
+  return lines.join('\n');
+}
+
+function nextServiceDate(item: EquipmentItem): Date | null {
+  if (!item.serviceIntervalMonths) return null;
+  const from = item.lastServiceDate ?? item.installDate;
+  const next = new Date(from);
+  next.setMonth(next.getMonth() + item.serviceIntervalMonths);
+  return next;
+}
+
+function toolResult(structured: Record<string, unknown>, text: string) {
+  return { content: [{ type: 'text' as const, text }], structuredContent: structured };
+}
+
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
+export function createPoolStatusMcpServer(source: PoolDataSource): McpServer {
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+
+  server.registerTool(
+    'poolstatus_get_latest_reading',
+    {
+      title: 'Get latest pool reading',
+      description: `Return the most recent water-chemistry reading with derived values.
+
+Includes every logged measurement (free/total chlorine, ORP, pH, alkalinity, temperature, differential pressure, calcium hardness, cyanuric acid), per-field status against the app's target ranges, the Langelier Saturation Index (LSI), and combined chlorine (total − free) with its status and any warning.
+
+Args:
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { reading: {...} | null, targets: { field: { min, max, unit } } }. Fields that were not measured are null.
+
+Use when: "What are the latest pool numbers?", "Is the water balanced right now?"
+Don't use when: you need history or averages (use poolstatus_list_readings or poolstatus_get_reading_trends).`,
+      inputSchema: { response_format: ResponseFormat },
+      annotations: READ_ONLY,
+    },
+    async ({ response_format }) => {
+      const [latest] = await source.listReadings({ limit: 1 });
+      const reading = latest ? serializeReading(latest) : null;
+      const output = { reading, targets: DEFAULT_RANGES };
+      if (!reading) return toolResult(output, 'No readings have been logged yet.');
+      const text = response_format === 'json' ? JSON.stringify(output, null, 2) : readingToMarkdown(reading);
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_list_readings',
+    {
+      title: 'List pool readings',
+      description: `List water-chemistry readings, newest first, optionally within a date window.
+
+Args:
+  - since (ISO date, optional): only readings at or after this instant
+  - until (ISO date, optional): only readings at or before this instant
+  - before (ISO date, optional): pagination cursor — only readings strictly before this instant (use next_before from a previous page)
+  - limit (1–${MAX_LIST_LIMIT}, default 20)
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { count, readings: [...same shape as poolstatus_get_latest_reading...], has_more, next_before }.
+
+Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
+      inputSchema: {
+        since: IsoDate.optional(),
+        until: IsoDate.optional(),
+        before: IsoDate.optional(),
+        limit: z.number().int().min(1).max(MAX_LIST_LIMIT).default(20),
+        response_format: ResponseFormat,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ since, until, before, limit, response_format }) => {
+      const rows = await source.listReadings({
+        since: parseDate(since),
+        until: parseDate(until),
+        before: parseDate(before),
+        limit: limit + 1,
+      });
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit).map(serializeReading);
+      const output = {
+        count: page.length,
+        readings: page,
+        has_more: hasMore,
+        next_before: hasMore ? page[page.length - 1].timestamp : null,
+      };
+      if (page.length === 0) return toolResult(output, 'No readings found for that window.');
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [
+            `## ${page.length} reading${page.length === 1 ? '' : 's'}${hasMore ? ` (more available — pass before="${output.next_before}")` : ''}`,
+            '',
+            ...page.map(readingToMarkdown),
+          ].join('\n\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_get_reading_trends',
+    {
+      title: 'Get pool reading trends',
+      description: `Summarise each measurement over the last N days: count, latest, average, min, max, direction, and the latest value's status against its target range. Also includes combined chlorine and LSI as derived metrics.
+
+Args:
+  - days (1–${MAX_TREND_DAYS}, default 7)
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { days, readings_considered, from, to, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status } } }.
+direction compares the newest value with the oldest in the window: 'rising' | 'falling' | 'flat' (within 2% of the target span).
+
+Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`,
+      inputSchema: {
+        days: z.number().int().min(1).max(MAX_TREND_DAYS).default(7),
+        response_format: ResponseFormat,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ days, response_format }) => {
+      const to = new Date();
+      const from = new Date(to.getTime() - days * 86_400_000);
+      const rows = await source.listReadings({ since: from, until: to, limit: MAX_TREND_ROWS });
+
+      type Series = { label: string; unit: string; values: number[]; target: { min: number; max: number } | null };
+      const series: Record<string, Series> = {};
+      for (const field of NUMERIC_READING_FIELDS) {
+        series[field] = { label: LABELS[field], unit: UNITS[field], values: [], target: { min: DEFAULT_RANGES[field].min, max: DEFAULT_RANGES[field].max } };
+      }
+      series.combinedChlorine = { label: 'Combined chlorine', unit: 'ppm', values: [], target: { min: 0, max: COMBINED_CHLORINE_OK_MAX } };
+      series.lsi = { label: 'LSI', unit: '', values: [], target: { min: -0.3, max: 0.3 } };
+
+      // rows are newest-first; push in that order so values[0] is the latest.
+      for (const reading of rows) {
+        for (const field of NUMERIC_READING_FIELDS) {
+          const value = reading[field];
+          if (value != null) series[field].values.push(value);
+        }
+        const combined = combinedChlorineOf(reading.chlorine, reading.totalChlorine);
+        if (combined != null) series.combinedChlorine.values.push(combined);
+        const lsi = calculateLSI(reading);
+        if (lsi != null) series.lsi.values.push(lsi);
+      }
+
+      const metrics = Object.fromEntries(
+        Object.entries(series).map(([key, { label, unit, values, target }]) => {
+          if (values.length === 0) {
+            return [key, { label, unit, count: 0, latest: null, average: null, min: null, max: null, direction: null, target, status: null }];
+          }
+          const latest = values[0];
+          const oldest = values[values.length - 1];
+          const span = target ? target.max - target.min : 0;
+          const delta = latest - oldest;
+          const direction = Math.abs(delta) <= span * 0.02 ? 'flat' : delta > 0 ? 'rising' : 'falling';
+          const status: Status | null =
+            key === 'combinedChlorine' ? getCombinedChlorineStatus(latest)
+            : key === 'lsi' ? lsiStatus(latest)
+            : target ? getRangeStatus(latest, target.min, target.max) : null;
+          const round = (n: number) => Math.round(n * 100) / 100;
+          return [key, {
+            label, unit,
+            count: values.length,
+            latest: round(latest),
+            average: round(values.reduce((a, b) => a + b, 0) / values.length),
+            min: round(Math.min(...values)),
+            max: round(Math.max(...values)),
+            direction, target, status,
+          }];
+        }),
+      );
+
+      const output = { days, readings_considered: rows.length, from: from.toISOString(), to: to.toISOString(), metrics };
+      if (rows.length === 0) return toolResult(output, `No readings in the last ${days} day${days === 1 ? '' : 's'}.`);
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [
+            `## Trends over the last ${days} day${days === 1 ? '' : 's'} (${rows.length} reading${rows.length === 1 ? '' : 's'})`,
+            '',
+            '| Metric | Latest | Avg | Min | Max | Direction | Target | Status |',
+            '|---|---|---|---|---|---|---|---|',
+            ...Object.values(metrics)
+              .filter((m) => m.count > 0)
+              .map((m) => `| ${m.label} | ${m.latest} ${m.unit} | ${m.average} | ${m.min} | ${m.max} | ${m.direction} | ${m.target ? `${m.target.min}–${m.target.max}` : '—'} | ${m.status} |`),
+          ].join('\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_list_tasks',
+    {
+      title: 'List maintenance tasks',
+      description: `List the maintenance checklist.
+
+Args:
+  - status ('open' | 'completed' | 'all'): default 'open'
+  - frequency ('daily' | 'weekly' | 'monthly' | 'once', optional): filter by cadence
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { count, tasks: [{ id, title, completed, priority, frequency, isAI, createdAt }] }.
+
+Use when: "What's still to do this week?", "Which critical tasks are open?"`,
+      inputSchema: {
+        status: z.enum(['open', 'completed', 'all']).default('open'),
+        frequency: z.enum(['daily', 'weekly', 'monthly', 'once']).optional(),
+        response_format: ResponseFormat,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ status, frequency, response_format }) => {
+      const tasks = (await source.listTasks())
+        .filter((task) => status === 'all' || (status === 'completed') === task.completed)
+        .filter((task) => !frequency || task.frequency === frequency)
+        .map((task) => ({ ...task, uid: undefined, createdAt: task.createdAt.toISOString() }));
+      const output = { count: tasks.length, tasks };
+      if (tasks.length === 0) return toolResult(output, `No ${status === 'all' ? '' : status + ' '}tasks${frequency ? ` with frequency ${frequency}` : ''}.`);
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [`## ${tasks.length} ${status === 'all' ? '' : status + ' '}task${tasks.length === 1 ? '' : 's'}`, '',
+            ...tasks.map((t) => `- [${t.completed ? 'x' : ' '}] ${t.title} — ${t.priority} priority, ${t.frequency}${t.isAI ? ' (AI-suggested)' : ''}`)].join('\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_list_inventory',
+    {
+      title: 'List chemical inventory',
+      description: `List chemical stock levels, flagging items at or below their reorder threshold.
+
+Args:
+  - low_only (boolean): only return items needing reorder (default false)
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { count, low_count, items: [{ id, name, quantity, unit, minThreshold, low }] }.
+
+Use when: "What do I need to reorder?", "How much soda ash is left?"`,
+      inputSchema: { low_only: z.boolean().default(false), response_format: ResponseFormat },
+      annotations: READ_ONLY,
+    },
+    async ({ low_only, response_format }) => {
+      const all = (await source.listInventory()).map((item) => ({ ...item, uid: undefined, low: item.quantity <= item.minThreshold }));
+      const items = low_only ? all.filter((item) => item.low) : all;
+      const output = { count: items.length, low_count: all.filter((item) => item.low).length, items };
+      if (items.length === 0) return toolResult(output, low_only ? 'Nothing needs reordering.' : 'No inventory items recorded.');
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [`## Inventory (${output.low_count} low)`, '',
+            ...items.map((i) => `- ${i.name}: ${i.quantity} ${i.unit} (reorder at ${i.minThreshold} ${i.unit})${i.low ? ' ⚠ LOW' : ''}`)].join('\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_list_equipment',
+    {
+      title: 'List equipment and service status',
+      description: `List registered equipment with install date, last service, service interval, computed next service date, and whether service is due.
+
+Args:
+  - due_only (boolean): only return equipment whose service is due (default false)
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { count, due_count, items: [{ id, name, installDate, lastServiceDate, serviceIntervalMonths, nextServiceDate, serviceDue }] }.
+
+Use when: "Is the sand filter due a service?", "What maintenance is overdue?"`,
+      inputSchema: { due_only: z.boolean().default(false), response_format: ResponseFormat },
+      annotations: READ_ONLY,
+    },
+    async ({ due_only, response_format }) => {
+      const now = new Date();
+      const all = (await source.listEquipment()).map((item) => {
+        const next = nextServiceDate(item);
+        return {
+          id: item.id,
+          name: item.name,
+          installDate: item.installDate.toISOString(),
+          lastServiceDate: iso(item.lastServiceDate),
+          serviceIntervalMonths: item.serviceIntervalMonths ?? null,
+          nextServiceDate: iso(next),
+          serviceDue: next != null && next <= now,
+        };
+      });
+      const items = due_only ? all.filter((item) => item.serviceDue) : all;
+      const output = { count: items.length, due_count: all.filter((item) => item.serviceDue).length, items };
+      if (items.length === 0) return toolResult(output, due_only ? 'No equipment is due for service.' : 'No equipment recorded.');
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [`## Equipment (${output.due_count} due for service)`, '',
+            ...items.map((i) => `- ${i.name}: next service ${i.nextServiceDate ? i.nextServiceDate.slice(0, 10) : 'not scheduled'}${i.serviceDue ? ' ⚠ DUE' : ''}${i.lastServiceDate ? `, last serviced ${i.lastServiceDate.slice(0, 10)}` : ''}`)].join('\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_get_schedule',
+    {
+      title: 'Get water-testing schedule',
+      description: `Return the water-testing cadence and reminder settings: test frequency, last and next test dates, whether reminders are on, and whether the next test is overdue.
+
+Args: none.
+
+Returns: { schedule: { testFrequency, lastTestDate, nextTestDate, remindersEnabled, overdue } | null }.
+
+Use when: "When is the next test due?", "Am I behind on testing?"`,
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    async () => {
+      const schedule = await source.getSchedule();
+      if (!schedule) return toolResult({ schedule: null }, 'No testing schedule has been set up.');
+      const overdue = schedule.nextTestDate != null && schedule.nextTestDate < new Date();
+      const output = {
+        schedule: {
+          testFrequency: schedule.testFrequency,
+          lastTestDate: iso(schedule.lastTestDate),
+          nextTestDate: iso(schedule.nextTestDate),
+          remindersEnabled: schedule.remindersEnabled,
+          overdue,
+        },
+      };
+      const text = [
+        `Testing ${schedule.testFrequency}; reminders ${schedule.remindersEnabled ? 'on' : 'off'}.`,
+        `Last test: ${output.schedule.lastTestDate ?? 'never'}.`,
+        `Next test: ${output.schedule.nextTestDate ?? 'not scheduled'}${overdue ? ' — OVERDUE' : ''}.`,
+      ].join(' ');
+      return toolResult(output, text);
+    },
+  );
+
+  return server;
+}

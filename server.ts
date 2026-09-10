@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { runAiFallback } from "./api/_lib/aiFallback";
+import mcpHandler from "./api/mcp";
 
 dotenv.config();
 
@@ -37,6 +38,14 @@ async function startServer() {
       responseSchemaDescription: responseSchema,
     });
     res.status(result.status).json(result.body);
+  });
+
+  // Remote MCP endpoint — same handler Vercel runs from api/mcp.ts.
+  app.post("/api/mcp", (req, res) => {
+    mcpHandler(req, res).catch((error) => {
+      console.error("MCP handler error:", error);
+      if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+    });
   });
 
   // Vite middleware for development
