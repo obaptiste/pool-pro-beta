@@ -1,13 +1,11 @@
-const SW_URL = '/sw.js';
+import { registerSW } from 'virtual:pwa-register';
 
 export function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-
-  window.addEventListener('load', async () => {
-    try {
-      await navigator.serviceWorker.register(SW_URL);
-    } catch (error) {
+  // autoUpdate mode: once a newly-installed worker activates, the page
+  // reloads so the user is never left running a stale bundle.
+  registerSW({
+    onRegisterError(error) {
       console.error('Service worker registration failed:', error);
-    }
+    },
   });
 }
