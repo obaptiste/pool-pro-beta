@@ -97,6 +97,7 @@ export default function App() {
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
       setReadings(snapshot.docs.map(doc => ({
         ...doc.data(),
+        totalChlorine: doc.data().totalChlorine ?? null,
         sanitisationMv: doc.data().sanitisationMv ?? null,
         timestamp: (doc.data().timestamp as Timestamp).toDate(),
         editedAt: doc.data().editedAt ? (doc.data().editedAt as Timestamp).toDate() : undefined,
@@ -321,6 +322,7 @@ export default function App() {
     // test, so it shouldn't advance the schedule and suppress the next reminder.
     const hasMeasurement =
       newReading.chlorine != null ||
+      newReading.totalChlorine != null ||
       newReading.sanitisationMv != null ||
       newReading.ph != null ||
       newReading.alkalinity != null ||
@@ -386,6 +388,7 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'readings', id), {
         chlorine: updates.chlorine,
+        totalChlorine: updates.totalChlorine ?? null,
         sanitisationMv: updates.sanitisationMv ?? null,
         ph: updates.ph,
         alkalinity: updates.alkalinity,
@@ -592,11 +595,12 @@ export default function App() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Timestamp', 'Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (kPa)', 'Calcium Hardness (ppm)', 'CYA (ppm)', 'Notes'];
+    const headers = ['Timestamp', 'Free Chlorine (ppm)', 'Total Chlorine (ppm)', 'pH', 'Alkalinity (ppm)', 'Temp (°C)', 'Diff Pressure (kPa)', 'Calcium Hardness (ppm)', 'CYA (ppm)', 'Notes'];
     const csvNum = (v: number | null) => v == null ? '' : String(v);
     const rows = readings.map(r => [
       r.timestamp.toISOString(),
       csvNum(r.chlorine),
+      csvNum(r.totalChlorine),
       csvNum(r.ph),
       csvNum(r.alkalinity),
       csvNum(r.temperature),
@@ -627,14 +631,15 @@ export default function App() {
       '',
       '',
       '',
+      '',
       entry.summary
     ]);
     const templateRows = reportTemplate
-      ? [[new Date().toISOString(), '', '', '', '', '', '', '', `Template: ${reportTemplate.replace(/\n+/g, ' ').trim()}`]]
+      ? [[new Date().toISOString(), '', '', '', '', '', '', '', '', `Template: ${reportTemplate.replace(/\n+/g, ' ').trim()}`]]
       : [];
     const missingRows = [
-      [new Date().toISOString(), '', '', '', '', '', '', '', `Missing Inventory: ${missingInventory.length ? missingInventory.join('; ') : 'None'}`],
-      [new Date().toISOString(), '', '', '', '', '', '', '', `Missing Equipment Service: ${missingEquipment.length ? missingEquipment.join('; ') : 'None'}`]
+      [new Date().toISOString(), '', '', '', '', '', '', '', '', `Missing Inventory: ${missingInventory.length ? missingInventory.join('; ') : 'None'}`],
+      [new Date().toISOString(), '', '', '', '', '', '', '', '', `Missing Equipment Service: ${missingEquipment.length ? missingEquipment.join('; ') : 'None'}`]
     ];
     
     const csvContent = [headers, ...rows, ...templateRows, ...missingRows, ...reportRows].map(e => e.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");

@@ -155,6 +155,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
 
   const METRICS = [
     { key: 'chlorine', label: 'Free Chlorine',    unit: 'ppm', target: [DEFAULT_RANGES.chlorine.min,             DEFAULT_RANGES.chlorine.max]             as [number, number], get: (r: Reading) => r.chlorine },
+    { key: 'tc',       label: 'Total Chlorine',    unit: 'ppm', target: [DEFAULT_RANGES.totalChlorine.min,        DEFAULT_RANGES.totalChlorine.max]        as [number, number], get: (r: Reading) => r.totalChlorine },
     { key: 'ph',       label: 'pH Level',          unit: '',    target: [DEFAULT_RANGES.ph.min,                  DEFAULT_RANGES.ph.max]                   as [number, number], get: (r: Reading) => r.ph },
     { key: 'alk',      label: 'Alkalinity',        unit: 'ppm', target: [DEFAULT_RANGES.alkalinity.min,          DEFAULT_RANGES.alkalinity.max]           as [number, number], get: (r: Reading) => r.alkalinity },
     { key: 'ca',       label: 'Calcium Hardness',  unit: 'ppm', target: [DEFAULT_RANGES.calciumHardness.min,     DEFAULT_RANGES.calciumHardness.max]      as [number, number], get: (r: Reading) => r.calciumHardness },

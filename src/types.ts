@@ -5,7 +5,10 @@ export type TaskFrequency = 'daily' | 'weekly' | 'monthly' | 'once';
 export interface Reading {
   id: string;
   timestamp: Date;
+  /** Free (available) chlorine. */
   chlorine: number | null;
+  /** Total chlorine; combined chlorine (chloramines) = totalChlorine − chlorine. */
+  totalChlorine: number | null;
   sanitisationMv: number | null;
   ph: number | null;
   alkalinity: number | null;
@@ -22,7 +25,7 @@ export interface Reading {
    * that actually changed are present — used to show a "was X, now Y" trail.
    */
   previousValues?: Partial<Record<
-    'chlorine' | 'sanitisationMv' | 'ph' | 'alkalinity' | 'temperature' | 'differentialPressure' | 'calciumHardness' | 'cyanuricAcid',
+    'chlorine' | 'totalChlorine' | 'sanitisationMv' | 'ph' | 'alkalinity' | 'temperature' | 'differentialPressure' | 'calciumHardness' | 'cyanuricAcid',
     number | null
   >>;
 }
@@ -133,6 +136,7 @@ export interface WorkSession {
 
 export interface Ranges {
   chlorine: { min: number; max: number; unit: string };
+  totalChlorine: { min: number; max: number; unit: string };
   sanitisationMv: { min: number; max: number; unit: string };
   ph: { min: number; max: number; unit: string };
   alkalinity: { min: number; max: number; unit: string };
@@ -144,6 +148,8 @@ export interface Ranges {
 
 export const DEFAULT_RANGES: Ranges = {
   chlorine: { min: 1, max: 3, unit: 'ppm' },
+  // Free chlorine target plus no more than ~1 ppm combined chlorine.
+  totalChlorine: { min: 1, max: 4, unit: 'ppm' },
   sanitisationMv: { min: 650, max: 750, unit: 'mV' },
   ph: { min: 7.2, max: 7.8, unit: 'pH' },
   alkalinity: { min: 80, max: 120, unit: 'ppm' },

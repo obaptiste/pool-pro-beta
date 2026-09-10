@@ -165,8 +165,9 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
                       )}
                     </div>
                     <div className="p-4 md:col-span-3 flex flex-col justify-between gap-4">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
-                        <DataPoint label="Chlorine" field="chlorine" value={reading.chlorine} previousValue={getPreviousValue(reading, 'chlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-4">
+                        <DataPoint label="Free Chlorine" field="chlorine" value={reading.chlorine} previousValue={getPreviousValue(reading, 'chlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-400" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
+                        <DataPoint label="Total Chlorine" field="totalChlorine" value={reading.totalChlorine ?? null} previousValue={getPreviousValue(reading, 'totalChlorine')} unit="ppm" icon={<Droplets size={12} />} color="text-sky-300" onRequestEdit={(field) => setPendingEdit({ reading, focusField: field })} />
                         <DataPoint
                           label="Sanitisation / ORP"
                           field="sanitisationMv"
@@ -307,7 +308,7 @@ function CalendarDayLogRow({
           <span className="text-[9px] italic text-ink-dim/70 flex items-center gap-1"><Pencil size={9} />Edited</span>
         )}
       </div>
-      <p className="text-xs text-ink">pH {reading.ph ?? '—'} • ORP {reading.sanitisationMv ?? '—'} mV • FC {reading.chlorine ?? '—'} ppm</p>
+      <p className="text-xs text-ink">pH {reading.ph ?? '—'} • ORP {reading.sanitisationMv ?? '—'} mV • FC {reading.chlorine ?? '—'} ppm • TC {reading.totalChlorine ?? '—'} ppm</p>
       {reading.notes ? <p className="text-[11px] text-ink-muted">{reading.notes}</p> : null}
       <div className="flex justify-end items-center gap-3 pt-1">
         <button onClick={() => onEdit(reading)} className="text-[9px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors flex items-center gap-1"><Pencil size={10} />Amend</button>

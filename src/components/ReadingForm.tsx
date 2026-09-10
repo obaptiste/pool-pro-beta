@@ -37,6 +37,7 @@ type FormData = Record<NumericField, number | null> & {
 
 const INITIAL_FORM: FormData = {
   chlorine: null,
+  totalChlorine: null,
   sanitisationMv: null,
   ph: null,
   alkalinity: null,
@@ -49,6 +50,7 @@ const INITIAL_FORM: FormData = {
 
 const INITIAL_RAW: Record<NumericField, string> = {
   chlorine: '',
+  totalChlorine: '',
   sanitisationMv: '',
   ph: '',
   alkalinity: '',
@@ -65,6 +67,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
     if (!initialReading) return INITIAL_FORM;
     return {
       chlorine: initialReading.chlorine,
+      totalChlorine: initialReading.totalChlorine ?? null,
       sanitisationMv: initialReading.sanitisationMv ?? null,
       ph: initialReading.ph,
       alkalinity: initialReading.alkalinity,
@@ -80,6 +83,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
     const fromValue = (v: number | null) => (v == null ? '' : String(v));
     return {
       chlorine: fromValue(initialReading.chlorine),
+      totalChlorine: fromValue(initialReading.totalChlorine ?? null),
       sanitisationMv: fromValue(initialReading.sanitisationMv ?? null),
       ph: fromValue(initialReading.ph),
       alkalinity: fromValue(initialReading.alkalinity),
@@ -219,7 +223,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
               {
                 text: isNotes
                   ? "Transcribe the following pool maintenance observations or chemical additions. Return ONLY the transcribed text."
-                    : "Transcribe the following pool reading. Extract values for Chlorine, ORP sanitisation mV, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
+                    : "Transcribe the following pool reading. Extract values for Free Chlorine, Total Chlorine, ORP sanitisation mV, pH, Alkalinity, Temperature, Pressure, Calcium, and CYA if mentioned. Return ONLY a JSON object with these keys: chlorine, totalChlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes."
               }
             ],
             config: {
@@ -287,7 +291,7 @@ export default function ReadingForm({ onSave, onCancel, initialReading, focusFie
           },
           {
             text: `Extract pool report details from this image. Return ONLY a JSON object with keys:
-chlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
+chlorine, totalChlorine, sanitisationMv, ph, alkalinity, temperature, differentialPressure, calciumHardness, cyanuricAcid, notes, missingInventory, missingEquipment.
 missingInventory and missingEquipment should be arrays of strings when identifiable.`
           }
         ],
@@ -346,6 +350,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
         <form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-10 pb-32">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField label="Free Chlorine" name="chlorine" value={rawInputs.chlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.chlorine} min={0} max={10} step="any" isEmpty={rawInputs.chlorine === ''} />
+            <InputField label="Total Chlorine" name="totalChlorine" value={rawInputs.totalChlorine} unit="ppm" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.totalChlorine} min={0} max={10} step="any" isEmpty={rawInputs.totalChlorine === ''} />
             <InputField label="Sanitisation / ORP (mV)" name="sanitisationMv" value={rawInputs.sanitisationMv} unit="mV" icon={<Droplets size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.sanitisationMv} min={0} max={1200} step="any" isEmpty={rawInputs.sanitisationMv === ''} />
             <InputField label="pH Level" name="ph" value={rawInputs.ph} unit="" icon={<Activity size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.ph} min={0} max={14} step="any" isEmpty={rawInputs.ph === ''} />
             <InputField label="Total Alkalinity" name="alkalinity" value={rawInputs.alkalinity} unit="ppm" icon={<TrendingUp size={16} />} onChange={handleChange} onBlur={handleBlur} error={errors.alkalinity} min={0} max={300} step="any" isEmpty={rawInputs.alkalinity === ''} />

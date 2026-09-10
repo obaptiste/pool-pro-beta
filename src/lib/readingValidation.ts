@@ -3,13 +3,14 @@ import { DEFAULT_RANGES, Reading } from '../types';
 export type SoftValidationLevel = 'warning' | 'elevated';
 
 export interface SoftValidationWarning {
-  field: keyof Pick<Reading, 'chlorine' | 'ph' | 'alkalinity' | 'temperature' | 'differentialPressure' | 'calciumHardness' | 'cyanuricAcid' | 'sanitisationMv'>;
+  field: keyof Pick<Reading, 'chlorine' | 'totalChlorine' | 'ph' | 'alkalinity' | 'temperature' | 'differentialPressure' | 'calciumHardness' | 'cyanuricAcid' | 'sanitisationMv'>;
   message: string;
   level: SoftValidationLevel;
 }
 
 export const NUMERIC_READING_FIELDS = [
   'chlorine',
+  'totalChlorine',
   'ph',
   'alkalinity',
   'temperature',
@@ -23,6 +24,7 @@ export type NumericReadingField = typeof NUMERIC_READING_FIELDS[number];
 
 const HARD_MIN_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
   chlorine: 0,
+  totalChlorine: 0,
   ph: 0,
   alkalinity: 0,
   temperature: -50,
@@ -43,7 +45,8 @@ const HARD_MAX_BY_FIELD: Partial<Record<NumericReadingField, number>> = {
 };
 
 export const FIELD_LABEL: Record<NumericReadingField, string> = {
-  chlorine: 'Chlorine',
+  chlorine: 'Free Chlorine',
+  totalChlorine: 'Total Chlorine',
   ph: 'pH',
   alkalinity: 'Alkalinity',
   temperature: 'Temperature',
