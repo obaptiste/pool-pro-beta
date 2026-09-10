@@ -6,10 +6,12 @@ import {
   combinedChlorineOf,
   getCombinedChlorineStatus,
   getCombinedChlorineWarning,
+  getSoftWarning,
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
 } from '../../../src/lib/readingValidation';
 import { DEFAULT_RANGES, type EquipmentItem, type Reading, type Status } from '../../../src/types';
+import { decodeReadingCursor, encodeReadingCursor } from './cursor';
 import type { PoolDataSource } from './types';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
@@ -38,6 +40,23 @@ function getRangeStatus(value: number, min: number, max: number): Status {
   return 'good';
 }
 
+// ORP/sanitisation doesn't use the generic range banding above: the app's
+// own classifier (getSoftWarning, used by History's warning badges) treats
+// 750–850 mV as "elevated, usually acceptable" rather than out-of-range —
+// DEFAULT_RANGES.sanitisationMv's 750 max is a *target* ceiling, not a
+// hard limit, so running it through getRangeStatus would call anything
+// above 750 "critical" and contradict what the rest of the app tells the
+// same user about the same reading. Reuse that classifier instead of
+// re-deriving separate thresholds here.
+function getSanitisationMvStatus(value: number): Status {
+  const warning = getSoftWarning('sanitisationMv', value);
+  if (!warning) return 'good';
+  // 'elevated' (750–850 mV) is the "usually acceptable" band; the plain
+  // 'warning' level here only fires outside 650–850, which is a real
+  // actionable extreme.
+  return warning.level === 'elevated' ? 'warning' : 'critical';
+}
+
 const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : Math.abs(lsi) > 0.1 ? 'warning' : 'good');
 const lsiLabel = (lsi: number): string => (lsi < -0.3 ? 'corrosive' : lsi > 0.3 ? 'scale-forming' : 'balanced');
 
@@ -52,7 +71,9 @@ function serializeReading(reading: Reading) {
   for (const field of NUMERIC_READING_FIELDS) {
     const value = reading[field];
     if (value == null) continue;
-    fieldStatus[field] = getRangeStatus(value, DEFAULT_RANGES[field].min, DEFAULT_RANGES[field].max);
+    fieldStatus[field] = field === 'sanitisationMv'
+      ? getSanitisationMvStatus(value)
+      : getRangeStatus(value, DEFAULT_RANGES[field].min, DEFAULT_RANGES[field].max);
   }
   return {
     id: reading.id,
@@ -172,7 +193,7 @@ Don't use when: you need history or averages (use poolstatus_list_readings or po
 Args:
   - since (ISO date, optional): only readings at or after this instant
   - until (ISO date, optional): only readings at or before this instant
-  - before (ISO date, optional): pagination cursor — only readings strictly before this instant (use next_before from a previous page)
+  - before (opaque string, optional): pagination cursor — pass the next_before value from a previous page, unmodified, to get the page after it
   - limit (1–${MAX_LIST_LIMIT}, default 20)
   - response_format ('markdown' | 'json'): default 'markdown'
 
@@ -182,26 +203,35 @@ Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
       inputSchema: {
         since: IsoDate.optional(),
         until: IsoDate.optional(),
-        before: IsoDate.optional(),
+        before: z.string().optional().describe("Opaque pagination cursor — pass a previous page's next_before value unmodified."),
         limit: z.number().int().min(1).max(MAX_LIST_LIMIT).default(20),
         response_format: ResponseFormat,
       },
       annotations: READ_ONLY,
     },
     async ({ since, until, before, limit, response_format }) => {
+      let cursor;
+      try {
+        cursor = before ? decodeReadingCursor(before) : undefined;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid pagination cursor.';
+        return { content: [{ type: 'text' as const, text: message }], isError: true };
+      }
       const rows = await source.listReadings({
         since: parseDate(since),
         until: parseDate(until),
-        before: parseDate(before),
+        before: cursor,
         limit: limit + 1,
       });
       const hasMore = rows.length > limit;
-      const page = rows.slice(0, limit).map(serializeReading);
+      const pageRows = rows.slice(0, limit);
+      const page = pageRows.map(serializeReading);
+      const lastRow = pageRows[pageRows.length - 1];
       const output = {
         count: page.length,
         readings: page,
         has_more: hasMore,
-        next_before: hasMore ? page[page.length - 1].timestamp : null,
+        next_before: hasMore && lastRow ? encodeReadingCursor({ timestamp: lastRow.timestamp, id: lastRow.id }) : null,
       };
       if (page.length === 0) return toolResult(output, 'No readings found for that window.');
       const text = response_format === 'json'
@@ -273,6 +303,7 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
           const status: Status | null =
             key === 'combinedChlorine' ? getCombinedChlorineStatus(latest)
             : key === 'lsi' ? lsiStatus(latest)
+            : key === 'sanitisationMv' ? getSanitisationMvStatus(latest)
             : target ? getRangeStatus(latest, target.min, target.max) : null;
           const round = (n: number) => Math.round(n * 100) / 100;
           return [key, {

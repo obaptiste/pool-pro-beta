@@ -11,8 +11,14 @@ const RATE_LIMIT = 120;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 
 export interface McpHandlerOptions {
-  /** Builds (or returns a cached) data source. Called per request so a misconfiguration surfaces as a 503, not a crash at import. */
-  getSource: () => PoolDataSource;
+  /**
+   * Builds (or returns a cached) data source. Called per request, and
+   * awaited before the MCP server is connected, so a misconfigured
+   * deployment — a missing/invalid service account, no owner set — fails
+   * here as a clean 503 rather than reporting healthy and only failing
+   * once a tool actually queries Firestore.
+   */
+  getSource: () => PoolDataSource | Promise<PoolDataSource>;
   /** The shared secret a client must present as `Authorization: Bearer <token>`. */
   bearerToken: string | undefined;
 }
@@ -64,7 +70,7 @@ export async function handleMcpRequest(req: NodeRequest, res: ServerResponse, op
 
   let source: PoolDataSource;
   try {
-    source = options.getSource();
+    source = await options.getSource();
   } catch (error) {
     sendJson(res, 503, { error: error instanceof Error ? error.message : 'MCP data source is not configured.' });
     return;
