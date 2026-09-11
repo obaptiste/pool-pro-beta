@@ -13,7 +13,7 @@ import {
 } from '../../../src/lib/readingValidation';
 import { DEFAULT_RANGES, type EquipmentItem, type Reading, type Status } from '../../../src/types';
 import { decodeReadingCursor, encodeReadingCursor } from './cursor';
-import type { PoolDataSource } from './types';
+import type { PoolDataSource, ReadingCursor } from './types';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';
@@ -25,6 +25,13 @@ const MAX_TREND_DAYS = 90;
 // `truncated`, with `from` adjusted to match — see poolstatus_get_reading_trends).
 // Exported so tests can exercise the truncation path without hardcoding it twice.
 export const MAX_TREND_ROWS = 500;
+// Hard ceiling on raw rows scanned for one trends request, regardless of
+// how many of them turn out to be note-only. Without this, a window with
+// enough consecutive note-only logs to keep displacing real measurements
+// out of every page would make one tool call fetch the entire window one
+// page at a time — bounded pagination, not unbounded.
+// Exported so tests can exercise it directly, same as MAX_TREND_ROWS above.
+export const MAX_TREND_FETCH_ROWS = MAX_TREND_ROWS * 5;
 // How far back poolstatus_get_latest_reading looks for a row with an actual
 // measurement before giving up and reporting no reading. If every one of
 // the most recent LATEST_READING_SEARCH_LIMIT logs is note-only, an older
@@ -87,6 +94,62 @@ function getRangeStatus(value: number, min: number, max: number): Status {
 // (skip such rows when picking "the latest reading") and poolstatus_get_reading_trends
 // (exclude them from readings_considered and the metric series).
 const hasMeasurement = (reading: Reading): boolean => NUMERIC_READING_FIELDS.some((field) => reading[field] != null);
+
+interface TrendRowsResult {
+  rows: Reading[];
+  /**
+   * True when there's more to the window than `rows` reflects — either
+   * more than MAX_TREND_ROWS measurements exist (`rows` is capped to the
+   * most recent MAX_TREND_ROWS, so the caller's usual "from = oldest row
+   * kept" still applies), or MAX_TREND_FETCH_ROWS raw rows were scanned
+   * without ever confirming the window was fully covered (a long run of
+   * note-only logs) while finding fewer than that many measurements.
+   */
+  truncated: boolean;
+  /**
+   * The oldest instant actually scanned, whenever scanning stopped before
+   * confirming the rest of the window held nothing more (via the fetch
+   * ceiling or the MAX_TREND_ROWS cap) — null once every row up to the
+   * window's start has actually been seen. The caller only needs this
+   * when `rows` comes back empty and truncated (nothing with a
+   * measurement was found before scanning stopped), where there's no
+   * "oldest row kept" to fall back on for an honest `from`.
+   */
+  scanBoundary: Date | null;
+}
+
+// Paginates through the window collecting only rows with a measurement
+// (note-only logs must not consume a slot in MAX_TREND_ROWS ahead of real
+// data — see hasMeasurement's comment), continuing past a page of raw
+// rows that turned out to be all notes rather than concluding the window
+// is thin. Bounded by MAX_TREND_FETCH_ROWS so a window that is mostly (or
+// entirely) note-only logs still costs one call, not unbounded reads.
+async function fetchTrendRows(source: PoolDataSource, since: Date, until: Date): Promise<TrendRowsResult> {
+  const rows: Reading[] = [];
+  let cursor: ReadingCursor | undefined;
+  let totalFetched = 0;
+  let scannedFullWindow = false;
+  let lastScanned: Date | null = null;
+  for (;;) {
+    const batch = await source.listReadings({ since, until, before: cursor, limit: MAX_TREND_ROWS + 1 });
+    totalFetched += batch.length;
+    for (const reading of batch) if (hasMeasurement(reading)) rows.push(reading);
+    if (batch.length > 0) lastScanned = batch[batch.length - 1].timestamp;
+    if (batch.length < MAX_TREND_ROWS + 1) {
+      scannedFullWindow = true;
+      break;
+    }
+    if (rows.length > MAX_TREND_ROWS || totalFetched >= MAX_TREND_FETCH_ROWS) break;
+    const lastRaw = batch[batch.length - 1];
+    cursor = { timestamp: lastRaw.timestamp, id: lastRaw.id };
+  }
+  const haveExtra = rows.length > MAX_TREND_ROWS;
+  return {
+    rows: haveExtra ? rows.slice(0, MAX_TREND_ROWS) : rows,
+    truncated: haveExtra || !scannedFullWindow,
+    scanBoundary: scannedFullWindow ? null : lastScanned,
+  };
+}
 
 // ORP/sanitisation doesn't use the generic range banding above: the app's
 // own classifier (getSoftWarning, used by History's warning badges) treats
@@ -380,7 +443,7 @@ Args:
 
 Returns: { days, readings_considered, from, to, truncated, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status, warning } } }.
 direction compares the newest value with the oldest in the window: 'rising' | 'falling' | 'flat' (within 2% of the target span). warning explains why the latest value is flagged (null when status is 'good' or there's no data).
-truncated is true if the window holds more than ${MAX_TREND_ROWS} readings — in that case only the most recent ${MAX_TREND_ROWS} are summarised, and 'from' is adjusted to the oldest of those (not the full requested window) so it always matches what was actually averaged. Narrow 'days', or use poolstatus_list_readings to page through everything, if that happens.
+truncated is true if the window holds more than ${MAX_TREND_ROWS} measurements — in that case only the most recent ${MAX_TREND_ROWS} are summarised — or if scanning a long run of note-only logs hit an internal fetch ceiling before confirming the rest of the window holds nothing more. Either way 'from' is adjusted to match what was actually summarised, not the full requested window. Narrow 'days', or use poolstatus_list_readings to page through everything, if that happens.
 
 Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`,
       inputSchema: {
@@ -392,23 +455,16 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
     async ({ days, response_format }) => {
       const to = new Date();
       const requestedFrom = new Date(to.getTime() - days * 86_400_000);
-      // Ask for one more than the cap so a window that has exactly
-      // MAX_TREND_ROWS readings isn't mistaken for a truncated one.
-      const fetched = await source.listReadings({ since: requestedFrom, until: to, limit: MAX_TREND_ROWS + 1 });
-      const truncated = fetched.length > MAX_TREND_ROWS;
-      // Newest-first, so capping at MAX_TREND_ROWS keeps the most recent
-      // readings and drops the oldest ones in the window — reflected below
-      // by reporting 'from' as the oldest reading actually included,
-      // rather than the full requested window, whenever that happens.
-      const capped = truncated ? fetched.slice(0, MAX_TREND_ROWS) : fetched;
-      const from = truncated ? capped[capped.length - 1].timestamp : requestedFrom;
-      // Notes-only rows contribute nothing to any metric, so they shouldn't
-      // inflate readings_considered or produce a "N readings" heading over
-      // an otherwise-empty table. They can still occupy a slot in the row
-      // cap above ahead of real measurements in a window with many of them
-      // — narrower than this fix, and left as a known limitation rather
-      // than adding a bounded-continuation pagination loop here.
-      const rows = capped.filter(hasMeasurement);
+      // Paginates past note-only logs rather than letting them occupy a
+      // slot in the cap ahead of real measurements — see fetchTrendRows.
+      const { rows, truncated, scanBoundary } = await fetchTrendRows(source, requestedFrom, to);
+      // 'from' always matches what the metrics below actually reflect: the
+      // oldest measurement kept, whenever there is one — whether that's
+      // because more than the cap were found, or because the fetch
+      // ceiling was hit first. Only when truncated with zero measurements
+      // found at all is there no "oldest kept" to point to, so it falls
+      // back to how far scanning actually got.
+      const from = !truncated ? requestedFrom : rows.length > 0 ? rows[rows.length - 1].timestamp : scanBoundary ?? requestedFrom;
 
       type Series = { label: string; unit: string; values: number[]; target: { min: number; max: number } | null };
       const series: Record<string, Series> = {};
@@ -465,12 +521,26 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
       );
 
       const output = { days, readings_considered: rows.length, from: from.toISOString(), to: to.toISOString(), truncated, metrics };
-      if (rows.length === 0) return toolResult(output, `No readings in the last ${days} day${days === 1 ? '' : 's'}.`);
+      if (rows.length === 0) {
+        return toolResult(
+          output,
+          truncated
+            // Scanning stopped at the fetch ceiling before finding a single
+            // measurement or confirming the window holds none — distinct
+            // from the window genuinely having nothing in it.
+            ? `Scanned up to ${MAX_TREND_FETCH_ROWS} logged rows in the last ${days} day${days === 1 ? '' : 's'} without finding a measurement (mostly notes?) — narrow 'days' or use poolstatus_list_readings.`
+            : `No readings in the last ${days} day${days === 1 ? '' : 's'}.`,
+        );
+      }
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [
             `## Trends over the last ${days} day${days === 1 ? '' : 's'} (${rows.length} reading${rows.length === 1 ? '' : 's'})`,
-            ...(truncated ? [`_Window has more than ${MAX_TREND_ROWS} readings — showing only the most recent ${MAX_TREND_ROWS}, from ${output.from}._`] : []),
+            ...(truncated ? [
+              rows.length >= MAX_TREND_ROWS
+                ? `_Window has more than ${MAX_TREND_ROWS} measurements — showing only the most recent ${MAX_TREND_ROWS}, from ${output.from}._`
+                : `_Scanned up to ${MAX_TREND_FETCH_ROWS} logged rows without confirming the rest of the window holds nothing more — summarising the ${rows.length} measurement${rows.length === 1 ? '' : 's'} found, from ${output.from}._`,
+            ] : []),
             '',
             '| Metric | Latest | Avg | Min | Max | Direction | Target | Status |',
             '|---|---|---|---|---|---|---|---|',

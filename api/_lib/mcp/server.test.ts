@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Reading } from '../../../src/types';
 import { handleMcpRequest } from './handler';
-import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_ROWS } from './server';
+import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
 import type { ListReadingsOptions, PoolDataSource } from './types';
 
 const TOKEN = 'test-token-123';
@@ -499,6 +499,74 @@ describe('MCP tools', () => {
 
     await client.close();
     bigServer.close();
+  });
+
+  it('get_reading_trends pages past note-only logs rather than letting them displace measurements', async () => {
+    // Alternating measurement/note rows, cursor-respecting like the real
+    // Firestore source, so a single MAX_TREND_ROWS+1-sized page never has
+    // enough measurements on its own — this only passes if fetchTrendRows
+    // actually continues to a second page rather than settling for what
+    // one page found.
+    const totalRawRows = (MAX_TREND_ROWS + 1) * 2 + 10;
+    const interleaved: Reading[] = Array.from({ length: totalRawRows }, (_, i) =>
+      reading(`r${i}`, i / (24 * 60), i % 2 === 0 ? { chlorine: 2 } : { notes: 'no test today' }),
+    );
+    const source: PoolDataSource = {
+      async listReadings({ before, limit }: ListReadingsOptions) {
+        return interleaved
+          .filter((r) => {
+            if (!before) return true;
+            const rt = r.timestamp.getTime();
+            const bt = before.timestamp.getTime();
+            return rt !== bt ? rt < bt : r.id < before.id;
+          })
+          .slice(0, limit);
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const out = structured<{ readings_considered: number; truncated: boolean; metrics: { chlorine: { count: number } } }>(
+      await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } }),
+    );
+    assert.equal(out.readings_considered, MAX_TREND_ROWS);
+    assert.equal(out.truncated, true);
+    // Every one of the 500 kept rows must be a real measurement — none of
+    // the interleaved notes leaked in, and none of the 500 real
+    // measurements among the raw rows scanned were dropped.
+    assert.equal(out.metrics.chlorine.count, MAX_TREND_ROWS);
+    await client.close();
+    close();
+  });
+
+  it('get_reading_trends stops at the fetch ceiling when a window is overwhelmingly note-only', async () => {
+    let totalServed = 0;
+    const allNotes: PoolDataSource = {
+      async listReadings({ limit }: ListReadingsOptions) {
+        // Always returns a full page of note-only rows — an unbounded loop
+        // without the fetch ceiling; with it, this must still return.
+        totalServed += limit;
+        return Array.from({ length: limit }, (_, i) => reading(`note${i}`, i, { notes: 'no test' }));
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(allNotes);
+    const out = structured<{ readings_considered: number; truncated: boolean }>(
+      await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 7 } }),
+    );
+    assert.equal(out.readings_considered, 0);
+    assert.equal(out.truncated, true);
+    // Confirms the ceiling actually bounded it rather than this mock
+    // happening to stop on its own (it never would) — allow one page of
+    // slack for the fetch that pushes the running total past the ceiling.
+    assert.ok(totalServed <= MAX_TREND_FETCH_ROWS + (MAX_TREND_ROWS + 1), `expected bounded fetching, served ${totalServed} rows`);
+    await client.close();
+    close();
   });
 
   it('get_reading_trends explains flagged metrics, including the synthetic combinedChlorine and lsi series', async () => {
