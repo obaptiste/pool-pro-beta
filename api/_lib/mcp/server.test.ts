@@ -260,6 +260,28 @@ describe('MCP tools', () => {
     close();
   });
 
+  it('get_latest_reading explains a near-edge warning that getSoftWarning has no message for', async () => {
+    // chlorine 1.0 is inside the 1-3 range but within getRangeStatus's 10%
+    // edge buffer -> 'warning', yet getSoftWarning only fires for values
+    // truly outside the range, so it returns nothing for this one. Without
+    // a fallback, fieldWarnings would have no entry despite fieldStatus
+    // flagging the field.
+    const source: PoolDataSource = {
+      async listReadings() { return [reading('edge', 0, { chlorine: 1.0 })]; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    const out = structured<{ reading: { fieldStatus: Record<string, string>; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.fieldStatus.chlorine, 'warning');
+    assert.match(out.reading.fieldWarnings.chlorine, /Near the edge of the normal range \(1–3 ppm\)/);
+    await client.close();
+    close();
+  });
+
   it('get_latest_reading skips a trailing note-only log to find the last real measurement', async () => {
     // A note saved after the actual test (handleSaveReading in App.tsx
     // doesn't count it as a completed test either) must not hide that
@@ -454,6 +476,39 @@ describe('MCP tools', () => {
 
     await client.close();
     bigServer.close();
+  });
+
+  it('get_reading_trends explains flagged metrics, including the synthetic combinedChlorine and lsi series', async () => {
+    // The same "why is this flagged" gap poolstatus_get_latest_reading had
+    // (a bare status with no explanation) applied here too, for every
+    // metric — including the two that aren't a raw Reading field and so
+    // have no getSoftWarning of their own.
+    const source: PoolDataSource = {
+      async listReadings() {
+        return [reading('bad', 0, {
+          sanitisationMv: 233, chlorine: 1, totalChlorine: 3,
+          ph: 8.5, temperature: 30, calciumHardness: 500, alkalinity: 300,
+        })];
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } });
+    const out = structured<{ metrics: Record<string, { status: string; warning: string | null }> }>(result);
+    assert.equal(out.metrics.sanitisationMv.warning, 'Sanitisation may be too low (<650 mV).');
+    assert.equal(out.metrics.combinedChlorine.status, 'critical');
+    assert.match(out.metrics.combinedChlorine.warning ?? '', /Combined chlorine 2\.0 ppm \(>1\)/);
+    assert.equal(out.metrics.lsi.status, 'critical');
+    assert.match(out.metrics.lsi.warning ?? '', /LSI is scale-forming/);
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    assert.match(text, /⚠ ORP \/ sanitisation: Sanitisation may be too low/);
+    assert.match(text, /⚠ Combined chlorine: Combined chlorine 2\.0 ppm/);
+    assert.match(text, /⚠ LSI: LSI is scale-forming/);
+    await client.close();
+    close();
   });
 
   it('get_reading_trends omits inconsistent free/total chlorine pairs from combined chlorine', async () => {

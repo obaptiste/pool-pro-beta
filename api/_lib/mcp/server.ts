@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { calculateLSI } from '../../../src/lib/lsi';
 import {
+  COMBINED_CHLORINE_MAX,
   COMBINED_CHLORINE_OK_MAX,
   combinedChlorineOf,
   getCombinedChlorineStatus,
@@ -97,6 +98,44 @@ function getSanitisationMvStatus(value: number): Status {
 const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : Math.abs(lsi) > 0.1 ? 'warning' : 'good');
 const lsiLabel = (lsi: number): string => (lsi < -0.3 ? 'corrosive' : lsi > 0.3 ? 'scale-forming' : 'balanced');
 
+// getSoftWarning only returns a message for a value truly outside its
+// range — getRangeStatus's 'warning' band (within 10% of an edge, but
+// still inside the range) has no message of its own. Without this, a
+// field can be flagged 'warning' with no explanation at all in
+// fieldWarnings, which is the whole point of that field. Not a
+// getSoftWarning-derived message since none exists for this band; states
+// only where the value sits, not a diagnosis.
+function nearEdgeMessage(field: NumericReadingField): string {
+  const { min, max, unit } = DEFAULT_RANGES[field];
+  return `Near the edge of the normal range (${min}–${max}${unit ? ` ${unit}` : ''}) — worth a recheck on the next test.`;
+}
+
+// Mirrors getCombinedChlorineWarning's own thresholds and message text
+// (src/lib/readingValidation.ts) for a bare combined-chlorine number, used
+// where only the derived trend value is available — not the underlying
+// free/total pair getCombinedChlorineWarning itself needs.
+function combinedChlorineMessage(combined: number): string | null {
+  if (combined > COMBINED_CHLORINE_MAX) {
+    return `Combined chlorine ${combined.toFixed(1)} ppm (>${COMBINED_CHLORINE_MAX}) — chloramines high. Shock and retest before swimming.`;
+  }
+  if (combined > COMBINED_CHLORINE_OK_MAX) {
+    return `Combined chlorine ${combined.toFixed(1)} ppm — ideal is under ${COMBINED_CHLORINE_OK_MAX}. Watch it on the next test.`;
+  }
+  return null;
+}
+
+// Same "explain why this metric is flagged" text poolstatus_get_latest_reading
+// carries in fieldWarnings, but keyed by trend series (which includes the
+// synthetic combinedChlorine/lsi metrics alongside the raw fields) rather
+// than a single Reading.
+function getMetricWarning(key: string, latest: number, status: Status | null): string | null {
+  if (!status || status === 'good') return null;
+  if (key === 'combinedChlorine') return combinedChlorineMessage(latest);
+  if (key === 'lsi') return `LSI is ${lsiLabel(latest)} (target within ±0.3).`;
+  const field = key as NumericReadingField;
+  return getSoftWarning(field, latest)?.message ?? nearEdgeMessage(field);
+}
+
 const fmt = (value: number | null | undefined, digits = 1): string => (value == null ? '—' : value.toFixed(digits));
 // For a previous measurement: the raw stored number, no rounding (unlike
 // fmt, meant for computed/display figures like LSI) — this is evidence of
@@ -122,6 +161,10 @@ function serializeReading(reading: Reading) {
       : getRangeStatus(value, DEFAULT_RANGES[field].min, DEFAULT_RANGES[field].max);
     const warning = getSoftWarning(field, value);
     if (warning) fieldWarnings[field] = warning.message;
+    // getSoftWarning has nothing to say about getRangeStatus's near-edge
+    // 'warning' band (still inside range, just close to an edge) — without
+    // this, such a field would be flagged with no explanation at all.
+    else if (fieldStatus[field] === 'warning') fieldWarnings[field] = nearEdgeMessage(field);
   }
   return {
     id: reading.id,
@@ -325,8 +368,8 @@ Args:
   - days (1–${MAX_TREND_DAYS}, default 7)
   - response_format ('markdown' | 'json'): default 'markdown'
 
-Returns: { days, readings_considered, from, to, truncated, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status } } }.
-direction compares the newest value with the oldest in the window: 'rising' | 'falling' | 'flat' (within 2% of the target span).
+Returns: { days, readings_considered, from, to, truncated, metrics: { field: { label, unit, count, latest, average, min, max, direction, target: {min,max}, status, warning } } }.
+direction compares the newest value with the oldest in the window: 'rising' | 'falling' | 'flat' (within 2% of the target span). warning explains why the latest value is flagged (null when status is 'good' or there's no data).
 truncated is true if the window holds more than ${MAX_TREND_ROWS} readings — in that case only the most recent ${MAX_TREND_ROWS} are summarised, and 'from' is adjusted to the oldest of those (not the full requested window) so it always matches what was actually averaged. Narrow 'days', or use poolstatus_list_readings to page through everything, if that happens.
 
 Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`,
@@ -385,7 +428,7 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
       const metrics = Object.fromEntries(
         Object.entries(series).map(([key, { label, unit, values, target }]) => {
           if (values.length === 0) {
-            return [key, { label, unit, count: 0, latest: null, average: null, min: null, max: null, direction: null, target, status: null }];
+            return [key, { label, unit, count: 0, latest: null, average: null, min: null, max: null, direction: null, target, status: null, warning: null }];
           }
           const latest = values[0];
           const oldest = values[values.length - 1];
@@ -406,6 +449,7 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
             min: round(Math.min(...values)),
             max: round(Math.max(...values)),
             direction, target, status,
+            warning: getMetricWarning(key, latest, status),
           }];
         }),
       );
@@ -423,6 +467,9 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
             ...Object.values(metrics)
               .filter((m) => m.count > 0)
               .map((m) => `| ${m.label} | ${m.latest} ${m.unit} | ${m.average} | ${m.min} | ${m.max} | ${m.direction} | ${m.target ? `${m.target.min}–${m.target.max}` : '—'} | ${m.status} |`),
+            ...Object.values(metrics)
+              .filter((m) => m.warning)
+              .map((m) => `- ⚠ ${m.label}: ${m.warning}`),
           ].join('\n');
       return toolResult(output, text);
     },
