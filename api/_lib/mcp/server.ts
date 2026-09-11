@@ -302,8 +302,17 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
       // readings and drops the oldest ones in the window — reflected below
       // by reporting 'from' as the oldest reading actually included,
       // rather than the full requested window, whenever that happens.
-      const rows = truncated ? fetched.slice(0, MAX_TREND_ROWS) : fetched;
-      const from = truncated ? rows[rows.length - 1].timestamp : requestedFrom;
+      const capped = truncated ? fetched.slice(0, MAX_TREND_ROWS) : fetched;
+      const from = truncated ? capped[capped.length - 1].timestamp : requestedFrom;
+      // A log with no measurements (just a note — see handleSaveReading in
+      // App.tsx, which doesn't count one as a completed test either)
+      // contributes nothing to any metric, so it shouldn't inflate
+      // readings_considered or produce a "N readings" heading over an
+      // otherwise-empty table. Notes-only rows can still occupy a slot in
+      // the row cap above ahead of real measurements in a window with many
+      // of them — narrower than this fix, and left as a known limitation
+      // rather than adding a bounded-continuation pagination loop here.
+      const rows = capped.filter((reading) => NUMERIC_READING_FIELDS.some((field) => reading[field] != null));
 
       type Series = { label: string; unit: string; values: number[]; target: { min: number; max: number } | null };
       const series: Record<string, Series> = {};

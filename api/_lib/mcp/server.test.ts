@@ -381,6 +381,29 @@ describe('MCP tools', () => {
     close();
   });
 
+  it('get_reading_trends excludes note-only logs from readings_considered', async () => {
+    // A log with no measurements (just a note) isn't a completed test per
+    // handleSaveReading in App.tsx either — it must not inflate
+    // readings_considered or produce a "1 reading" heading over an
+    // otherwise-empty metrics table.
+    const notesOnlySource: PoolDataSource = {
+      async listReadings() {
+        return [reading('note-only', 0, { notes: 'Topped up water level, no test today' })];
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(notesOnlySource);
+    const out = structured<{ readings_considered: number }>(
+      await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } }),
+    );
+    assert.equal(out.readings_considered, 0);
+    await client.close();
+    close();
+  });
+
   it('list_tasks filters by status and frequency', async () => {
     const client = await connect(TOKEN);
     const open = structured<{ tasks: { id: string }[] }>(await client.callTool({ name: 'poolstatus_list_tasks', arguments: {} }));
