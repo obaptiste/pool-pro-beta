@@ -100,6 +100,24 @@ async function connect(token: string | undefined): Promise<Client> {
   return client;
 }
 
+// For tests that need a PoolDataSource other than the shared fixture above
+// (a different row count, or data crafted to hit one specific branch)
+// without perturbing the assertions that read from that shared fixture.
+async function connectToSource(source: PoolDataSource): Promise<{ client: Client; close: () => void }> {
+  const server = createServer((req, res) => {
+    handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => source }).catch((error) => {
+      res.writeHead(500).end(String(error));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  }));
+  return { client, close: () => server.close() };
+}
+
 const structured = <T,>(result: unknown): T => (result as { structuredContent?: unknown }).structuredContent as T;
 
 describe('MCP endpoint auth', () => {
@@ -262,6 +280,17 @@ describe('MCP tools', () => {
     await client.close();
   });
 
+  it('list_readings rejects a calendar-invalid date', async () => {
+    // Date.parse would silently roll 2026-02-30 forward to March 2 instead
+    // of rejecting it, querying a window the caller never asked for.
+    const client = await connect(TOKEN);
+    const result = await client.callTool({ name: 'poolstatus_list_readings', arguments: { since: '2026-02-30' } });
+    assert.equal(result.isError, true);
+    const valid = await client.callTool({ name: 'poolstatus_list_readings', arguments: { since: '2026-02-28T12:00:00Z' } });
+    assert.notEqual(valid.isError, true);
+    await client.close();
+  });
+
   it('get_reading_trends summarises the window including derived metrics', async () => {
     const client = await connect(TOKEN);
     const out = structured<{ readings_considered: number; truncated: boolean; metrics: Record<string, { count: number; latest: number | null; average: number | null; direction: string | null; status: string | null }> }>(
@@ -323,6 +352,33 @@ describe('MCP tools', () => {
 
     await client.close();
     bigServer.close();
+  });
+
+  it('get_reading_trends omits inconsistent free/total chlorine pairs from combined chlorine', async () => {
+    // total < free is a measurement error (getCombinedChlorineWarning tells
+    // the user to re-test), not a valid zero — it must not sneak into the
+    // combined-chlorine average as combinedChlorineOf's clamped 0.
+    const source: PoolDataSource = {
+      async listReadings() {
+        return [
+          reading('good', 0, { chlorine: 1, totalChlorine: 2 }), // combined = 1
+          reading('bad', 0.1, { chlorine: 2, totalChlorine: 1 }), // inconsistent — must be excluded
+        ];
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const out = structured<{ metrics: { combinedChlorine: { count: number; latest: number; average: number } } }>(
+      await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } }),
+    );
+    assert.equal(out.metrics.combinedChlorine.count, 1);
+    assert.equal(out.metrics.combinedChlorine.latest, 1);
+    assert.equal(out.metrics.combinedChlorine.average, 1);
+    await client.close();
+    close();
   });
 
   it('list_tasks filters by status and frequency', async () => {

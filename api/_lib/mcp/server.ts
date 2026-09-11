@@ -28,8 +28,31 @@ export const MAX_TREND_ROWS = 500;
 const ResponseFormat = z.enum(['markdown', 'json']).default('markdown')
   .describe("Output format: 'markdown' for a human-readable summary, 'json' for the raw structured data.");
 
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+// Date.parse silently normalizes calendar-invalid dates (2026-02-30 becomes
+// March 2) instead of rejecting them, which would make a since/until filter
+// query a window the caller never asked for. Validate the calendar and time
+// components explicitly rather than relying on parseability alone.
+function isValidIsoDate(value: string): boolean {
+  const match = ISO_DATE_PATTERN.exec(value);
+  if (!match) return false;
+  const [, y, m, d, hh, mm, ss] = match;
+  const year = Number(y);
+  const month = Number(m);
+  const day = Number(d);
+  if (month < 1 || month > 12) return false;
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (day < 1 || day > daysInMonth) return false;
+  if (hh != null) {
+    if (Number(hh) > 23 || Number(mm) > 59 || (ss != null && Number(ss) > 59)) return false;
+  }
+  return !Number.isNaN(Date.parse(value));
+}
+
 const IsoDate = z.string()
-  .refine((value) => !Number.isNaN(Date.parse(value)), 'Must be an ISO-8601 date or date-time, e.g. 2026-09-01 or 2026-09-01T08:00:00Z');
+  .refine(isValidIsoDate, 'Must be a valid ISO-8601 date or date-time, e.g. 2026-09-01 or 2026-09-01T08:00:00Z');
 
 const parseDate = (value?: string): Date | undefined => (value == null ? undefined : new Date(value));
 
@@ -296,7 +319,12 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
           const value = reading[field];
           if (value != null) series[field].values.push(value);
         }
-        const combined = combinedChlorineOf(reading.chlorine, reading.totalChlorine);
+        // Total below free is a measurement error, not a valid zero (see
+        // getCombinedChlorineWarning) — combinedChlorineOf clamps it to 0,
+        // which would otherwise make an erroneous pair look like a clean
+        // "no chloramines" reading in the average/min/direction below.
+        const { chlorine: free, totalChlorine: total } = reading;
+        const combined = free != null && total != null && total >= free ? combinedChlorineOf(free, total) : null;
         if (combined != null) series.combinedChlorine.values.push(combined);
         const lsi = calculateLSI(reading);
         if (lsi != null) series.lsi.values.push(lsi);
