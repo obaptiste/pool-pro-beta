@@ -98,6 +98,10 @@ const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : M
 const lsiLabel = (lsi: number): string => (lsi < -0.3 ? 'corrosive' : lsi > 0.3 ? 'scale-forming' : 'balanced');
 
 const fmt = (value: number | null | undefined, digits = 1): string => (value == null ? '—' : value.toFixed(digits));
+// For a previous measurement: the raw stored number, no rounding (unlike
+// fmt, meant for computed/display figures like LSI) — this is evidence of
+// what a field used to say, not a value we get to round for readability.
+const fmtExact = (value: number | null, unit: string): string => (value == null ? 'not measured' : `${value} ${unit}`.trim());
 const iso = (date: Date | null | undefined): string | null => (date ? date.toISOString() : null);
 
 function serializeReading(reading: Reading) {
@@ -105,12 +109,19 @@ function serializeReading(reading: Reading) {
   const combined = combinedChlorineOf(reading.chlorine, reading.totalChlorine);
   const combinedWarning = getCombinedChlorineWarning(reading.chlorine, reading.totalChlorine);
   const fieldStatus: Partial<Record<NumericReadingField, Status>> = {};
+  // getSoftWarning is the app's own source of *why* a value is flagged
+  // (History's warning badges use it directly) — status alone tells a
+  // client a field is critical/warning but not what's actually wrong or
+  // what to do about it, which is the point of a warning message.
+  const fieldWarnings: Partial<Record<NumericReadingField, string>> = {};
   for (const field of NUMERIC_READING_FIELDS) {
     const value = reading[field];
     if (value == null) continue;
     fieldStatus[field] = field === 'sanitisationMv'
       ? getSanitisationMvStatus(value)
       : getRangeStatus(value, DEFAULT_RANGES[field].min, DEFAULT_RANGES[field].max);
+    const warning = getSoftWarning(field, value);
+    if (warning) fieldWarnings[field] = warning.message;
   }
   return {
     id: reading.id,
@@ -138,6 +149,7 @@ function serializeReading(reading: Reading) {
       combinedChlorineWarning: combinedWarning?.message ?? null,
     },
     fieldStatus,
+    fieldWarnings,
   };
 }
 
@@ -172,9 +184,13 @@ function readingToMarkdown(reading: SerializedReading): string {
     const hadPreviousValue = reading.previousValues != null && field in reading.previousValues;
     if (value == null && !hadPreviousValue) continue;
     const status = reading.fieldStatus[field];
-    const previousNote = hadPreviousValue ? ` (was ${fmt(reading.previousValues![field])})` : '';
+    // Exact value, not fmt()'s one-decimal rounding — this is amendment
+    // evidence (what the field used to say), not a display figure, so
+    // 7.25 must stay 7.25 rather than becoming a rounded "7.3".
+    const previousNote = hadPreviousValue ? ` (was ${fmtExact(reading.previousValues![field], UNITS[field])})` : '';
     const current = value == null ? 'not measured' : `${value} ${UNITS[field]}`;
-    lines.push(`- ${LABELS[field]}: ${current}${status && status !== 'good' ? ` (${status})` : ''}${previousNote}`);
+    const warning = reading.fieldWarnings[field];
+    lines.push(`- ${LABELS[field]}: ${current}${status && status !== 'good' ? ` (${status})` : ''}${previousNote}${warning ? ` — ${warning}` : ''}`);
   }
   const { derived } = reading;
   if (derived.lsi != null) lines.push(`- LSI: ${derived.lsi} (${derived.lsiLabel})`);
@@ -214,7 +230,7 @@ Includes every logged measurement (free/total chlorine, ORP, pH, alkalinity, tem
 Args:
   - response_format ('markdown' | 'json'): default 'markdown'
 
-Returns: { reading: {...} | null, targets: { field: { min, max, unit } } }. Fields that were not measured are null. If the reading was amended after creation, editedAt and previousValues (the overwritten measurements, by field) show what it originally said.
+Returns: { reading: {...} | null, targets: { field: { min, max, unit } } }. Fields that were not measured are null. fieldWarnings gives the specific reason a field is flagged (e.g. "Sanitisation may be too low (<650 mV)"), alongside fieldStatus's plain good/warning/critical. If the reading was amended after creation, editedAt and previousValues (the overwritten measurements, by field) show what it originally said.
 
 Use when: "What are the latest pool numbers?", "Is the water balanced right now?"
 Don't use when: you need history or averages (use poolstatus_list_readings or poolstatus_get_reading_trends).`,

@@ -227,10 +227,37 @@ describe('MCP tools', () => {
     assert.equal(typeof out.reading.derived.lsi, 'number');
     assert.equal(out.reading.fieldStatus.chlorine, 'warning'); // 1 ppm is within 10% of the 1–3 range's bottom edge
     assert.equal(out.reading.fieldStatus.sanitisationMv, 'warning'); // 800 mV is the "elevated, usually acceptable" band, not critical
+    assert.equal(
+      (out.reading as unknown as { fieldWarnings: Record<string, string> }).fieldWarnings.sanitisationMv,
+      'High ORP (750–850 mV), usually acceptable depending on context.',
+    );
     const text = (result.content as { type: string; text: string }[])[0].text;
     assert.match(text, /Combined chlorine: 2\.0 ppm \(critical\)/);
     assert.match(text, /smells of chloramine/);
+    assert.match(text, /ORP \/ sanitisation: 800 mV \(warning\) — High ORP \(750–850 mV\), usually acceptable depending on context\./);
     await client.close();
+  });
+
+  it('get_latest_reading includes the specific warning for a dangerously low ORP reading', async () => {
+    // A bare 'critical' status doesn't tell a client what's wrong or what
+    // to check — fieldWarnings carries the app's own explanation
+    // (getSoftWarning, the same text History's badges show).
+    const source: PoolDataSource = {
+      async listReadings() { return [reading('low-orp', 0, { sanitisationMv: 233 })]; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    const out = structured<{ reading: { fieldStatus: Record<string, string>; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.fieldStatus.sanitisationMv, 'critical');
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too low (<650 mV).');
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    assert.match(text, /ORP \/ sanitisation: 233 mV \(critical\) — Sanitisation may be too low \(<650 mV\)\./);
+    await client.close();
+    close();
   });
 
   it('get_latest_reading skips a trailing note-only log to find the last real measurement', async () => {
@@ -301,9 +328,9 @@ describe('MCP tools', () => {
     const out = structured<{ reading: { previousValues: Record<string, number | null> } }>(result);
     assert.deepEqual(out.reading.previousValues, { chlorine: 2.5, ph: null, totalChlorine: 3 });
     const text = (result.content as { type: string; text: string }[])[0].text;
-    assert.match(text, /Free chlorine: 1\.5 ppm \(was 2\.5\)/);
-    assert.match(text, /pH: 7\.6 .*\(was —\)/);
-    assert.match(text, /Total chlorine: not measured \(was 3\.0\)/);
+    assert.match(text, /Free chlorine: 1\.5 ppm \(was 2\.5 ppm\)/);
+    assert.match(text, /pH: 7\.6 .*\(was not measured\)/);
+    assert.match(text, /Total chlorine: not measured \(was 3 ppm\)/);
     await client.close();
     close();
   });
