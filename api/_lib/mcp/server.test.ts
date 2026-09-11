@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Reading } from '../../../src/types';
 import { handleMcpRequest } from './handler';
-import { MAX_TREND_ROWS } from './server';
+import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_ROWS } from './server';
 import type { ListReadingsOptions, PoolDataSource } from './types';
 
 const TOKEN = 'test-token-123';
@@ -231,6 +231,73 @@ describe('MCP tools', () => {
     assert.match(text, /Combined chlorine: 2\.0 ppm \(critical\)/);
     assert.match(text, /smells of chloramine/);
     await client.close();
+  });
+
+  it('get_latest_reading skips a trailing note-only log to find the last real measurement', async () => {
+    // A note saved after the actual test (handleSaveReading in App.tsx
+    // doesn't count it as a completed test either) must not hide that
+    // test's numbers behind an all-null "latest" row.
+    const source: PoolDataSource = {
+      async listReadings() {
+        return [
+          reading('note', 0, { notes: 'Backwashed the filter' }),
+          reading('measurement', 0.1, { chlorine: 2, ph: 7.4 }),
+        ];
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const out = structured<{ reading: { id: string } | null }>(
+      await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} }),
+    );
+    assert.equal(out.reading?.id, 'measurement');
+    await client.close();
+    close();
+  });
+
+  it('get_latest_reading gives up after LATEST_READING_SEARCH_LIMIT note-only logs', async () => {
+    const allNotes: PoolDataSource = {
+      async listReadings({ limit }: ListReadingsOptions) {
+        return Array.from({ length: Math.min(limit, LATEST_READING_SEARCH_LIMIT) }, (_, i) =>
+          reading(`note${i}`, i, { notes: 'no test today' }),
+        );
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(allNotes);
+    const out = structured<{ reading: unknown }>(
+      await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} }),
+    );
+    assert.equal(out.reading, null);
+    await client.close();
+    close();
+  });
+
+  it('get_latest_reading and list_readings expose previousValues for an amended reading', async () => {
+    const amended = reading('amended', 0, { chlorine: 1.5, ph: 7.6, previousValues: { chlorine: 2.5, ph: null } });
+    amended.editedAt = new Date();
+    const source: PoolDataSource = {
+      async listReadings() { return [amended]; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    const out = structured<{ reading: { previousValues: Record<string, number | null> } }>(result);
+    assert.deepEqual(out.reading.previousValues, { chlorine: 2.5, ph: null });
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    assert.match(text, /Free chlorine: 1\.5 ppm \(was 2\.5\)/);
+    assert.match(text, /pH: 7\.6 .*\(was —\)/);
+    await client.close();
+    close();
   });
 
   it('list_readings paginates with before cursor and honours since', async () => {

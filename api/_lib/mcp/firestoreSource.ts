@@ -2,6 +2,7 @@ import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldPath, getFirestore, Timestamp, type Query } from 'firebase-admin/firestore';
 import firebaseConfig from '../../../firebase-applet-config.json';
+import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
 import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types';
 import type { ListReadingsOptions, PoolDataSource } from './types';
 
@@ -33,6 +34,21 @@ async function resolveOwnerUid(app: App): Promise<string> {
 
 const toDate = (value: unknown): Date | null => (value instanceof Timestamp ? value.toDate() : null);
 const numOrNull = (value: unknown): number | null => (typeof value === 'number' ? value : null);
+
+// handleUpdateReading in App.tsx stores the fields an edit overwrote as a
+// map keyed by field name (present, even as null, only for fields that
+// actually changed) — the original evidence behind an amended reading.
+// Without mapping it here, an MCP client asking about a reading has no
+// way to recover what it originally said before an edit.
+function toPreviousValues(value: unknown): Reading['previousValues'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const result: NonNullable<Reading['previousValues']> = {};
+  for (const field of NUMERIC_READING_FIELDS) {
+    const raw = (value as Record<string, unknown>)[field];
+    if (raw === null || typeof raw === 'number') result[field] = raw as number | null;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
 
 /**
  * Builds the Firestore-backed data source. This is `async` and does all
@@ -89,6 +105,7 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
           cyanuricAcid: numOrNull(data.cyanuricAcid),
           notes: typeof data.notes === 'string' && data.notes ? data.notes : undefined,
           editedAt: toDate(data.editedAt) ?? undefined,
+          previousValues: toPreviousValues(data.previousValues),
         };
       });
     },

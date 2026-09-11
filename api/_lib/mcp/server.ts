@@ -24,6 +24,12 @@ const MAX_TREND_DAYS = 90;
 // `truncated`, with `from` adjusted to match — see poolstatus_get_reading_trends).
 // Exported so tests can exercise the truncation path without hardcoding it twice.
 export const MAX_TREND_ROWS = 500;
+// How far back poolstatus_get_latest_reading looks for a row with an actual
+// measurement before giving up and reporting no reading. If every one of
+// the most recent LATEST_READING_SEARCH_LIMIT logs is note-only, an older
+// real reading further back won't be found — an accepted bound rather than
+// unbounded pagination for what should be a rare run of consecutive notes.
+export const LATEST_READING_SEARCH_LIMIT = 20;
 
 const ResponseFormat = z.enum(['markdown', 'json']).default('markdown')
   .describe("Output format: 'markdown' for a human-readable summary, 'json' for the raw structured data.");
@@ -65,6 +71,12 @@ function getRangeStatus(value: number, min: number, max: number): Status {
   return 'good';
 }
 
+// A log with no measurements — just a note — isn't a completed water test
+// per handleSaveReading in App.tsx either; shared by poolstatus_get_latest_reading
+// (skip such rows when picking "the latest reading") and poolstatus_get_reading_trends
+// (exclude them from readings_considered and the metric series).
+const hasMeasurement = (reading: Reading): boolean => NUMERIC_READING_FIELDS.some((field) => reading[field] != null);
+
 // ORP/sanitisation doesn't use the generic range banding above: the app's
 // own classifier (getSoftWarning, used by History's warning badges) treats
 // 750–850 mV as "elevated, usually acceptable" rather than out-of-range —
@@ -104,6 +116,7 @@ function serializeReading(reading: Reading) {
     id: reading.id,
     timestamp: reading.timestamp.toISOString(),
     editedAt: iso(reading.editedAt),
+    previousValues: reading.previousValues ?? null,
     measurements: {
       chlorine: reading.chlorine,
       totalChlorine: reading.totalChlorine,
@@ -152,7 +165,12 @@ function readingToMarkdown(reading: SerializedReading): string {
     const value = reading.measurements[field];
     if (value == null) continue;
     const status = reading.fieldStatus[field];
-    lines.push(`- ${LABELS[field]}: ${value} ${UNITS[field]}${status && status !== 'good' ? ` (${status})` : ''}`);
+    // previousValues only lists fields the last edit actually changed —
+    // present (even as null, "was not measured") means this field's value
+    // was overwritten and the prior evidence would otherwise be lost.
+    const hadPreviousValue = reading.previousValues != null && field in reading.previousValues;
+    const previousNote = hadPreviousValue ? ` (was ${fmt(reading.previousValues![field])})` : '';
+    lines.push(`- ${LABELS[field]}: ${value} ${UNITS[field]}${status && status !== 'good' ? ` (${status})` : ''}${previousNote}`);
   }
   const { derived } = reading;
   if (derived.lsi != null) lines.push(`- LSI: ${derived.lsi} (${derived.lsiLabel})`);
@@ -185,14 +203,14 @@ export function createPoolStatusMcpServer(source: PoolDataSource): McpServer {
     'poolstatus_get_latest_reading',
     {
       title: 'Get latest pool reading',
-      description: `Return the most recent water-chemistry reading with derived values.
+      description: `Return the most recent water-chemistry reading with derived values. Skips past any trailing note-only logs (a log saved with no measurements) to find the latest one that actually has a measurement.
 
 Includes every logged measurement (free/total chlorine, ORP, pH, alkalinity, temperature, differential pressure, calcium hardness, cyanuric acid), per-field status against the app's target ranges, the Langelier Saturation Index (LSI), and combined chlorine (total − free) with its status and any warning.
 
 Args:
   - response_format ('markdown' | 'json'): default 'markdown'
 
-Returns: { reading: {...} | null, targets: { field: { min, max, unit } } }. Fields that were not measured are null.
+Returns: { reading: {...} | null, targets: { field: { min, max, unit } } }. Fields that were not measured are null. If the reading was amended after creation, editedAt and previousValues (the overwritten measurements, by field) show what it originally said.
 
 Use when: "What are the latest pool numbers?", "Is the water balanced right now?"
 Don't use when: you need history or averages (use poolstatus_list_readings or poolstatus_get_reading_trends).`,
@@ -200,7 +218,14 @@ Don't use when: you need history or averages (use poolstatus_list_readings or po
       annotations: READ_ONLY,
     },
     async ({ response_format }) => {
-      const [latest] = await source.listReadings({ limit: 1 });
+      // A note logged after the last real test (handleSaveReading in
+      // App.tsx doesn't count it as a completed test either) shouldn't
+      // hide that test's actual numbers — or a genuinely out-of-range
+      // reading right before it — behind an all-null "latest" row. Scan a
+      // bounded window of recent rows for the first with a measurement
+      // rather than blindly taking the very newest one.
+      const candidates = await source.listReadings({ limit: LATEST_READING_SEARCH_LIMIT });
+      const latest = candidates.find(hasMeasurement) ?? null;
       const reading = latest ? serializeReading(latest) : null;
       const output = { reading, targets: DEFAULT_RANGES };
       if (!reading) return toolResult(output, 'No readings have been logged yet.');
@@ -304,15 +329,13 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
       // rather than the full requested window, whenever that happens.
       const capped = truncated ? fetched.slice(0, MAX_TREND_ROWS) : fetched;
       const from = truncated ? capped[capped.length - 1].timestamp : requestedFrom;
-      // A log with no measurements (just a note — see handleSaveReading in
-      // App.tsx, which doesn't count one as a completed test either)
-      // contributes nothing to any metric, so it shouldn't inflate
-      // readings_considered or produce a "N readings" heading over an
-      // otherwise-empty table. Notes-only rows can still occupy a slot in
-      // the row cap above ahead of real measurements in a window with many
-      // of them — narrower than this fix, and left as a known limitation
-      // rather than adding a bounded-continuation pagination loop here.
-      const rows = capped.filter((reading) => NUMERIC_READING_FIELDS.some((field) => reading[field] != null));
+      // Notes-only rows contribute nothing to any metric, so they shouldn't
+      // inflate readings_considered or produce a "N readings" heading over
+      // an otherwise-empty table. They can still occupy a slot in the row
+      // cap above ahead of real measurements in a window with many of them
+      // — narrower than this fix, and left as a known limitation rather
+      // than adding a bounded-continuation pagination loop here.
+      const rows = capped.filter(hasMeasurement);
 
       type Series = { label: string; unit: string; values: number[]; target: { min: number; max: number } | null };
       const series: Record<string, Series> = {};
