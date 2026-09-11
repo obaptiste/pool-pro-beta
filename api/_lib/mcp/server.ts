@@ -163,14 +163,18 @@ function readingToMarkdown(reading: SerializedReading): string {
   const lines = [`### Reading ${reading.timestamp}${reading.editedAt ? ' (amended)' : ''}`];
   for (const field of NUMERIC_READING_FIELDS) {
     const value = reading.measurements[field];
-    if (value == null) continue;
-    const status = reading.fieldStatus[field];
     // previousValues only lists fields the last edit actually changed —
     // present (even as null, "was not measured") means this field's value
-    // was overwritten and the prior evidence would otherwise be lost.
+    // was overwritten and the prior evidence would otherwise be lost. That
+    // includes an edit that *cleared* a field (value now null): still
+    // worth a line, so the amendment doesn't silently erase what it
+    // changed just because the field reads empty now.
     const hadPreviousValue = reading.previousValues != null && field in reading.previousValues;
+    if (value == null && !hadPreviousValue) continue;
+    const status = reading.fieldStatus[field];
     const previousNote = hadPreviousValue ? ` (was ${fmt(reading.previousValues![field])})` : '';
-    lines.push(`- ${LABELS[field]}: ${value} ${UNITS[field]}${status && status !== 'good' ? ` (${status})` : ''}${previousNote}`);
+    const current = value == null ? 'not measured' : `${value} ${UNITS[field]}`;
+    lines.push(`- ${LABELS[field]}: ${current}${status && status !== 'good' ? ` (${status})` : ''}${previousNote}`);
   }
   const { derived } = reading;
   if (derived.lsi != null) lines.push(`- LSI: ${derived.lsi} (${derived.lsiLabel})`);

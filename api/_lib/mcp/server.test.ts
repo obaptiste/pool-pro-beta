@@ -280,7 +280,14 @@ describe('MCP tools', () => {
   });
 
   it('get_latest_reading and list_readings expose previousValues for an amended reading', async () => {
-    const amended = reading('amended', 0, { chlorine: 1.5, ph: 7.6, previousValues: { chlorine: 2.5, ph: null } });
+    // totalChlorine covers the amendment *clearing* a field (3 -> null):
+    // the markdown must still show it (rather than skipping it as
+    // "not measured") since that's exactly the amendment evidence this
+    // field exists to preserve.
+    const amended = reading('amended', 0, {
+      chlorine: 1.5, ph: 7.6, totalChlorine: null,
+      previousValues: { chlorine: 2.5, ph: null, totalChlorine: 3 },
+    });
     amended.editedAt = new Date();
     const source: PoolDataSource = {
       async listReadings() { return [amended]; },
@@ -292,10 +299,11 @@ describe('MCP tools', () => {
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
     const out = structured<{ reading: { previousValues: Record<string, number | null> } }>(result);
-    assert.deepEqual(out.reading.previousValues, { chlorine: 2.5, ph: null });
+    assert.deepEqual(out.reading.previousValues, { chlorine: 2.5, ph: null, totalChlorine: 3 });
     const text = (result.content as { type: string; text: string }[])[0].text;
     assert.match(text, /Free chlorine: 1\.5 ppm \(was 2\.5\)/);
     assert.match(text, /pH: 7\.6 .*\(was —\)/);
+    assert.match(text, /Total chlorine: not measured \(was 3\.0\)/);
     await client.close();
     close();
   });
