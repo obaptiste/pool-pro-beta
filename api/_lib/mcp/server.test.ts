@@ -397,6 +397,29 @@ describe('MCP tools', () => {
     await client.close();
   });
 
+  it('list_readings treats a date-only until as inclusive of the whole day', async () => {
+    // A bare "2026-09-01" parses to that day's midnight start — used as-is
+    // for an upper bound, it would exclude everything later that same day.
+    const lateOnDay = { ...reading('late', 0, {}), timestamp: new Date('2026-09-01T23:30:00Z') };
+    const nextDay = { ...reading('next', 0, {}), timestamp: new Date('2026-09-02T00:05:00Z') };
+    const source: PoolDataSource = {
+      async listReadings({ until }: ListReadingsOptions) {
+        return [nextDay, lateOnDay].filter((r) => !until || r.timestamp <= until);
+      },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+    };
+    const { client, close } = await connectToSource(source);
+    const out = structured<{ readings: { id: string }[] }>(
+      await client.callTool({ name: 'poolstatus_list_readings', arguments: { until: '2026-09-01' } }),
+    );
+    assert.deepEqual(out.readings.map((r) => r.id), ['late']);
+    await client.close();
+    close();
+  });
+
   it('list_readings rejects a malformed date', async () => {
     const client = await connect(TOKEN);
     const result = await client.callTool({ name: 'poolstatus_list_readings', arguments: { since: 'yesterday' } });

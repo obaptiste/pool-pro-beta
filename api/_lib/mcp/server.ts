@@ -63,6 +63,16 @@ const IsoDate = z.string()
 
 const parseDate = (value?: string): Date | undefined => (value == null ? undefined : new Date(value));
 
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// An upper bound needs the *end* of a date-only day, not its start: a bare
+// "until": "2026-09-01" parses to 2026-09-01T00:00:00.000Z, and used as-is
+// in a <= filter would exclude every reading from 00:00:01 that day
+// onward — silently truncating the very day the caller asked to include.
+// since doesn't need this: a date-only lower bound's natural midnight
+// start is already the inclusive beginning of that day.
+const parseUntilDate = (value?: string): Date | undefined =>
+  value == null ? undefined : new Date(DATE_ONLY_PATTERN.test(value) ? `${value}T23:59:59.999Z` : value);
+
 // Same banding the dashboard's status cards use: outside the target range
 // is critical; within 10% of either edge is a warning.
 function getRangeStatus(value: number, min: number, max: number): Status {
@@ -305,7 +315,7 @@ Don't use when: you need history or averages (use poolstatus_list_readings or po
 
 Args:
   - since (ISO date, optional): only readings at or after this instant
-  - until (ISO date, optional): only readings at or before this instant
+  - until (ISO date, optional): only readings at or before this instant; a date with no time (e.g. "2026-09-01") includes that entire day
   - before (opaque string, optional): pagination cursor — pass the next_before value from a previous page, unmodified, to get the page after it
   - limit (1–${MAX_LIST_LIMIT}, default 20)
   - response_format ('markdown' | 'json'): default 'markdown'
@@ -332,7 +342,7 @@ Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
       }
       const rows = await source.listReadings({
         since: parseDate(since),
-        until: parseDate(until),
+        until: parseUntilDate(until),
         before: cursor,
         limit: limit + 1,
       });
