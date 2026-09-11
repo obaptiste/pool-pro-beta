@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
 import { calculateLSI } from '../lib/lsi';
+import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
 import { Type } from "@google/genai";
 
 interface Props {
@@ -156,6 +157,8 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   const [isFindingSupplies, setIsFindingSupplies] = useState(false);
   const [isMapsMode, setIsMapsMode] = useState(false);
   const [mapsContent, setMapsContent] = useState<string | null>(null);
+  const [mapsSearchUrl, setMapsSearchUrl] = useState(buildSupplySearchUrl());
+  const [mapsLocationFound, setMapsLocationFound] = useState(false);
   const [protocolStaged, setProtocolStaged] = useState(false);
   const [addedToReport, setAddedToReport] = useState(false);
   const [question, setQuestion] = useState('');
@@ -329,18 +332,28 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setLoading(true);
     setIsMapsMode(true);
     setError(null);
+    setMapsContent(null);
+
+    const location = await getSupplySearchLocation(navigator.geolocation);
+    const searchUrl = buildSupplySearchUrl(location);
+    setMapsSearchUrl(searchUrl);
+    setMapsLocationFound(Boolean(location));
+
     try {
       const response = await callAiWithFallback({
-        model: "gemini-3-flash-preview",
-        contents: "Find the best rated pool supply stores near me and list their addresses and ratings.",
+        model: "gemini-2.5-flash",
+        contents: location
+          ? "Find nearby pool supply stores. List current addresses and ratings, and tell me to verify stock before travelling."
+          : "Find pool supply stores near the user. List current addresses and ratings, and tell me to verify stock before travelling.",
         config: {
-          tools: [{ googleMaps: {} }]
+          tools: [{ googleMaps: {} }],
+          toolConfig: location ? { retrievalConfig: { latLng: location } } : undefined,
         }
       }, process.env.GEMINI_API_KEY!);
       setMapsContent(response.text || "No stores found.");
     } catch (error) {
       console.error("Maps Error:", error);
-      setError("ERR_MAPS_FAILED: Unable to retrieve nearby store data.");
+      setMapsContent("Live store details aren't available in PoolStatus right now. Open Google Maps below to see current nearby results instead.");
     } finally {
       setLoading(false);
       setIsFindingSupplies(false);
@@ -444,8 +457,24 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     {error}
                   </div>
                 ) : isMapsMode ? (
-                  <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
-                    <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
+                  <div className="space-y-4" aria-live="polite">
+                    <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
+                      <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
+                    </div>
+                    <a
+                      href={mapsSearchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full min-h-12 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all"
+                    >
+                      <MapPin size={15} />
+                      Open nearby suppliers in Google Maps
+                    </a>
+                    <p className="text-[10px] text-ink-dim leading-relaxed">
+                      {mapsLocationFound
+                        ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
+                        : 'Location access was unavailable. Google Maps can use your location after it opens.'}
+                    </p>
                   </div>
                 ) : insight ? (
                   <div className="space-y-8">
