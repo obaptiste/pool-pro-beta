@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { runAiFallback } from "./api/_lib/aiFallback";
+import mcpHandler from "./api/mcp";
 
 dotenv.config();
 
@@ -37,6 +38,21 @@ async function startServer() {
       responseSchemaDescription: responseSchema,
     });
     res.status(result.status).json(result.body);
+  });
+
+  // Remote MCP endpoint — same handler Vercel runs from api/mcp.ts. The
+  // transport itself dispatches on method (POST for JSON-RPC, GET to open
+  // a standalone SSE stream, DELETE to end a session) and rejects anything
+  // else, so this must accept every method rather than only POST — a
+  // GET-only route here would 404/fall through to the Vite dev middleware
+  // below instead of reaching the transport, unlike the Vercel deployment
+  // (which invokes this handler for any method) and the tests in
+  // api/_lib/mcp/server.test.ts, which both exercise GET too.
+  app.all("/api/mcp", (req, res) => {
+    mcpHandler(req, res).catch((error) => {
+      console.error("MCP handler error:", error);
+      if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+    });
   });
 
   // Vite middleware for development
