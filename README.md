@@ -29,7 +29,7 @@ PoolPro Beta is a support tool. It does not replace professional servicing, prod
 
 ### Prerequisites
 
-- Node.js
+- Node.js 22+ (required by `firebase-admin`, used by the MCP server — see `package.json`'s `engines` field)
 - npm
 
 ### Install dependencies
