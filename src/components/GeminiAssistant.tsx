@@ -441,26 +441,18 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     Ask Pool AI
                   </button>
                 </div>
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center py-16 space-y-6">
-                    <div className="relative">
-                      <Loader2 size={40} className="text-accent animate-spin" />
-                      <Sparkles size={16} className="text-accent absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
-                    </div>
-                    <div className="text-center space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Processing Telemetry</p>
-                      <p className="text-[9px] font-mono text-ink-dim/50 animate-pulse">Running diagnostic protocols...</p>
-                    </div>
-                  </div>
-                ) : error ? (
-                  <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-mono">
-                    {error}
-                  </div>
-                ) : isMapsMode ? (
+                {isMapsMode ? (
                   <div className="space-y-4" aria-live="polite">
-                    <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
-                      <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
-                    </div>
+                    {loading ? (
+                      <div className="flex items-center justify-center gap-3 py-6 text-ink-dim">
+                        <Loader2 size={20} className="text-accent animate-spin" />
+                        <p className="text-[10px] font-bold uppercase tracking-widest">Searching nearby suppliers...</p>
+                      </div>
+                    ) : (
+                      <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
+                        <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
+                      </div>
+                    )}
                     <a
                       href={mapsSearchUrl}
                       target="_blank"
@@ -475,6 +467,21 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                         ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
                         : 'Location access was unavailable. Google Maps can use your location after it opens.'}
                     </p>
+                  </div>
+                ) : loading ? (
+                  <div className="flex flex-col items-center justify-center py-16 space-y-6">
+                    <div className="relative">
+                      <Loader2 size={40} className="text-accent animate-spin" />
+                      <Sparkles size={16} className="text-accent absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                    </div>
+                    <div className="text-center space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Processing Telemetry</p>
+                      <p className="text-[9px] font-mono text-ink-dim/50 animate-pulse">Running diagnostic protocols...</p>
+                    </div>
+                  </div>
+                ) : error ? (
+                  <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-mono">
+                    {error}
                   </div>
                 ) : insight ? (
                   <div className="space-y-8">
