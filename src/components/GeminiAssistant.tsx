@@ -333,6 +333,10 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setIsMapsMode(true);
     setError(null);
     setMapsContent(null);
+    // Clear any previous search's link/location state so the fallback shown
+    // while this lookup is pending doesn't reuse stale results.
+    setMapsSearchUrl(buildSupplySearchUrl());
+    setMapsLocationFound(false);
 
     const location = await getSupplySearchLocation(navigator.geolocation);
     const searchUrl = buildSupplySearchUrl(location);
@@ -463,9 +467,11 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                       Open nearby suppliers in Google Maps
                     </a>
                     <p className="text-[10px] text-ink-dim leading-relaxed">
-                      {mapsLocationFound
-                        ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
-                        : 'Location access was unavailable. Google Maps can use your location after it opens.'}
+                      {loading
+                        ? 'Locating nearby suppliers… you can open Google Maps directly at any time.'
+                        : mapsLocationFound
+                          ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
+                          : 'Location access was unavailable. Google Maps can use your location after it opens.'}
                     </p>
                   </div>
                 ) : loading ? (
