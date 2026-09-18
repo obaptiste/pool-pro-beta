@@ -15,6 +15,16 @@ export function buildSupplySearchUrl(location?: SupplySearchLocation): string {
   return `${GOOGLE_MAPS_SEARCH_BASE}?${params.toString()}`;
 }
 
+// enableHighAccuracy: false only hints the OS to skip GPS — devices that already
+// have a GPS fix still return full-precision coordinates. Round explicitly so the
+// "approximate location" language shown to the user is actually true (~1.1km grid).
+const APPROXIMATE_PRECISION_DECIMALS = 2;
+
+function roundToApproximatePrecision(value: number): number {
+  const factor = 10 ** APPROXIMATE_PRECISION_DECIMALS;
+  return Math.round(value * factor) / factor;
+}
+
 export function getSupplySearchLocation(
   geolocation: Geolocation | undefined,
   timeoutMs = 8_000,
@@ -23,7 +33,10 @@ export function getSupplySearchLocation(
 
   return new Promise((resolve) => {
     geolocation.getCurrentPosition(
-      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude }),
+      ({ coords }) => resolve({
+        latitude: roundToApproximatePrecision(coords.latitude),
+        longitude: roundToApproximatePrecision(coords.longitude),
+      }),
       () => resolve(undefined),
       { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 5 * 60 * 1_000 },
     );

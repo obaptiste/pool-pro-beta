@@ -333,6 +333,10 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setIsMapsMode(true);
     setError(null);
     setMapsContent(null);
+    // Clear any previous search's link/location state so the fallback shown
+    // while this lookup is pending doesn't reuse stale results.
+    setMapsSearchUrl(buildSupplySearchUrl());
+    setMapsLocationFound(false);
 
     const location = await getSupplySearchLocation(navigator.geolocation);
     const searchUrl = buildSupplySearchUrl(location);
@@ -441,7 +445,36 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     Ask Pool AI
                   </button>
                 </div>
-                {loading ? (
+                {isMapsMode ? (
+                  <div className="space-y-4" aria-live="polite">
+                    {loading ? (
+                      <div className="flex items-center justify-center gap-3 py-6 text-ink-dim">
+                        <Loader2 size={20} className="text-accent animate-spin" />
+                        <p className="text-[10px] font-bold uppercase tracking-widest">Searching nearby suppliers...</p>
+                      </div>
+                    ) : (
+                      <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
+                        <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
+                      </div>
+                    )}
+                    <a
+                      href={mapsSearchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full min-h-12 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all"
+                    >
+                      <MapPin size={15} />
+                      Open nearby suppliers in Google Maps
+                    </a>
+                    <p className="text-[10px] text-ink-dim leading-relaxed">
+                      {loading
+                        ? 'Locating nearby suppliers… you can open Google Maps directly at any time.'
+                        : mapsLocationFound
+                          ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
+                          : 'Location access was unavailable. Google Maps can use your location after it opens.'}
+                    </p>
+                  </div>
+                ) : loading ? (
                   <div className="flex flex-col items-center justify-center py-16 space-y-6">
                     <div className="relative">
                       <Loader2 size={40} className="text-accent animate-spin" />
@@ -455,26 +488,6 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                 ) : error ? (
                   <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-mono">
                     {error}
-                  </div>
-                ) : isMapsMode ? (
-                  <div className="space-y-4" aria-live="polite">
-                    <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
-                      <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
-                    </div>
-                    <a
-                      href={mapsSearchUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-full min-h-12 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all"
-                    >
-                      <MapPin size={15} />
-                      Open nearby suppliers in Google Maps
-                    </a>
-                    <p className="text-[10px] text-ink-dim leading-relaxed">
-                      {mapsLocationFound
-                        ? 'Using your approximate device location. Call ahead to confirm product stock and concentration.'
-                        : 'Location access was unavailable. Google Maps can use your location after it opens.'}
-                    </p>
                   </div>
                 ) : insight ? (
                   <div className="space-y-8">

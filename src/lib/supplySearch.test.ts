@@ -19,15 +19,15 @@ test('returns undefined when location access is unavailable', async () => {
   assert.equal(await getSupplySearchLocation(undefined), undefined);
 });
 
-test('returns coordinates supplied by browser geolocation', async () => {
+test('returns coordinates supplied by browser geolocation, rounded to approximate precision', async () => {
   const geolocation = {
     getCurrentPosition(success: PositionCallback) {
-      success({ coords: { latitude: 51.5072, longitude: -0.1276 } } as GeolocationPosition);
+      success({ coords: { latitude: 51.50722, longitude: -0.12764 } } as GeolocationPosition);
     },
   } as Geolocation;
 
   assert.deepEqual(await getSupplySearchLocation(geolocation), {
-    latitude: 51.5072,
-    longitude: -0.1276,
+    latitude: 51.51,
+    longitude: -0.13,
   });
 });
