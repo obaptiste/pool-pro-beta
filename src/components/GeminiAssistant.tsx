@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
 import { calculateLSI } from '../lib/lsi';
+import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge } from '../lib/readings';
 import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
 import { Type } from "@google/genai";
 
@@ -52,6 +53,15 @@ If the user asks about dosing, always base calculations on 68,000 litres unless 
 | TDS | < 2000 ppm | — | Partial drain |
 
 **Adjustment order:** Always adjust in this sequence — Alkalinity → pH → Sanitiser → Other
+
+---
+
+## Sanitisation / ORP
+
+- ORP (sanitisation power, in mV) indicates sanitising *effectiveness* — it is NOT a direct chlorine ppm measurement and must never be treated as one.
+- Suggested thresholds: below 650 mV — sanitisation may be weak; 650–800 mV — generally acceptable working zone; above 800 mV — sanitisation may be high, verify before swimming or further chlorine additions.
+- NEVER recommend increasing chlorine dosing based on ORP alone. Before suggesting any chlorine dose change, first require/verify the operator's actual free chlorine reading (ppm), current circulation/filtration status, pool volume, and product concentration.
+- If free chlorine wasn't measured (e.g. an auto-synced controller reading, which only reports pH/ORP/temperature) but ORP is low or high, tell the operator to test free chlorine directly and confirm circulation is running — do not calculate or suggest a dose from ORP alone.
 
 ---
 
@@ -163,6 +173,17 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   const [addedToReport, setAddedToReport] = useState(false);
   const [question, setQuestion] = useState('');
 
+  // A real controller poll can report pH/temperature but omit ORP for one
+  // cycle, so latestReading.sanitisationMv alone would let a genuinely
+  // recent, still-relevant low/high ORP reading silently drop out of every
+  // prompt below the moment that happens (see getMostRecentOrp). Used in
+  // place of latestReading.sanitisationMv everywhere ORP is reported to the
+  // model; always labeled with its age when it's a fallback, never
+  // presented as if it were the current reading.
+  const recentOrp = getMostRecentOrp(history);
+  const orpIsStale = recentOrp != null && latestReading != null && recentOrp.at.getTime() !== latestReading.timestamp.getTime();
+  const fmtOrp = () => recentOrp == null ? 'not measured' : `${recentOrp.value}${orpIsStale ? ` (last measured ${formatAge(recentOrp.at)}, not this instant's reading)` : ''}`;
+
   const getInsight = async () => {
     if (!latestReading) return;
     setIsOpen(true);
@@ -174,9 +195,16 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       const lsi = calculateLSI(latestReading);
       const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
 
+      // Auto-synced controller readings (every 15 min, see sync.ts) all carry
+      // a boilerplate "Auto-logged from <source>" note. Filtering those out
+      // before the slice(0, 5) keeps this list to genuine manual maintenance
+      // notes instead of letting a few hours of polling evict them. Only
+      // untouched boilerplate is excluded — an operator amending an
+      // auto-synced reading's note (voice/photo transcription appends to
+      // the existing text) still surfaces here.
       const recentNotes = history
+        .filter(r => r.notes && !isAutoSyncBoilerplateNote(r.notes))
         .slice(0, 5)
-        .filter(r => r.notes)
         .map(r => `[${r.timestamp.toLocaleDateString()}] ${r.notes}`)
         .join('\n');
 
@@ -185,6 +213,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
         Analyze the following telemetry data:
         - Free Chlorine: ${fmt(latestReading.chlorine)} ppm
         - Total Chlorine: ${fmt(latestReading.totalChlorine)} ppm (combined chlorine = total − free)
+        - Sanitisation (ORP): ${fmtOrp()} mV
         - pH Level: ${fmt(latestReading.ph)}
         - Total Alkalinity: ${fmt(latestReading.alkalinity)} ppm
         - Water Temperature: ${fmt(latestReading.temperature)}°C
@@ -274,7 +303,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     const checklist = insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
     return [
       `AI Analysis (${new Date().toLocaleString()})`,
-      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
+      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, ORP ${fmtOrp()} mV, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
       `Assessment: ${insight.analysis.replace(/\n+/g, ' ').trim()}`,
       `Checklist: ${checklist}`,
       `Target Outcome: ${insight.expectedOutcome.replace(/\n+/g, ' ').trim()}`
@@ -300,6 +329,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       '',
       '## Current Reading',
       `- Free Chlorine: ${fmt(latestReading.chlorine)} ppm`,
+      `- Sanitisation (ORP): ${fmtOrp()} mV`,
       `- pH: ${fmt(latestReading.ph)}`,
       `- Alkalinity: ${fmt(latestReading.alkalinity)} ppm`,
       `- Temperature: ${fmt(latestReading.temperature)}°C`,
@@ -374,7 +404,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     try {
       const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
       const context = latestReading
-        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
+        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, ORP ${fmtOrp()} mV, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
         : 'No latest reading is currently available.';
       const response = await callAiWithFallback({
         model: "gemini-3-flash-preview",

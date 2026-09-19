@@ -5,6 +5,7 @@ import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
 import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf } from '../lib/readingValidation';
 import { calculateLSI } from '../lib/lsi';
+import { getLatestReadingForDisplay, findRecentFieldValue } from '../lib/readings';
 import SpokenReportControls from './SpokenReportControls';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ interface TrendPoint {
   ph: number | null;
   alk: number | null;
   press: number | null;
+  orp: number | null;
 }
 
 interface Advisory {
@@ -143,6 +145,19 @@ function isoWeekYear(d: Date): number {
   return date.getFullYear();
 }
 
+// ORP doesn't fit the generic min/max-with-a-buffer classifier every other
+// metric below uses: AGENTS.md's documented bands are an acceptable zone of
+// 650-800 mV (not the 650-750 DEFAULT_RANGES target used for its RangeBand
+// display) with no separate "critical" high band — just a warning past
+// 800 mV. Mirrors Dashboard's getOrpStatus. Takes a range so both the
+// aggregated weekly min/max and a single reading (min === max) share one
+// implementation.
+function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
+  if (min < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
+  if (max > 800) return 'warning';
+  return 'good';
+}
+
 function deriveReportData(readings: Reading[], inventory: InventoryItem[], user: User | null): ReportData {
   const now = new Date();
   const cutoff = new Date(now);
@@ -156,6 +171,7 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
 
   const METRICS = [
     { key: 'chlorine', label: 'Free Chlorine',    unit: 'ppm', target: [DEFAULT_RANGES.chlorine.min,             DEFAULT_RANGES.chlorine.max]             as [number, number], get: (r: Reading) => r.chlorine },
+    { key: 'orp',      label: 'Sanitisation (ORP)', unit: 'mV', target: [DEFAULT_RANGES.sanitisationMv.min,      DEFAULT_RANGES.sanitisationMv.max]       as [number, number], get: (r: Reading) => r.sanitisationMv },
     { key: 'tc',       label: 'Total Chlorine',    unit: 'ppm', target: [DEFAULT_RANGES.totalChlorine.min,        DEFAULT_RANGES.totalChlorine.max]        as [number, number], get: (r: Reading) => r.totalChlorine },
     { key: 'cc',       label: 'Combined Chlorine', unit: 'ppm', target: [0,                                       COMBINED_CHLORINE_OK_MAX]                as [number, number], get: (r: Reading) => combinedChlorineOf(r.chlorine, r.totalChlorine) },
     { key: 'ph',       label: 'pH Level',          unit: '',    target: [DEFAULT_RANGES.ph.min,                  DEFAULT_RANGES.ph.max]                   as [number, number], get: (r: Reading) => r.ph },
@@ -176,10 +192,11 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const max = parseFloat(Math.max(...vals).toFixed(1));
     const [lo, hi] = m.target;
     // Use worst single reading so short dangerous excursions aren't diluted by the average
-    const status: TelemetryMetric['status'] =
-      (min < lo * 0.8 || max > hi * 1.2) ? 'critical' :
-      (min < lo * 0.9 || max > hi * 1.1) ? 'warning'  :
-      (min < lo       || max > hi)        ? 'watch'    : 'good';
+    const status: TelemetryMetric['status'] = m.key === 'orp'
+      ? classifyOrpRange(min, max)
+      : (min < lo * 0.8 || max > hi * 1.2) ? 'critical' :
+        (min < lo * 0.9 || max > hi * 1.1) ? 'warning'  :
+        (min < lo       || max > hi)        ? 'watch'    : 'good';
     return { key: m.key, label: m.label, unit: m.unit, avg, min, max, target: m.target, status };
   });
 
@@ -202,6 +219,12 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
         const v = m.get(r);
         if (v == null) return;
         observedAny = true;
+        if (m.key === 'orp') {
+          const s = classifyOrpRange(v, v);
+          if (s === 'critical')     { worst = 'critical'; notes.push(`${m.label} critical`); }
+          else if (s === 'warning') { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} high`); }
+          return;
+        }
         const [lo, hi] = m.target;
         if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
         else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
@@ -226,12 +249,26 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     ph: r.ph,
     alk: r.alkalinity,
     press: r.differentialPressure,
+    orp: r.sanitisationMv,
   }));
 
-  // Use the latest in-window reading for LSI; fall back to global latest only for the gauge snapshot
+  // The literal latest reading (used below for the end-of-shift header
+  // timestamp) is, with 15-min auto-sync polling (see sync.ts), almost
+  // always an ORP-only controller reading. LSI needs pH + alkalinity +
+  // calcium hardness together, so compute it off the same bounded,
+  // presentation-only merge Dashboard uses (getLatestReadingForDisplay)
+  // rather than requiring literally the newest record to carry every field.
+  //
+  // Only when the reporting window actually has a reading, though: when
+  // weekReadings is empty, readings[0] (getLatestReadingForDisplay's
+  // anchor) is necessarily older than the 7-day cutoff -- otherwise it
+  // would BE in weekReadings -- and showing its LSI here would present a
+  // stale water-balance figure as this week's, right alongside status/
+  // advisories that correctly call this an "allUnknown" monitoring gap.
   const latestWeekR = weekReadings.length > 0 ? weekReadings[weekReadings.length - 1] : null;
   const latestR = latestWeekR ?? readings[0] ?? null;
-  const lsi: number | null = latestWeekR ? calculateLSI(latestWeekR) : null;
+  const latestMerged = latestWeekR ? (getLatestReadingForDisplay(readings) ?? null) : null;
+  const lsi: number | null = latestMerged ? calculateLSI(latestMerged) : null;
   const lsiAbs = lsi == null ? null : Math.abs(lsi);
   const lsiLabel = lsiAbs == null ? 'Insufficient data' : lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';
 
@@ -269,7 +306,18 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   const pressM = telemetry.find(m => m.key === 'press');
   const phM    = telemetry.find(m => m.key === 'ph');
   const clM    = telemetry.find(m => m.key === 'chlorine');
+  const orpM   = telemetry.find(m => m.key === 'orp');
 
+  if (orpM && orpM.min < DEFAULT_RANGES.sanitisationMv.min) {
+    advisories.push({ tier: 'critical', title: 'Sanitisation (ORP) dropped low', time: 'This week',
+      msg: `ORP fell to ${orpM.min} mV (below ${DEFAULT_RANGES.sanitisationMv.min} mV) — disinfection may have been inadequate.`,
+      action: 'Test free chlorine and confirm circulation/filtration was running at the time — ORP is not a direct chlorine ppm value.' });
+  }
+  if (orpM && orpM.max > 800) {
+    advisories.push({ tier: 'warning', title: 'Sanitisation (ORP) trended high', time: 'This week',
+      msg: `ORP reached ${orpM.max} mV (above 800 mV) — verify before swimming or adding more chlorine.`,
+      action: 'Retest and confirm dosing hadn\'t over-shot before any further additions.' });
+  }
   if (pressM && pressM.max > DEFAULT_RANGES.differentialPressure.max) {
     advisories.push({ tier: 'warning', title: 'Filter pressure spike', time: 'This week',
       msg: `Pressure reached ${pressM.max} kPa (target ${DEFAULT_RANGES.differentialPressure.min}–${DEFAULT_RANGES.differentialPressure.max} kPa). Possible partial bed clog.`,
@@ -348,10 +396,15 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       // prefer the latest in-window reading; latestR is null only when there are no readings at all
       timestamp: latestR ? `${fmtDate(latestR.timestamp)} · ${latestR.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : 'No data',
       operator: operatorName,
+      // Each gauge looks up its own most recent non-null value within the
+      // report's own 7-day window, rather than requiring the single latest
+      // reading to carry every field — with 15-min ORP-only auto-sync
+      // polling, the literal latest record almost never has pressure/
+      // chlorine, which would otherwise blank both gauges nearly every time.
       gauges: {
-        pressure: latestR?.differentialPressure != null ? `${latestR.differentialPressure} kPa` : '— kPa',
-        chlorine: latestR?.chlorine != null ? `${latestR.chlorine} ppm` : '— ppm',
-        ph: latestR?.ph != null ? `${latestR.ph}` : '—',
+        pressure: (() => { const v = findRecentFieldValue(readings, 'differentialPressure', cutoff); return v != null ? `${v} kPa` : '— kPa'; })(),
+        chlorine: (() => { const v = findRecentFieldValue(readings, 'chlorine', cutoff); return v != null ? `${v} ppm` : '— ppm'; })(),
+        ph: (() => { const v = findRecentFieldValue(readings, 'ph', cutoff); return v != null ? `${v}` : '—'; })(),
       },
     },
   };
@@ -848,7 +901,7 @@ function ReportA({ d }: { d: ReportData }) {
           <SectionLabel theme="dark" title="Telemetry Trend" sub={`${d.status.readings} readings · normalized`} />
           <span style={{ fontSize: 9, fontFamily: '"Space Mono",monospace', color: '#4A6A80', letterSpacing: '.15em' }}>SCALE: PER-METRIC</span>
         </div>
-        <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#4FC3F7' }, { key: 'ph', label: 'pH', color: '#F59E0B' }, { key: 'press', label: 'Pressure', color: '#10B981' }]} theme="dark" height={220} />
+        <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#4FC3F7' }, { key: 'ph', label: 'pH', color: '#F59E0B' }, { key: 'press', label: 'Pressure', color: '#10B981' }, { key: 'orp', label: 'ORP', color: '#C084FC' }]} theme="dark" height={220} />
       </section>
 
       <section style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
@@ -981,7 +1034,7 @@ function ReportB({ d }: { d: ReportData }) {
       <section>
         <SectionLabel theme="light" title="Trend Insights" sub={`${d.status.readings} readings`} />
         <div style={{ background: '#fff', border: '1px solid #dbe2ed', borderRadius: 14, padding: 24 }}>
-          <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#0EA5E9' }, { key: 'ph', label: 'pH', color: '#D97706' }, { key: 'press', label: 'Pressure', color: '#059669' }]} theme="light" height={220} />
+          <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#0EA5E9' }, { key: 'ph', label: 'pH', color: '#D97706' }, { key: 'press', label: 'Pressure', color: '#059669' }, { key: 'orp', label: 'ORP', color: '#9333EA' }]} theme="light" height={220} />
         </div>
         <p style={{ fontSize: 13, color: '#3a4a66', lineHeight: 1.7, margin: '18px 0 0', columnCount: 2, columnGap: 32 }}>
           {d.status.readings === 0
@@ -1045,10 +1098,10 @@ function ReportC({ d }: { d: ReportData }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#4A6A80' }}>Telemetry — full week</div>
-            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{d.status.readings} readings, 3 metrics tracked</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{d.status.readings} readings, 4 metrics tracked</div>
           </div>
           <div style={{ display: 'flex', gap: 14 }}>
-            {[{ label: 'FC', color: '#4FC3F7' }, { label: 'pH', color: '#F59E0B' }, { label: 'PRESS', color: '#10B981' }].map(m => (
+            {[{ label: 'FC', color: '#4FC3F7' }, { label: 'pH', color: '#F59E0B' }, { label: 'PRESS', color: '#10B981' }, { label: 'ORP', color: '#C084FC' }].map(m => (
               <div key={m.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 14, height: 3, background: m.color, display: 'inline-block' }} />
                 <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#fff' }}>{m.label}</span>
@@ -1056,7 +1109,7 @@ function ReportC({ d }: { d: ReportData }) {
             ))}
           </div>
         </div>
-        <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#4FC3F7' }, { key: 'ph', label: 'pH', color: '#F59E0B' }, { key: 'press', label: 'PRESS', color: '#10B981' }]} theme="dark" height={280} />
+        <TrendLines trend={d.trend} metrics={[{ key: 'chlorine', label: 'FC', color: '#4FC3F7' }, { key: 'ph', label: 'pH', color: '#F59E0B' }, { key: 'press', label: 'PRESS', color: '#10B981' }, { key: 'orp', label: 'ORP', color: '#C084FC' }]} theme="dark" height={280} />
       </section>
 
       <section style={{ marginTop: 32 }}>

@@ -16,6 +16,7 @@ import WorkTracker from './components/WorkTracker';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { useToast } from './lib/toast';
+import { getLatestReadingForDisplay } from './lib/readings';
 import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValidation';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
@@ -893,7 +894,7 @@ export default function App() {
       />
 
       <GeminiAssistant
-        latestReading={readings[0]}
+        latestReading={getLatestReadingForDisplay(readings)}
         history={readings}
         onExecuteProtocol={handleExecuteProtocol}
         onAddToReport={handleAddToReport}
