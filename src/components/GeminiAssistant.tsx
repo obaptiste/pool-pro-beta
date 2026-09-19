@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
 import { calculateLSI } from '../lib/lsi';
-import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge } from '../lib/readings';
+import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
 import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
 import { Type } from "@google/genai";
 
@@ -178,11 +178,16 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   // recent, still-relevant low/high ORP reading silently drop out of every
   // prompt below the moment that happens (see getMostRecentOrp). Used in
   // place of latestReading.sanitisationMv everywhere ORP is reported to the
-  // model; always labeled with its age when it's a fallback, never
-  // presented as if it were the current reading.
+  // model; always labeled with its age when stale, never presented as if
+  // it were the current reading.
+  //
+  // Staleness is judged against wall-clock "now" (isOrpStale), not against
+  // whether a fallback happened: if auto-sync polling stops entirely, the
+  // last successful reading IS the latest reading, so a same-timestamp
+  // comparison would never flag it even as it grows hours or days old.
   const recentOrp = getMostRecentOrp(history);
-  const orpIsStale = recentOrp != null && latestReading != null && recentOrp.at.getTime() !== latestReading.timestamp.getTime();
-  const fmtOrp = () => recentOrp == null ? 'not measured' : `${recentOrp.value}${orpIsStale ? ` (last measured ${formatAge(recentOrp.at)}, not this instant's reading)` : ''}`;
+  const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at);
+  const fmtOrp = () => recentOrp == null ? 'not measured' : `${recentOrp.value}${orpIsStale ? ` (last measured ${formatAge(recentOrp.at)} — may not reflect current conditions)` : ''}`;
 
   const getInsight = async () => {
     if (!latestReading) return;

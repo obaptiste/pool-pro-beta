@@ -28,7 +28,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
-import { getLatestReadingForDisplay, getMostRecentOrp, formatAge } from '../lib/readings';
+import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -84,8 +84,15 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // from the alert list and status card the moment the next poll lands.
   // Bounded (see getMostRecentOrp) and always labeled with its own age
   // below — never presented as if it were this instant's reading.
+  //
+  // Staleness is judged against wall-clock "now" (isOrpStale), not against
+  // whether a fallback happened: if auto-sync polling stops entirely
+  // (expired credentials, an outage), the last successful reading IS the
+  // latest reading — there's no fallback to trigger on — so comparing
+  // recentOrp.at to latest.timestamp would never catch a monitoring gap
+  // that's making an old value look current.
   const recentOrp = getMostRecentOrp(readings);
-  const orpIsStale = recentOrp != null && latest != null && recentOrp.at.getTime() !== latest.timestamp.getTime();
+  const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at);
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
 
