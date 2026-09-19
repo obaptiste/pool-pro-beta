@@ -101,9 +101,15 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 ### Pool controller telemetry (Hanna Cloud)
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
 controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`
-(`sanitisationMv` is ORP in mV; `chlorine`/`alkalinity`/etc. stay `null` —
-the controller doesn't measure them, so these are partial readings, not a
-replacement for a manual test).
+(`sanitisationMv` is ORP in mV). The controller doesn't measure
+`chlorine`/`alkalinity`/`totalChlorine`/`calciumHardness`/`cyanuricAcid`/
+`differentialPressure` — these are a partial reading, not a replacement for
+a manual test — but Dashboard and GeminiAssistant both treat `readings[0]`
+as the complete latest snapshot rather than merging across readings, so
+`sync.ts` carries those fields forward from the most recent reading (of any
+source) that has them, rather than writing `null` and blanking their cards
+or making LSI ("needs ph + temperature + calciumHardness + alkalinity")
+unavailable every sync.
 
 - **No official API.** `api/_lib/poolControllers/hannaCloud/client.ts` is a
   TypeScript port of the reverse-engineered, MIT-licensed client behind Home
@@ -123,6 +129,12 @@ replacement for a manual test).
 - **Credentials are real account credentials**, not an API key —
   `HANNA_CLOUD_EMAIL`/`HANNA_CLOUD_PASSWORD` must stay server-side only,
   unlike the client-bundled `GEMINI_API_KEY` pattern above.
+- **Atomic dedupe+write.** Because two independent schedulers can invoke
+  the sync job at the same time (both fire at 06:00 UTC daily),
+  `PoolControllerSyncStore.syncIfNewer()`'s Firestore implementation
+  (`firestoreAdapters.ts`) does the "is this reading newer than last
+  synced" check, the reading write, and the sync-state advance inside one
+  `db.runTransaction()` — never as separate reads/writes.
 
 ## Code Review — Known Issues & Decisions
 

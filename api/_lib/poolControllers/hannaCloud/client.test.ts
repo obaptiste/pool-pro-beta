@@ -78,6 +78,13 @@ test('a 403 on an authenticated call triggers one re-authentication and a retry'
   assert.equal(calls[3].headers.authorization, 'Bearer access-789');
 });
 
+test('a 403 on the login call itself throws rather than recursing into authenticate() again', async () => {
+  responses = [{ status: 403, body: {} }];
+  const client = new HannaCloudClient('me@example.com', 'wrong-password');
+  await assert.rejects(() => client.authenticate(), HannaAuthenticationError);
+  assert.equal(calls.length, 1);
+});
+
 test('authenticate() throws HannaAuthenticationError if Hanna Cloud never returns an accessToken', async () => {
   responses = [
     { status: 200, body: { data: { login: [] } } },

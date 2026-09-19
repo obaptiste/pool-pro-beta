@@ -117,7 +117,12 @@ export class HannaCloudClient {
       body: JSON.stringify(body),
     });
 
-    if (response.status === 403 && !isRetry) {
+    // Re-auth-and-retry-once only applies to authenticated GraphQL calls
+    // whose token has expired. A 403 on the auth/login call itself means
+    // the credentials are wrong — authenticate() calling back into this
+    // method (with isRetry defaulting to false again) would otherwise
+    // recurse indefinitely instead of surfacing HannaAuthenticationError.
+    if (endpoint === 'graphql' && response.status === 403 && !isRetry) {
       await this.authenticate();
       return this.request(endpoint, body, true);
     }

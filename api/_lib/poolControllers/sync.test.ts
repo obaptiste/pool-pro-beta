@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { syncLatestReading, type ReadingWriter, type SyncState, type SyncStateStore } from './sync';
+import { syncLatestReading, type CarryForwardFields, type PoolControllerSyncStore } from './sync';
 import type { PoolControllerReading, PoolControllerSource } from './types';
+import type { Reading } from '../../../src/types';
 
 class FakeSource implements PoolControllerSource {
   readonly id = 'fake-source';
@@ -11,20 +12,21 @@ class FakeSource implements PoolControllerSource {
   }
 }
 
-class FakeStateStore implements SyncStateStore {
-  constructor(private state: SyncState | null = null) {}
-  async get() {
-    return this.state;
-  }
-  async set(state: SyncState) {
-    this.state = state;
-  }
-}
+/** Mirrors the Firestore adapter's dedupe contract — synchronous JS execution stands in for the transaction's atomicity for the purposes of exercising the decision logic. */
+class FakeSyncStore implements PoolControllerSyncStore {
+  written: Array<Omit<Reading, 'id'>> = [];
+  private lastReadingAt = new Map<string, number>();
 
-class FakeWriter implements ReadingWriter {
-  written: Array<Parameters<ReadingWriter['writeReading']>[0]> = [];
-  async writeReading(reading: Parameters<ReadingWriter['writeReading']>[0]) {
+  constructor(initialLastReadingAt?: Date) {
+    if (initialLastReadingAt) this.lastReadingAt.set('fake-source', initialLastReadingAt.getTime());
+  }
+
+  async syncIfNewer(sourceId: string, reading: Omit<Reading, 'id'>): Promise<boolean> {
+    const last = this.lastReadingAt.get(sourceId);
+    if (last != null && reading.timestamp.getTime() <= last) return false;
     this.written.push(reading);
+    this.lastReadingAt.set(sourceId, reading.timestamp.getTime());
+    return true;
   }
 }
 
@@ -35,59 +37,84 @@ const sampleReading: PoolControllerReading = {
   recordedAt: new Date('2026-09-19T12:00:00.000Z'),
 };
 
-test('writes a reading and advances sync state on first sync', async () => {
-  const source = new FakeSource(sampleReading);
-  const stateStore = new FakeStateStore(null);
-  const writer = new FakeWriter();
-
-  const result = await syncLatestReading({ source, stateStore, writer, ownerUid: 'uid-1' });
+test('writes a reading on first sync', async () => {
+  const store = new FakeSyncStore();
+  const result = await syncLatestReading({ source: new FakeSource(sampleReading), store, ownerUid: 'uid-1' });
 
   assert.deepEqual(result, { written: true, outcome: 'synced' });
-  assert.equal(writer.written.length, 1);
-  assert.equal(writer.written[0].ph, 7.4);
-  assert.equal(writer.written[0].sanitisationMv, 650);
-  assert.equal(writer.written[0].temperature, 28.1);
-  assert.equal(writer.written[0].uid, 'uid-1');
-  assert.equal(writer.written[0].notes, 'Auto-logged from fake-source');
-  assert.deepEqual(await stateStore.get(), { lastReadingAt: sampleReading.recordedAt });
+  assert.equal(store.written.length, 1);
+  assert.equal(store.written[0].ph, 7.4);
+  assert.equal(store.written[0].sanitisationMv, 650);
+  assert.equal(store.written[0].temperature, 28.1);
+  assert.equal(store.written[0].uid, 'uid-1');
+  assert.equal(store.written[0].notes, 'Auto-logged from fake-source');
 });
 
-test('unmapped chemistry fields (chlorine, alkalinity, etc.) stay null — a controller reading is not a full manual test', async () => {
-  const writer = new FakeWriter();
-  await syncLatestReading({ source: new FakeSource(sampleReading), stateStore: new FakeStateStore(null), writer, ownerUid: 'uid-1' });
+test('without a carry-forward lookup, unmeasured chemistry fields stay null', async () => {
+  const store = new FakeSyncStore();
+  await syncLatestReading({ source: new FakeSource(sampleReading), store, ownerUid: 'uid-1' });
 
-  assert.equal(writer.written[0].chlorine, null);
-  assert.equal(writer.written[0].totalChlorine, null);
-  assert.equal(writer.written[0].alkalinity, null);
-  assert.equal(writer.written[0].calciumHardness, null);
-  assert.equal(writer.written[0].cyanuricAcid, null);
-  assert.equal(writer.written[0].differentialPressure, null);
+  assert.equal(store.written[0].chlorine, null);
+  assert.equal(store.written[0].totalChlorine, null);
+  assert.equal(store.written[0].alkalinity, null);
+  assert.equal(store.written[0].calciumHardness, null);
+  assert.equal(store.written[0].cyanuricAcid, null);
+  assert.equal(store.written[0].differentialPressure, null);
+});
+
+test('carries forward the most recent known value for fields the controller does not measure', async () => {
+  const store = new FakeSyncStore();
+  const carryForward: Partial<CarryForwardFields> = { chlorine: 2.1, alkalinity: 90, calciumHardness: 220 };
+  await syncLatestReading({
+    source: new FakeSource(sampleReading),
+    store,
+    ownerUid: 'uid-1',
+    getCarryForwardFields: async () => carryForward,
+  });
+
+  assert.equal(store.written[0].chlorine, 2.1);
+  assert.equal(store.written[0].alkalinity, 90);
+  assert.equal(store.written[0].calciumHardness, 220);
+  // Fields the lookup didn't return anything for still fall back to null.
+  assert.equal(store.written[0].totalChlorine, null);
+  assert.equal(store.written[0].cyanuricAcid, null);
+  assert.equal(store.written[0].differentialPressure, null);
+});
+
+test('the controller\'s own measurements (ph/sanitisationMv/temperature) are never overridden by carry-forward', async () => {
+  const store = new FakeSyncStore();
+  await syncLatestReading({
+    source: new FakeSource(sampleReading),
+    store,
+    ownerUid: 'uid-1',
+    getCarryForwardFields: async () => ({ chlorine: 2.1 } as Partial<CarryForwardFields>),
+  });
+
+  assert.equal(store.written[0].ph, sampleReading.ph);
+  assert.equal(store.written[0].sanitisationMv, sampleReading.sanitisationMv);
+  assert.equal(store.written[0].temperature, sampleReading.temperature);
 });
 
 test('is a no-op when the source has no reading at all', async () => {
-  const writer = new FakeWriter();
-  const stateStore = new FakeStateStore(null);
-  const result = await syncLatestReading({ source: new FakeSource(null), stateStore, writer, ownerUid: 'uid-1' });
+  const store = new FakeSyncStore();
+  const result = await syncLatestReading({ source: new FakeSource(null), store, ownerUid: 'uid-1' });
 
   assert.deepEqual(result, { written: false, outcome: 'no-reading-available' });
-  assert.equal(writer.written.length, 0);
-  assert.equal(await stateStore.get(), null);
+  assert.equal(store.written.length, 0);
 });
 
 test('is a no-op when the reading is not newer than the last synced one (repeat poll)', async () => {
-  const writer = new FakeWriter();
-  const stateStore = new FakeStateStore({ lastReadingAt: sampleReading.recordedAt });
-  const result = await syncLatestReading({ source: new FakeSource(sampleReading), stateStore, writer, ownerUid: 'uid-1' });
+  const store = new FakeSyncStore(sampleReading.recordedAt);
+  const result = await syncLatestReading({ source: new FakeSource(sampleReading), store, ownerUid: 'uid-1' });
 
   assert.deepEqual(result, { written: false, outcome: 'not-newer-than-last-sync' });
-  assert.equal(writer.written.length, 0);
+  assert.equal(store.written.length, 0);
 });
 
 test('writes again once the controller reports a strictly newer reading', async () => {
-  const writer = new FakeWriter();
-  const stateStore = new FakeStateStore({ lastReadingAt: new Date('2026-09-19T11:00:00.000Z') });
-  const result = await syncLatestReading({ source: new FakeSource(sampleReading), stateStore, writer, ownerUid: 'uid-1' });
+  const store = new FakeSyncStore(new Date('2026-09-19T11:00:00.000Z'));
+  const result = await syncLatestReading({ source: new FakeSource(sampleReading), store, ownerUid: 'uid-1' });
 
   assert.deepEqual(result, { written: true, outcome: 'synced' });
-  assert.equal(writer.written.length, 1);
+  assert.equal(store.written.length, 1);
 });
