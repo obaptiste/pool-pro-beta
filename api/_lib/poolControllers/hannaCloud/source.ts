@@ -18,6 +18,15 @@ function findParameterNumber(parameters: HannaReadingParameter[], name: string):
   return null;
 }
 
+// Small allowance for clock skew between the controller/Hanna Cloud and this
+// server -- not a guess at "now" (see the throw below), just a sanity
+// ceiling. Without it, a garbage far-future timestamp becomes sync.ts's
+// permanent "last synced" watermark: every subsequent legitimate reading
+// compares as older than it and is silently skipped -- potentially for
+// months -- while the endpoint keeps returning a normal-looking
+// "not-newer-than-last-sync" result instead of an error anyone would notice.
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 /**
  * Hanna Cloud's device-log timestamp shape isn't documented anywhere
  * public, so this accepts either an ISO string or a Unix epoch in
@@ -27,16 +36,22 @@ function findParameterNumber(parameters: HannaReadingParameter[], name: string):
  * into Firestore on each run.
  */
 function parseHannaTimestamp(dt: unknown): Date {
+  let parsed: Date | null = null;
   if (typeof dt === 'string') {
-    const parsed = new Date(dt);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-  if (typeof dt === 'number' && Number.isFinite(dt)) {
+    const d = new Date(dt);
+    if (!Number.isNaN(d.getTime())) parsed = d;
+  } else if (typeof dt === 'number' && Number.isFinite(dt)) {
     // Sub-second-precision epochs (seconds) are ~10 digits today; ms epochs are ~13.
     const ms = dt < 1e12 ? dt * 1000 : dt;
-    return new Date(ms);
+    parsed = new Date(ms);
   }
-  throw new HannaCloudError(`Unrecognized Hanna Cloud reading timestamp: ${JSON.stringify(dt)}`);
+  if (!parsed) {
+    throw new HannaCloudError(`Unrecognized Hanna Cloud reading timestamp: ${JSON.stringify(dt)}`);
+  }
+  if (parsed.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+    throw new HannaCloudError(`Hanna Cloud reading timestamp is implausibly far in the future: ${parsed.toISOString()}`);
+  }
+  return parsed;
 }
 
 export interface HannaCloudSourceOptions {
@@ -86,10 +101,24 @@ export class HannaCloudSource implements PoolControllerSource {
     const deviceId = await this.resolveDeviceId();
     const reading = await this.client.getLastDeviceReading(deviceId);
 
+    const ph = findParameterNumber(reading.parameters, 'ph');
+    const sanitisationMv = findParameterNumber(reading.parameters, 'orp');
+    const temperature = findParameterNumber(reading.parameters, 'temp');
+
+    // A snapshot with no usable measurement at all isn't a partial reading,
+    // it's nothing -- returning it would write an all-null Reading (hiding
+    // the dashboard's previous, real pH/ORP snapshot behind it) and would
+    // still advance sync.ts's dedupe watermark, so a later corrected
+    // response for the same instant would be silently rejected as
+    // "not newer than last sync".
+    if (ph == null && sanitisationMv == null && temperature == null) {
+      return null;
+    }
+
     return {
-      ph: findParameterNumber(reading.parameters, 'ph'),
-      sanitisationMv: findParameterNumber(reading.parameters, 'orp'),
-      temperature: findParameterNumber(reading.parameters, 'temp'),
+      ph,
+      sanitisationMv,
+      temperature,
       recordedAt: parseHannaTimestamp(reading.dt),
     };
   }
