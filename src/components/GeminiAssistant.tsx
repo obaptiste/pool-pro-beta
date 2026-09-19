@@ -181,13 +181,20 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   // model; always labeled with its age when stale, never presented as if
   // it were the current reading.
   //
-  // Staleness is judged against wall-clock "now" (isOrpStale), not against
-  // whether a fallback happened: if auto-sync polling stops entirely, the
-  // last successful reading IS the latest reading, so a same-timestamp
-  // comparison would never flag it even as it grows hours or days old.
-  const recentOrp = getMostRecentOrp(history);
-  const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at);
-  const fmtOrp = () => recentOrp == null ? 'not measured' : `${recentOrp.value}${orpIsStale ? ` (last measured ${formatAge(recentOrp.at)} — may not reflect current conditions)` : ''}`;
+  // Deliberately computed fresh inside the function itself, not as a
+  // component-render-scoped const: this component only re-renders on
+  // prop/state changes, so a value captured once at render time would
+  // reflect whatever "now" was then, not the actual moment a user clicks
+  // a button minutes or hours later — silently sending a now-stale ORP
+  // reading to the model as if it just checked. Calling this fresh inside
+  // each handler, right when the prompt is actually built, avoids relying
+  // on React's render timing entirely.
+  const fmtOrp = () => {
+    const recentOrp = getMostRecentOrp(history);
+    if (recentOrp == null) return 'not measured';
+    const stale = isOrpStale(recentOrp.at);
+    return `${recentOrp.value}${stale ? ` (last measured ${formatAge(recentOrp.at)} — may not reflect current conditions)` : ''}`;
+  };
 
   const getInsight = async () => {
     if (!latestReading) return;

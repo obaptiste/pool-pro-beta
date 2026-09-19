@@ -72,6 +72,19 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   const [lsiAnalysis, setLsiAnalysis] = React.useState<string | null>(null);
   const [isLsiLoading, setIsLsiLoading] = React.useState(false);
+  // ORP staleness (below) is judged against wall-clock "now", but this
+  // component otherwise only re-renders when props/state change -- if
+  // auto-sync polling stops entirely, no new Firestore snapshot ever
+  // arrives, so nothing would trigger a re-render and isOrpStale/formatAge
+  // would stay frozen at whatever "now" was during the last render,
+  // forever. This ticks the clock forward once a minute so a reading that
+  // crosses the staleness threshold while the page just sits open still
+  // gets caught.
+  const [now, setNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   // Backfills alkalinity/calciumHardness (LSI's slow-changing inputs) from
   // history when the latest reading is a controller-only poll that
   // doesn't report them — see getLatestReadingForDisplay's docstring for
@@ -92,7 +105,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // recentOrp.at to latest.timestamp would never catch a monitoring gap
   // that's making an old value look current.
   const recentOrp = getMostRecentOrp(readings);
-  const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at);
+  const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at, now);
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
 
@@ -206,7 +219,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       id: 'orp_low',
       type: 'sanitisation',
       condition: recentOrp != null && recentOrp.value < 650,
-      msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at)})` : ''}`,
+      msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
     },
@@ -214,7 +227,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       id: 'orp_high',
       type: 'sanitisation',
       condition: recentOrp != null && recentOrp.value > 800,
-      msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at)})` : ''}`,
+      msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
     },
@@ -498,7 +511,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                 trend={getTrendData('sanitisationMv')}
                 ideal="650–750"
                 onLongPress={onLogReading}
-                caption={orpIsStale ? `As of ${formatAge(recentOrp!.at)}` : undefined}
+                caption={orpIsStale ? `As of ${formatAge(recentOrp!.at, now)}` : undefined}
               />
               <StatusCard
                 label="pH Level"
