@@ -148,6 +148,28 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       action: 'Stop chlorination and wait for levels to drop.',
       severity: 'warning'
     },
+    // sanitisationMv (ORP) is the only sanitiser signal a pool-controller
+    // sync ever reports (chlorine ppm stays null — see the "Pool
+    // controller telemetry" note in CLAUDE.md), so without this alert a
+    // dangerously low ORP from an auto-synced reading would show zero
+    // alerts on the dashboard. Thresholds match getSoftWarning's for the
+    // same field in readingValidation.ts.
+    {
+      id: 'orp_low',
+      type: 'sanitisation',
+      condition: latest.sanitisationMv != null && latest.sanitisationMv < 650,
+      msg: 'Sanitisation (ORP) too low — disinfection may be inadequate.',
+      action: 'Check/increase chlorine dosing and retest ORP.',
+      severity: 'critical'
+    },
+    {
+      id: 'orp_high',
+      type: 'sanitisation',
+      condition: latest.sanitisationMv != null && latest.sanitisationMv > 850,
+      msg: 'Sanitisation (ORP) very high — may indicate over-dosing.',
+      action: 'Reduce chlorine dosing and retest.',
+      severity: 'warning'
+    },
     {
       id: 'ph_low',
       type: 'ph',
@@ -409,6 +431,16 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                 freeStatus={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
                 totalStatus={latest?.totalChlorine != null ? getStatus(latest.totalChlorine, DEFAULT_RANGES.totalChlorine.min, DEFAULT_RANGES.totalChlorine.max) : 'good'}
                 trend={combinedChlorineTrend}
+                onLongPress={onLogReading}
+              />
+              <StatusCard
+                label="Sanitisation / ORP"
+                field="sanitisationMv"
+                value={latest?.sanitisationMv ?? null}
+                unit="mV"
+                status={latest?.sanitisationMv != null ? getStatus(latest.sanitisationMv, DEFAULT_RANGES.sanitisationMv.min, DEFAULT_RANGES.sanitisationMv.max) : 'good'}
+                trend={getTrendData('sanitisationMv')}
+                ideal="650–750"
                 onLongPress={onLogReading}
               />
               <StatusCard

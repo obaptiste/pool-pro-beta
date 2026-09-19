@@ -71,3 +71,34 @@ test('backfills each field independently from whichever earlier reading has it',
   assert.equal(result?.alkalinity, 95); // kept from latest, not overwritten
   assert.equal(result?.calciumHardness, 240); // backfilled
 });
+
+test('backfills from a value within the staleness window', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now });
+  const twentyNineDaysAgo = reading({ id: 'recentish', timestamp: new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000), alkalinity: 90, calciumHardness: 220 });
+  const result = getLatestReadingForDisplay([latest, twentyNineDaysAgo]);
+
+  assert.equal(result?.alkalinity, 90);
+  assert.equal(result?.calciumHardness, 220);
+});
+
+test('does not backfill from a value older than the staleness window — e.g. from before a drain/refill', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now });
+  const sixMonthsAgo = reading({ id: 'ancient', timestamp: new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000), alkalinity: 90, calciumHardness: 220 });
+  const result = getLatestReadingForDisplay([latest, sixMonthsAgo]);
+
+  assert.equal(result?.alkalinity, null);
+  assert.equal(result?.calciumHardness, null);
+});
+
+test('skips a stale value and backfills from a more recent one within the window instead', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now });
+  const fiveDaysAgo = reading({ id: 'fresh', timestamp: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000), alkalinity: 95, calciumHardness: 230 });
+  const sixMonthsAgo = reading({ id: 'ancient', timestamp: new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000), alkalinity: 90, calciumHardness: 220 });
+  const result = getLatestReadingForDisplay([latest, fiveDaysAgo, sixMonthsAgo]);
+
+  assert.equal(result?.alkalinity, 95);
+  assert.equal(result?.calciumHardness, 230);
+});

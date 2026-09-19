@@ -185,6 +185,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
         Analyze the following telemetry data:
         - Free Chlorine: ${fmt(latestReading.chlorine)} ppm
         - Total Chlorine: ${fmt(latestReading.totalChlorine)} ppm (combined chlorine = total − free)
+        - Sanitisation (ORP): ${fmt(latestReading.sanitisationMv)} mV
         - pH Level: ${fmt(latestReading.ph)}
         - Total Alkalinity: ${fmt(latestReading.alkalinity)} ppm
         - Water Temperature: ${fmt(latestReading.temperature)}°C
@@ -274,7 +275,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     const checklist = insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
     return [
       `AI Analysis (${new Date().toLocaleString()})`,
-      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
+      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, ORP ${fmt(latestReading.sanitisationMv)} mV, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
       `Assessment: ${insight.analysis.replace(/\n+/g, ' ').trim()}`,
       `Checklist: ${checklist}`,
       `Target Outcome: ${insight.expectedOutcome.replace(/\n+/g, ' ').trim()}`
@@ -300,6 +301,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       '',
       '## Current Reading',
       `- Free Chlorine: ${fmt(latestReading.chlorine)} ppm`,
+      `- Sanitisation (ORP): ${fmt(latestReading.sanitisationMv)} mV`,
       `- pH: ${fmt(latestReading.ph)}`,
       `- Alkalinity: ${fmt(latestReading.alkalinity)} ppm`,
       `- Temperature: ${fmt(latestReading.temperature)}°C`,
@@ -374,7 +376,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     try {
       const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
       const context = latestReading
-        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
+        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, ORP ${fmt(latestReading.sanitisationMv)} mV, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
         : 'No latest reading is currently available.';
       const response = await callAiWithFallback({
         model: "gemini-3-flash-preview",

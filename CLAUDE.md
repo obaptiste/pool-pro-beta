@@ -123,11 +123,17 @@ Dashboard.tsx and App.tsx (for GeminiAssistant) instead of raw `readings[0]`
 — fixes this at **presentation time only**: it backfills *just*
 `alkalinity`/`calciumHardness` (LSI's two slow-changing inputs, normally
 tested far less often than chlorine and reasonably treated as stable
-between tests) from the most recent reading that has them. Chlorine,
-totalChlorine, cyanuricAcid, and differentialPressure are deliberately never
-backfilled, at write time or display time — those can change fast enough,
-and matter enough for safety, that showing a stale value as current is
-worse than showing "not measured."
+between tests) from the most recent reading that has them **within the
+last `MAX_BACKFILL_AGE_DAYS` (30) days** — beyond that (e.g. spanning a
+drain/refill), the field is left `null` rather than silently presenting a
+value that may no longer hold. Chlorine, totalChlorine, cyanuricAcid, and
+differentialPressure are deliberately never backfilled, at write time or
+display time — those can change fast enough, and matter enough for
+safety, that showing a stale value as current is worse than showing "not
+measured." `sanitisationMv` (ORP) — the only sanitiser signal a
+controller sync ever reports — is wired into Dashboard's alerts/status
+card and GeminiAssistant's prompts alongside chlorine, so a dangerously
+low ORP from an auto-synced reading doesn't pass through silently.
 
 - **No official API.** `api/_lib/poolControllers/hannaCloud/client.ts` is a
   TypeScript port of the reverse-engineered, MIT-licensed client behind Home
