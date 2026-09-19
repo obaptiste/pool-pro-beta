@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote } from './readings';
+import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge } from './readings';
 import { Reading } from '../types';
 
 function reading(overrides: Partial<Reading>): Reading {
@@ -117,4 +117,43 @@ test('isAutoSyncBoilerplateNote does not match an operator-amended auto-sync not
   // reading, then voice/photo transcription appends new text after a
   // newline — that amendment must not be filtered out as pure telemetry noise.
   assert.equal(isAutoSyncBoilerplateNote('Auto-logged from hanna-cloud\nAdded 2L liquid chlorine'), false);
+});
+
+test('getMostRecentOrp returns undefined for empty history', () => {
+  assert.equal(getMostRecentOrp([]), null);
+});
+
+test('getMostRecentOrp returns the latest reading\'s own ORP when present', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now, sanitisationMv: 233 });
+  const result = getMostRecentOrp([latest]);
+  assert.equal(result?.value, 233);
+  assert.equal(result?.at.getTime(), now.getTime());
+});
+
+test('getMostRecentOrp falls back to a recent earlier reading when the latest omits ORP', () => {
+  // A real controller poll can report pH/temperature but omit ORP for one
+  // cycle -- a dangerously low ORP from 20 minutes ago shouldn't just
+  // vanish because of that.
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now, ph: 7.2, sanitisationMv: null });
+  const earlier = reading({ id: 'earlier', timestamp: new Date(now.getTime() - 20 * 60 * 1000), sanitisationMv: 233 });
+  const result = getMostRecentOrp([latest, earlier]);
+  assert.equal(result?.value, 233);
+  assert.equal(result?.at.getTime(), earlier.timestamp.getTime());
+});
+
+test('getMostRecentOrp does not fall back beyond its bounded window', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  const latest = reading({ id: 'latest', timestamp: now, sanitisationMv: null });
+  const fourHoursAgo = reading({ id: 'stale', timestamp: new Date(now.getTime() - 4 * 60 * 60 * 1000), sanitisationMv: 233 });
+  const result = getMostRecentOrp([latest, fourHoursAgo]);
+  assert.equal(result, null);
+});
+
+test('formatAge labels sub-minute gaps as "just now" and otherwise in minutes/hours', () => {
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  assert.equal(formatAge(now, now), 'just now');
+  assert.equal(formatAge(new Date(now.getTime() - 20 * 60 * 1000), now), '20m ago');
+  assert.equal(formatAge(new Date(now.getTime() - 3 * 60 * 60 * 1000), now), '3h ago');
 });

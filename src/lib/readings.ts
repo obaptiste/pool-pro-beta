@@ -65,6 +65,48 @@ export function getLatestReadingForDisplay(readings: Reading[]): Reading | undef
   return { ...latest, alkalinity, calciumHardness };
 }
 
+// ORP can genuinely swing within a poll cycle -- like chlorine, it's
+// deliberately never backfilled into a fresh Reading (see
+// getLatestReadingForDisplay's docstring). This is not that: it's a
+// display-only fallback for when the single latest reading's ORP sensor
+// came back blank (a real, observed response shape -- pH/temp present,
+// ORP omitted) but an earlier reading, not long before, did report ORP.
+// Bounded much tighter than the 30-day alk/CH window -- long enough to
+// ride out a few consecutive blank polls (15 min apart), short enough
+// that a genuinely stale value can't masquerade as a live warning for long.
+const MAX_ORP_FALLBACK_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+/**
+ * The most recent known ORP (sanitisationMv) value and when it was
+ * actually measured. Returns the latest reading's own value when present;
+ * otherwise falls back to the most recent earlier reading that reported
+ * ORP, within MAX_ORP_FALLBACK_AGE_MS.
+ *
+ * Exists so a dangerously low/high ORP doesn't silently vanish from
+ * Dashboard's alert/status card or GeminiAssistant's prompt just because
+ * the very next controller poll happened to omit that one field —
+ * without ever presenting the fallback value as if it were fresh: callers
+ * must compare the returned `at` against the latest reading's own
+ * timestamp and label the value's age accordingly.
+ */
+export function getMostRecentOrp(readings: Reading[]): { value: number; at: Date } | null {
+  const latest = readings[0];
+  if (!latest) return null;
+  if (latest.sanitisationMv != null) return { value: latest.sanitisationMv, at: latest.timestamp };
+
+  const cutoff = new Date(latest.timestamp.getTime() - MAX_ORP_FALLBACK_AGE_MS);
+  const found = readings.find((r) => r.sanitisationMv != null && r.timestamp.getTime() >= cutoff.getTime());
+  return found ? { value: found.sanitisationMv as number, at: found.timestamp } : null;
+}
+
+/** Short relative-age label ("just now", "12m ago", "3h ago") for showing how old a fallback value (e.g. from getMostRecentOrp) actually is. */
+export function formatAge(at: Date, relativeTo: Date = new Date()): string {
+  const minutes = Math.round((relativeTo.getTime() - at.getTime()) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
 // Matches only a note that's *exactly* sync.ts's boilerplate
 // "Auto-logged from <source>" — nothing more. An operator amending that note
 // (ReadingForm preloads it, then voice/photo transcription appends new text

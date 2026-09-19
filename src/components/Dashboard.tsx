@@ -28,7 +28,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
-import { getLatestReadingForDisplay } from '../lib/readings';
+import { getLatestReadingForDisplay, getMostRecentOrp, formatAge } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -77,6 +77,15 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // doesn't report them — see getLatestReadingForDisplay's docstring for
   // why only those two fields, and why this is presentation-only.
   const latest = getLatestReadingForDisplay(readings);
+
+  // ORP alone: a real controller response can report pH/temperature but
+  // omit ORP for one poll. Without this, that single blank field would
+  // silently drop a genuinely recent, still-relevant low/high ORP warning
+  // from the alert list and status card the moment the next poll lands.
+  // Bounded (see getMostRecentOrp) and always labeled with its own age
+  // below — never presented as if it were this instant's reading.
+  const recentOrp = getMostRecentOrp(readings);
+  const orpIsStale = recentOrp != null && latest != null && recentOrp.at.getTime() !== latest.timestamp.getTime();
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
 
@@ -179,19 +188,26 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     // effectiveness, not a chlorine ppm value, so an ORP-only alert
     // must send the operator to actually test chlorine (and check
     // circulation) rather than tell them to dose blind.
+    //
+    // Reads recentOrp, not latest.sanitisationMv directly: a real
+    // controller poll can report pH/temperature but omit ORP for one
+    // cycle, and requiring the literal latest reading to carry ORP would
+    // let a genuinely recent, still-relevant warning vanish the moment
+    // that happens. When recentOrp falls back to an earlier reading, its
+    // age is appended so it's never presented as this instant's value.
     {
       id: 'orp_low',
       type: 'sanitisation',
-      condition: latest.sanitisationMv != null && latest.sanitisationMv < 650,
-      msg: 'Sanitisation (ORP) too low — disinfection may be inadequate.',
+      condition: recentOrp != null && recentOrp.value < 650,
+      msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
     },
     {
       id: 'orp_high',
       type: 'sanitisation',
-      condition: latest.sanitisationMv != null && latest.sanitisationMv > 800,
-      msg: 'Sanitisation (ORP) high — verify before swimming or adding more chlorine.',
+      condition: recentOrp != null && recentOrp.value > 800,
+      msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
     },
@@ -469,12 +485,13 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
               <StatusCard
                 label="Sanitisation / ORP"
                 field="sanitisationMv"
-                value={latest?.sanitisationMv ?? null}
+                value={recentOrp?.value ?? null}
                 unit="mV"
-                status={latest?.sanitisationMv != null ? getOrpStatus(latest.sanitisationMv) : 'good'}
+                status={recentOrp != null ? getOrpStatus(recentOrp.value) : 'good'}
                 trend={getTrendData('sanitisationMv')}
                 ideal="650–750"
                 onLongPress={onLogReading}
+                caption={orpIsStale ? `As of ${formatAge(recentOrp!.at)}` : undefined}
               />
               <StatusCard
                 label="pH Level"
@@ -763,7 +780,7 @@ function Sparkline({ values, color }: { values: number[], color: string }) {
   );
 }
 
-function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPress }: { label: string, field: NumericReadingField, value: number | null, unit: string, status: Status, trend: number[], ideal: string, onLongPress: (field: NumericReadingField) => void }) {
+function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPress, caption }: { label: string, field: NumericReadingField, value: number | null, unit: string, status: Status, trend: number[], ideal: string, onLongPress: (field: NumericReadingField) => void, caption?: string }) {
   const statusColors = {
     good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
     warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
@@ -800,6 +817,7 @@ function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPre
         <span className="text-ink-dim">Ideal: {ideal}</span>
         <span className="opacity-80">{isMissing ? 'Not measured' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
       </div>
+      {caption && <p className="text-[9px] font-medium text-ink-dim opacity-70">{caption}</p>}
     </div>
   );
 }
