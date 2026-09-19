@@ -20,8 +20,20 @@ jobs:
           status=$(curl -sS -o /tmp/response.json -w "%{http_code}" \
             -X POST "${DEPLOYMENT_URL}/api/cron/sync-pool-controller" \
             -H "Authorization: Bearer ${CRON_SECRET}")
+          curl_exit=$?
           echo "HTTP $status"
           cat /tmp/response.json
+          # curl itself can fail (DNS, TLS, connection refused/timeout) without
+          # ever getting an HTTP response -- -w still prints "000" in that case,
+          # and "000" -ge 300 is false, so the status check alone would let a
+          # transport failure report success and silently stop telemetry sync.
+          # -sS suppresses curl's own error output but doesn't turn an HTTP
+          # error status into a nonzero exit (deliberately, so /tmp/response.json
+          # is always captured above) -- only a transport failure does that.
+          if [ "$curl_exit" -ne 0 ]; then
+            echo "curl failed with exit code $curl_exit (no HTTP response received)"
+            exit 1
+          fi
           if [ "$status" -ge 300 ]; then
             exit 1
           fi

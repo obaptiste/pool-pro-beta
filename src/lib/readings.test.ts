@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge } from './readings';
+import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale } from './readings';
 import { Reading } from '../types';
 
 function reading(overrides: Partial<Reading>): Reading {
@@ -156,4 +156,18 @@ test('formatAge labels sub-minute gaps as "just now" and otherwise in minutes/ho
   assert.equal(formatAge(now, now), 'just now');
   assert.equal(formatAge(new Date(now.getTime() - 20 * 60 * 1000), now), '20m ago');
   assert.equal(formatAge(new Date(now.getTime() - 3 * 60 * 60 * 1000), now), '3h ago');
+});
+
+test('isOrpStale is judged against wall-clock now, not against whether a value came from a fallback', () => {
+  // The bug this closes: if auto-sync polling stops entirely (expired
+  // credentials, an outage), the last successful reading IS the latest
+  // reading -- there's no fallback for getMostRecentOrp to trigger on, so
+  // a same-timestamp comparison would never catch a value that's grown
+  // hours old while polling silently stopped. isOrpStale instead compares
+  // the reading's own timestamp to the current time.
+  const now = new Date('2026-09-19T12:00:00.000Z');
+  assert.equal(isOrpStale(now, now), false);
+  assert.equal(isOrpStale(new Date(now.getTime() - 10 * 60 * 1000), now), false); // 10m: within one poll cycle
+  assert.equal(isOrpStale(new Date(now.getTime() - 45 * 60 * 1000), now), true); // 45m: polling has likely stopped
+  assert.equal(isOrpStale(new Date(now.getTime() - 6 * 60 * 60 * 1000), now), true); // 6h: definitely stopped
 });

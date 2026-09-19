@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
 import { calculateLSI } from '../lib/lsi';
-import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge } from '../lib/readings';
+import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
 import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
 import { Type } from "@google/genai";
 
@@ -178,11 +178,23 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   // recent, still-relevant low/high ORP reading silently drop out of every
   // prompt below the moment that happens (see getMostRecentOrp). Used in
   // place of latestReading.sanitisationMv everywhere ORP is reported to the
-  // model; always labeled with its age when it's a fallback, never
-  // presented as if it were the current reading.
-  const recentOrp = getMostRecentOrp(history);
-  const orpIsStale = recentOrp != null && latestReading != null && recentOrp.at.getTime() !== latestReading.timestamp.getTime();
-  const fmtOrp = () => recentOrp == null ? 'not measured' : `${recentOrp.value}${orpIsStale ? ` (last measured ${formatAge(recentOrp.at)}, not this instant's reading)` : ''}`;
+  // model; always labeled with its age when stale, never presented as if
+  // it were the current reading.
+  //
+  // Deliberately computed fresh inside the function itself, not as a
+  // component-render-scoped const: this component only re-renders on
+  // prop/state changes, so a value captured once at render time would
+  // reflect whatever "now" was then, not the actual moment a user clicks
+  // a button minutes or hours later — silently sending a now-stale ORP
+  // reading to the model as if it just checked. Calling this fresh inside
+  // each handler, right when the prompt is actually built, avoids relying
+  // on React's render timing entirely.
+  const fmtOrp = () => {
+    const recentOrp = getMostRecentOrp(history);
+    if (recentOrp == null) return 'not measured';
+    const stale = isOrpStale(recentOrp.at);
+    return `${recentOrp.value}${stale ? ` (last measured ${formatAge(recentOrp.at)} — may not reflect current conditions)` : ''}`;
+  };
 
   const getInsight = async () => {
     if (!latestReading) return;

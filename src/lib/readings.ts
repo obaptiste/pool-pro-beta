@@ -107,6 +107,26 @@ export function formatAge(at: Date, relativeTo: Date = new Date()): string {
   return `${Math.round(minutes / 60)}h ago`;
 }
 
+// Two missed 15-min auto-sync cycles. Deliberately measured against wall-clock
+// "now", not against the latest reading's own timestamp: if polling stops
+// entirely (expired credentials, an outage, a disabled workflow), the last
+// successful reading IS "the latest reading" -- there's no fallback for
+// getMostRecentOrp to fall back to, so a same-timestamp comparison would never
+// catch it. Comparing to "now" is what actually detects "no news isn't good
+// news, monitoring just stopped."
+const ORP_STALE_AFTER_MS = 30 * 60 * 1000;
+
+/**
+ * True once an ORP reading's own measurement time is more than
+ * ORP_STALE_AFTER_MS behind `now` — regardless of whether it came from the
+ * literal latest reading or a getMostRecentOrp fallback. Never used to hide
+ * or null out the value (AGENTS.md: never block/hide evidence) — only to
+ * decide whether callers should label it with its age.
+ */
+export function isOrpStale(at: Date, now: Date = new Date()): boolean {
+  return now.getTime() - at.getTime() > ORP_STALE_AFTER_MS;
+}
+
 // Matches only a note that's *exactly* sync.ts's boilerplate
 // "Auto-logged from <source>" — nothing more. An operator amending that note
 // (ReadingForm preloads it, then voice/photo transcription appends new text
