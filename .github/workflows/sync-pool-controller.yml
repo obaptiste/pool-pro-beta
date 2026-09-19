@@ -1,0 +1,30 @@
+name: Sync pool controller telemetry
+
+# The real polling cadence for the Hanna Cloud pool controller sync
+# (api/cron/sync-pool-controller.ts) — Vercel Cron only runs once/day on
+# the Hobby plan (see vercel.json), so this fills the gap with a tighter
+# schedule until the project is on a plan whose cron supports it natively.
+# Once it is, this workflow can be deleted and vercel.json's schedule
+# tightened instead — both call the same bearer-token-protected endpoint.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call sync endpoint
+        run: |
+          status=$(curl -sS -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${DEPLOYMENT_URL}/api/cron/sync-pool-controller" \
+            -H "Authorization: Bearer ${CRON_SECRET}")
+          echo "HTTP $status"
+          cat /tmp/response.json
+          if [ "$status" -ge 300 ]; then
+            exit 1
+          fi
+        env:
+          DEPLOYMENT_URL: ${{ secrets.POOLSTATUS_DEPLOYMENT_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

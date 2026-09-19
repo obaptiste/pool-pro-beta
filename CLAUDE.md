@@ -41,7 +41,16 @@ src/
     ReminderSettings.tsx    Notification schedule settings
   sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
   serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
+api/
+  mcp.ts                     Remote MCP endpoint — read-only pool data for MCP clients
+  cron/sync-pool-controller.ts  Pulls pH/ORP/temp telemetry from a Hanna Cloud pool controller into `readings`
+  _lib/
+    firebaseAdmin.ts          Shared Admin SDK bootstrap (service account, owner-uid resolution, Firestore handle)
+    poolControllers/          Pool-controller abstraction: types.ts (PoolControllerSource), sync.ts (dedupe + write),
+                               firestoreAdapters.ts, hannaCloud/ (client.ts + source.ts — see Architecture Notes)
+    mcp/                      MCP server implementation and Firestore-backed data source
 firestore.rules             Firestore security rules with field validation
+vercel.json                 Vercel Cron config (pool controller sync)
 ```
 
 ## Development Commands
@@ -80,6 +89,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
+- `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
 
@@ -87,6 +97,32 @@ All documents carry a `uid` field matched to `request.auth.uid` in Firestore rul
 Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 - Shared implementation lives in `src/lib/lsi.ts:calculateLSI()`
 - Target: `−0.1` to `+0.1` (balanced); outside `±0.3` is critical
+
+### Pool controller telemetry (Hanna Cloud)
+`api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
+controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`
+(`sanitisationMv` is ORP in mV; `chlorine`/`alkalinity`/etc. stay `null` —
+the controller doesn't measure them, so these are partial readings, not a
+replacement for a manual test).
+
+- **No official API.** `api/_lib/poolControllers/hannaCloud/client.ts` is a
+  TypeScript port of the reverse-engineered, MIT-licensed client behind Home
+  Assistant's official "Hanna" integration
+  ([github.com/bestycame/hanna_cloud](https://github.com/bestycame/hanna_cloud)) —
+  itself explicitly documented as not supported by Hanna. It can break
+  without notice if Hanna changes their backend.
+- **Abstracted on purpose.** `api/_lib/poolControllers/types.ts`'s
+  `PoolControllerSource` interface, and `sync.ts`'s source-agnostic dedupe
+  logic, mean a second controller brand — or an official Hanna API, should
+  one ever ship — is a new implementation of that interface, not a rewrite.
+- **Trigger.** One bearer-token-protected endpoint
+  (`CRON_SECRET`), driven by both Vercel Cron (`vercel.json`; once/day on
+  the Hobby plan) and `.github/workflows/sync-pool-controller.yml` (every
+  15 min, the real cadence until the project is on a paid Vercel plan —
+  then tighten `vercel.json`'s schedule and delete the workflow).
+- **Credentials are real account credentials**, not an API key —
+  `HANNA_CLOUD_EMAIL`/`HANNA_CLOUD_PASSWORD` must stay server-side only,
+  unlike the client-bundled `GEMINI_API_KEY` pattern above.
 
 ## Code Review — Known Issues & Decisions
 
@@ -104,11 +140,12 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 | 10 | `vite.config.ts:11` | `GEMINI_API_KEY` bundled into client JS | Known — intentional AI Studio pattern; see note above |
 | 11 | `ReadingForm.tsx:23` | `onSave` prop type includes `uid` but `App.tsx` handler signature omits it | Known — `uid` field defaults `''` and is overridden in the handler; harmless runtime behaviour |
 | 12 | `types.ts:57–59` | `DEFAULT_EQUIPMENT` uses `new Date()` at module load — all default items get same install date | Known — only affects first-login seed data |
+| 13 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
 
 ## Agent Instructions
 
 - **Always run `npm run lint` after edits** — the lint command is `tsc --noEmit` and catches type errors.
-- **No test suite** — there are no automated tests. Validate changes manually via the dev server.
+- **Automated tests**: `npm test` runs `node:test` files matching `src/**/*.test.ts` and `api/**/*.test.ts`. Run it after edits to those areas; there's no UI/e2e coverage, so validate UI changes manually via the dev server.
 - **Firestore rules** live in `firestore.rules`; changes there must be deployed separately with `firebase deploy --only firestore:rules`.
 - **Do not commit** `.env.local`, `firebase-applet-config.json` secrets (the config file contains a public API key that is intentionally committed — this is a Firebase web client key, not a secret).
 - **AI model names**: Use `gemini-2.0-flash` for fast/cheap Gemini calls and `claude-sonnet-4-6` for Claude fallback.

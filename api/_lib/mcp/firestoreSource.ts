@@ -1,36 +1,10 @@
-import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { FieldPath, getFirestore, Timestamp, type Query } from 'firebase-admin/firestore';
-import firebaseConfig from '../../../firebase-applet-config.json';
+import { FieldPath, Timestamp, type Query } from 'firebase-admin/firestore';
+import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../firebaseAdmin';
 import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
 import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types';
 import type { ListReadingsOptions, PoolDataSource } from './types';
 
-export class McpConfigError extends Error {}
-
-function loadServiceAccount(): Record<string, unknown> {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!raw) {
-    throw new McpConfigError('FIREBASE_SERVICE_ACCOUNT is not set (service-account JSON, raw or base64-encoded).');
-  }
-  const json = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
-  try {
-    return JSON.parse(json);
-  } catch {
-    throw new McpConfigError('FIREBASE_SERVICE_ACCOUNT is not valid JSON (raw or base64-encoded).');
-  }
-}
-
-async function resolveOwnerUid(app: App): Promise<string> {
-  const uid = process.env.POOLSTATUS_OWNER_UID?.trim();
-  if (uid) return uid;
-  const email = process.env.POOLSTATUS_OWNER_EMAIL?.trim();
-  if (!email) {
-    throw new McpConfigError('Set POOLSTATUS_OWNER_UID (or POOLSTATUS_OWNER_EMAIL) to the account whose pool data the MCP server exposes.');
-  }
-  const user = await getAuth(app).getUserByEmail(email);
-  return user.uid;
-}
+export const McpConfigError = FirebaseAdminConfigError;
 
 const toDate = (value: unknown): Date | null => (value instanceof Timestamp ? value.toDate() : null);
 const numOrNull = (value: unknown): number | null => (typeof value === 'number' ? value : null);
@@ -62,15 +36,12 @@ function toPreviousValues(value: unknown): Reading['previousValues'] {
  */
 export async function createFirestoreSource(): Promise<PoolDataSource> {
   // api/mcp.ts retries a failed create by calling this again on the next
-  // request — if initializeApp() already succeeded on a prior attempt
-  // that then failed later (e.g. a transient owner-email lookup), calling
-  // it again would throw "the default Firebase app already exists"
-  // instead of actually retrying the lookup. Reuse the existing default
-  // app rather than recreate it.
-  const app = getApps()[0] ?? initializeApp({ credential: cert(loadServiceAccount()), projectId: firebaseConfig.projectId });
-  const ownerUid = await resolveOwnerUid(app);
-  // Same named database the client app targets (see src/firebase.ts).
-  const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  // request — getAdminApp() reuses the existing default app rather than
+  // recreating it, so a transient failure after the app already
+  // initialized (e.g. the owner-email lookup) can be retried without
+  // hitting "the default Firebase app already exists".
+  const ownerUid = await resolveOwnerUid(getAdminApp());
+  const db = getFirestoreAdmin();
 
   // The Admin SDK bypasses firestore.rules entirely, so this uid pin is
   // the only thing standing between a valid bearer token and every user's

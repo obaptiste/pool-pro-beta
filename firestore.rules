@@ -64,6 +64,16 @@ service cloud.firestore {
     //   - nextTestDate: timestamp (optional)
     //   - remindersEnabled: bool (required)
     //
+    // Collection: poolControllerSyncState
+    // Document ID: "{ownerUid}_{sourceId}" (e.g. "abc123_hanna-cloud")
+    // Server-only — written exclusively by api/cron/sync-pool-controller.ts
+    // via the Admin SDK (which bypasses these rules), tracking the last
+    // pool-controller telemetry reading synced into `readings` so repeat
+    // polls don't write duplicates. No client ever reads or writes it.
+    // Fields:
+    //   - lastReadingAt: timestamp (required)
+    //   - updatedAt: timestamp (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -224,6 +234,13 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow write: if isOwner(userId);
+    }
+
+    // Server-only: the Admin SDK (used by api/cron/sync-pool-controller.ts)
+    // bypasses these rules entirely, so this just makes explicit that no
+    // client — not even the doc's own owner — reads or writes it directly.
+    match /poolControllerSyncState/{docId} {
+      allow read, write: if false;
     }
   }
 }
