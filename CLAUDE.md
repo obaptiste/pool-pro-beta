@@ -104,6 +104,7 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 | 10 | `vite.config.ts:11` | `GEMINI_API_KEY` bundled into client JS | Known — intentional AI Studio pattern; see note above |
 | 11 | `ReadingForm.tsx:23` | `onSave` prop type includes `uid` but `App.tsx` handler signature omits it | Known — `uid` field defaults `''` and is overridden in the handler; harmless runtime behaviour |
 | 12 | `types.ts:57–59` | `DEFAULT_EQUIPMENT` uses `new Date()` at module load — all default items get same install date | Known — only affects first-login seed data |
+| 13 | `api/_lib/aiFallback.ts` | CodeQL `js/system-prompt-injection`: `/api/ai/fallback` builds each provider's system message from the request body's `systemInstruction` | Fixed — framed as caller-supplied configuration rather than raw authority (see comment above `framedSystemInstruction`); the endpoint is an intentional generic completion proxy where the caller already controls the whole request and nothing server-side acts on the output, so there's no privilege boundary being crossed today, but framing costs nothing |
 
 ## Agent Instructions
 
