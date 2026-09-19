@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Reading, MaintenanceTask } from '../types';
 import { callAiWithFallback } from '../lib/ai';
 import { calculateLSI } from '../lib/lsi';
+import { isAutoSyncBoilerplateNote } from '../lib/readings';
 import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
 import { Type } from "@google/genai";
 
@@ -177,9 +178,12 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       // Auto-synced controller readings (every 15 min, see sync.ts) all carry
       // a boilerplate "Auto-logged from <source>" note. Filtering those out
       // before the slice(0, 5) keeps this list to genuine manual maintenance
-      // notes instead of letting a few hours of polling evict them.
+      // notes instead of letting a few hours of polling evict them. Only
+      // untouched boilerplate is excluded — an operator amending an
+      // auto-synced reading's note (voice/photo transcription appends to
+      // the existing text) still surfaces here.
       const recentNotes = history
-        .filter(r => r.notes && !r.notes.startsWith('Auto-logged from '))
+        .filter(r => r.notes && !isAutoSyncBoilerplateNote(r.notes))
         .slice(0, 5)
         .map(r => `[${r.timestamp.toLocaleDateString()}] ${r.notes}`)
         .join('\n');

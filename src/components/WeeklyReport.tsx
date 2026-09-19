@@ -238,9 +238,16 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   // calcium hardness together, so compute it off the same bounded,
   // presentation-only merge Dashboard uses (getLatestReadingForDisplay)
   // rather than requiring literally the newest record to carry every field.
+  //
+  // Only when the reporting window actually has a reading, though: when
+  // weekReadings is empty, readings[0] (getLatestReadingForDisplay's
+  // anchor) is necessarily older than the 7-day cutoff -- otherwise it
+  // would BE in weekReadings -- and showing its LSI here would present a
+  // stale water-balance figure as this week's, right alongside status/
+  // advisories that correctly call this an "allUnknown" monitoring gap.
   const latestWeekR = weekReadings.length > 0 ? weekReadings[weekReadings.length - 1] : null;
   const latestR = latestWeekR ?? readings[0] ?? null;
-  const latestMerged = getLatestReadingForDisplay(readings) ?? null;
+  const latestMerged = latestWeekR ? (getLatestReadingForDisplay(readings) ?? null) : null;
   const lsi: number | null = latestMerged ? calculateLSI(latestMerged) : null;
   const lsiAbs = lsi == null ? null : Math.abs(lsi);
   const lsiLabel = lsiAbs == null ? 'Insufficient data' : lsiAbs > 0.3 ? 'Critical' : lsiAbs > 0.1 ? 'Drifting' : 'Balanced';

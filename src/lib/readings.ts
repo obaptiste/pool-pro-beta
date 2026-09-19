@@ -64,3 +64,21 @@ export function getLatestReadingForDisplay(readings: Reading[]): Reading | undef
   const calciumHardness = latest.calciumHardness ?? recentValue(readings, 'calciumHardness', cutoff);
   return { ...latest, alkalinity, calciumHardness };
 }
+
+// Matches only a note that's *exactly* sync.ts's boilerplate
+// "Auto-logged from <source>" — nothing more. An operator amending that note
+// (ReadingForm preloads it, then voice/photo transcription appends new text
+// after a newline) no longer matches, so their addition isn't silently
+// dropped by callers that filter out auto-sync boilerplate.
+const AUTO_SYNC_NOTE_PATTERN = /^Auto-logged from \S+$/;
+
+/**
+ * True only for a note that's untouched auto-sync boilerplate, never for one
+ * an operator has added to. Used to exclude pure telemetry noise (see
+ * sync.ts, polling every 15 min) from surfaces like GeminiAssistant's
+ * recent-notes prompt without also dropping genuine manual content an
+ * operator appended to an auto-synced reading.
+ */
+export function isAutoSyncBoilerplateNote(notes: string): boolean {
+  return AUTO_SYNC_NOTE_PATTERN.test(notes.trim());
+}

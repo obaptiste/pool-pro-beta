@@ -1,11 +1,21 @@
 import type { PoolControllerReading, PoolControllerSource } from '../types';
 import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client';
 
+// Only a real number or a non-blank numeric string counts as a measurement.
+// `Number(value)` alone isn't enough: JS coerces '', '   ', false, and [] to
+// 0 rather than NaN, which would otherwise persist a fabricated 0 pH/ORP/
+// temperature reading (potentially triggering a false critical alert) any
+// time Hanna represents an unavailable parameter as blank instead of null.
 function findParameterNumber(parameters: HannaReadingParameter[], name: string): number | null {
   const value = parameters.find((p) => p.name === name)?.value;
-  if (value == null) return null;
-  const num = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(num) ? num : null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
 }
 
 /**

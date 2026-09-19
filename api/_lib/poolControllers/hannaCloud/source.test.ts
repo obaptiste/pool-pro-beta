@@ -42,6 +42,19 @@ test('maps ph/orp/temp parameters onto ph/sanitisationMv/temperature', async () 
   });
 });
 
+test('a blank or non-numeric parameter value maps to null rather than a fabricated 0', async () => {
+  responses = [
+    LOGIN_OK,
+    lastReading([{ name: 'ph', value: '' }, { name: 'orp', value: '   ' }, { name: 'temp', value: false }], '2026-09-19T12:00:00.000Z'),
+  ];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+
+  assert.equal(reading?.ph, null);
+  assert.equal(reading?.sanitisationMv, null);
+  assert.equal(reading?.temperature, null);
+});
+
 test('a missing parameter maps to null rather than throwing', async () => {
   responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], '2026-09-19T12:00:00.000Z')];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });

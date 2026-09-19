@@ -131,6 +131,19 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     return 'good';
   };
 
+  // ORP doesn't fit the generic min/max classifier above: AGENTS.md's
+  // documented thresholds are asymmetric (below 650 mV warns low, 650-800 mV
+  // is the acceptable zone, above 800 mV warns high) and never call the
+  // in-between 751-800 mV band critical the way getStatus's `value > max`
+  // check would (DEFAULT_RANGES.sanitisationMv.max is 750, the target
+  // zone's upper edge, not a hard ceiling). Matches orp_low/orp_high's own
+  // severities below.
+  const getOrpStatus = (value: number): Status => {
+    if (value < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
+    if (value > 800) return 'warning';
+    return 'good';
+  };
+
   const allAlerts = latest ? [
     {
       id: 'cl_low',
@@ -442,7 +455,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                 field="sanitisationMv"
                 value={latest?.sanitisationMv ?? null}
                 unit="mV"
-                status={latest?.sanitisationMv != null ? getStatus(latest.sanitisationMv, DEFAULT_RANGES.sanitisationMv.min, DEFAULT_RANGES.sanitisationMv.max) : 'good'}
+                status={latest?.sanitisationMv != null ? getOrpStatus(latest.sanitisationMv) : 'good'}
                 trend={getTrendData('sanitisationMv')}
                 ideal="650–750"
                 onLongPress={onLogReading}

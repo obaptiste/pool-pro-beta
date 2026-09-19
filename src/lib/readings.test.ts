@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getLatestReadingForDisplay } from './readings';
+import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote } from './readings';
 import { Reading } from '../types';
 
 function reading(overrides: Partial<Reading>): Reading {
@@ -101,4 +101,20 @@ test('skips a stale value and backfills from a more recent one within the window
 
   assert.equal(result?.alkalinity, 95);
   assert.equal(result?.calciumHardness, 230);
+});
+
+test('isAutoSyncBoilerplateNote matches untouched sync.ts boilerplate', () => {
+  assert.equal(isAutoSyncBoilerplateNote('Auto-logged from hanna-cloud'), true);
+  assert.equal(isAutoSyncBoilerplateNote('  Auto-logged from hanna-cloud  '), true); // tolerant of incidental whitespace
+});
+
+test('isAutoSyncBoilerplateNote does not match a manual note', () => {
+  assert.equal(isAutoSyncBoilerplateNote('Added 2L liquid chlorine'), false);
+});
+
+test('isAutoSyncBoilerplateNote does not match an operator-amended auto-sync note', () => {
+  // ReadingForm preloads the boilerplate note when editing an auto-synced
+  // reading, then voice/photo transcription appends new text after a
+  // newline — that amendment must not be filtered out as pure telemetry noise.
+  assert.equal(isAutoSyncBoilerplateNote('Auto-logged from hanna-cloud\nAdded 2L liquid chlorine'), false);
 });
