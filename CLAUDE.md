@@ -2,6 +2,15 @@
 
 Agent guide for the `pool-pro-beta` repository.
 
+> **Also read `AGENTS.md`** — it's the authoritative source for pool-chemistry
+> product/safety rules (target ranges, warning thresholds, dosing-advice
+> constraints, tone) referenced throughout code review here as "AGENTS.md".
+> This file (CLAUDE.md) covers the codebase/architecture; AGENTS.md covers
+> the domain. Missing this file's existence once already produced a
+> correctness bug (a hardcoded ORP threshold that disagreed with it) — check
+> it before adding or changing anything that gives the operator safety
+> guidance (alerts, AI prompts, dosing suggestions).
+
 ## Project Overview
 
 **PoolStatus AI** is a React 19 + Vite SPA for commercial pool maintenance professionals. It records water chemistry readings, runs Langelier Saturation Index (LSI) analysis, surfaces AI-generated maintenance protocols via Gemini, and tracks inventory / equipment service schedules. Data is persisted in Firebase Firestore with Google Auth sign-in.

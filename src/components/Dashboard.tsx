@@ -152,22 +152,26 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     // sync ever reports (chlorine ppm stays null — see the "Pool
     // controller telemetry" note in CLAUDE.md), so without this alert a
     // dangerously low ORP from an auto-synced reading would show zero
-    // alerts on the dashboard. Thresholds match getSoftWarning's for the
-    // same field in readingValidation.ts.
+    // alerts on the dashboard. Thresholds and the "verify before dosing"
+    // action text follow AGENTS.md's "ORP / sanitisation power" and
+    // "Chlorine and shocking" sections: ORP indicates sanitising
+    // effectiveness, not a chlorine ppm value, so an ORP-only alert
+    // must send the operator to actually test chlorine (and check
+    // circulation) rather than tell them to dose blind.
     {
       id: 'orp_low',
       type: 'sanitisation',
       condition: latest.sanitisationMv != null && latest.sanitisationMv < 650,
       msg: 'Sanitisation (ORP) too low — disinfection may be inadequate.',
-      action: 'Check/increase chlorine dosing and retest ORP.',
+      action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
     },
     {
       id: 'orp_high',
       type: 'sanitisation',
-      condition: latest.sanitisationMv != null && latest.sanitisationMv > 850,
-      msg: 'Sanitisation (ORP) very high — may indicate over-dosing.',
-      action: 'Reduce chlorine dosing and retest.',
+      condition: latest.sanitisationMv != null && latest.sanitisationMv > 800,
+      msg: 'Sanitisation (ORP) high — verify before swimming or adding more chlorine.',
+      action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
     },
     {
