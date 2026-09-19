@@ -216,7 +216,7 @@ export async function runAiFallback(
         {
           model: "claude-sonnet-4-6",
           max_tokens: 4096,
-          system: framedSystemInstruction, // codeql[js/system-prompt-injection] framed as caller config, not raw authority — see comment on framedSystemInstruction above
+          system: framedSystemInstruction,
           messages: [{ role: "user", content: prompt }],
         },
         { timeout: PROVIDER_TIMEOUT_MS, maxRetries: PROVIDER_MAX_RETRIES }
@@ -251,7 +251,6 @@ export async function runAiFallback(
         {
           model: "gpt-4o",
           messages: [
-            // codeql[js/system-prompt-injection] framed as caller config, not raw authority — see comment on framedSystemInstruction above
             { role: "system", content: framedSystemInstruction || "You are a helpful assistant." },
             { role: "user", content: prompt },
           ],
