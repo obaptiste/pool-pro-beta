@@ -174,9 +174,13 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
       const lsi = calculateLSI(latestReading);
       const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
 
+      // Auto-synced controller readings (every 15 min, see sync.ts) all carry
+      // a boilerplate "Auto-logged from <source>" note. Filtering those out
+      // before the slice(0, 5) keeps this list to genuine manual maintenance
+      // notes instead of letting a few hours of polling evict them.
       const recentNotes = history
+        .filter(r => r.notes && !r.notes.startsWith('Auto-logged from '))
         .slice(0, 5)
-        .filter(r => r.notes)
         .map(r => `[${r.timestamp.toLocaleDateString()}] ${r.notes}`)
         .join('\n');
 

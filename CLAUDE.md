@@ -168,6 +168,17 @@ low ORP from an auto-synced reading doesn't pass through silently.
   (`firestoreAdapters.ts`) does the "is this reading newer than last
   synced" check, the reading write, and the sync-state advance inside one
   `db.runTransaction()` — never as separate reads/writes.
+- **Known limitation: unbounded `readings` growth.** The 15-min GitHub
+  Actions cadence writes ~96 documents/day/user, none of which are ever
+  pruned. `App.tsx`'s `readings` Firestore listener has no `limit()`, and
+  History.tsx/TrendCharts.tsx/WeeklyReport.tsx/Dashboard.tsx/GeminiAssistant.tsx
+  all consume that same unbounded array — client read volume and listener
+  payload size grow without bound over the life of an account. Accepted for
+  now rather than a rushed partial fix: a real fix (pagination in History,
+  a bounded query for the live listener, a separate aggregation path for
+  TrendCharts/WeeklyReport) touches all of those components' assumptions
+  about having the full history in memory and deserves its own PR, not a
+  drive-by change bundled into the telemetry-sync work.
 
 ## Code Review — Known Issues & Decisions
 
@@ -187,6 +198,7 @@ low ORP from an auto-synced reading doesn't pass through silently.
 | 12 | `types.ts:57–59` | `DEFAULT_EQUIPMENT` uses `new Date()` at module load — all default items get same install date | Known — only affects first-login seed data |
 | 13 | `api/_lib/aiFallback.ts` | CodeQL `js/system-prompt-injection`: `/api/ai/fallback` builds each provider's system message from the request body's `systemInstruction` | Fixed — framed as caller-supplied configuration rather than raw authority (see comment above `framedSystemInstruction`); the endpoint is an intentional generic completion proxy where the caller already controls the whole request and nothing server-side acts on the output, so there's no privilege boundary being crossed today, but framing costs nothing |
 | 14 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
+| 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix |
 
 ## Agent Instructions
 

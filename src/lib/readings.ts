@@ -9,9 +9,25 @@ import { Reading } from '../types';
 const MAX_BACKFILL_AGE_DAYS = 30;
 const MAX_BACKFILL_AGE_MS = MAX_BACKFILL_AGE_DAYS * 24 * 60 * 60 * 1000;
 
-function recentValue(readings: Reading[], field: 'alkalinity' | 'calciumHardness', notOlderThan: Date): number | null {
+type NumericReadingField = 'alkalinity' | 'calciumHardness' | 'chlorine' | 'differentialPressure' | 'ph' | 'sanitisationMv' | 'totalChlorine' | 'cyanuricAcid' | 'temperature';
+
+function recentValue(readings: Reading[], field: NumericReadingField, notOlderThan: Date): number | null {
   const found = readings.find((r) => r[field] != null && r.timestamp.getTime() >= notOlderThan.getTime());
   return found ? (found[field] as number) : null;
+}
+
+/**
+ * Most recent non-null value of a single field within `notOlderThan`, searching
+ * `readings` (expects newest-first order, e.g. straight from the Firestore
+ * `orderBy('timestamp', 'desc')` listener). Exposed for callers that need a
+ * per-field "most recent known value" independent of any other field on the
+ * same document — e.g. WeeklyReport's end-of-shift gauges, where an
+ * auto-synced ORP-only reading being the literal latest record shouldn't
+ * blank out a chlorine/pressure gauge that has a genuinely recent value a
+ * few readings back.
+ */
+export function findRecentFieldValue(readings: Reading[], field: NumericReadingField, notOlderThan: Date): number | null {
+  return recentValue(readings, field, notOlderThan);
 }
 
 /**
