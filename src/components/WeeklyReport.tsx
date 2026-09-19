@@ -145,6 +145,19 @@ function isoWeekYear(d: Date): number {
   return date.getFullYear();
 }
 
+// ORP doesn't fit the generic min/max-with-a-buffer classifier every other
+// metric below uses: AGENTS.md's documented bands are an acceptable zone of
+// 650-800 mV (not the 650-750 DEFAULT_RANGES target used for its RangeBand
+// display) with no separate "critical" high band — just a warning past
+// 800 mV. Mirrors Dashboard's getOrpStatus. Takes a range so both the
+// aggregated weekly min/max and a single reading (min === max) share one
+// implementation.
+function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
+  if (min < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
+  if (max > 800) return 'warning';
+  return 'good';
+}
+
 function deriveReportData(readings: Reading[], inventory: InventoryItem[], user: User | null): ReportData {
   const now = new Date();
   const cutoff = new Date(now);
@@ -179,10 +192,11 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
     const max = parseFloat(Math.max(...vals).toFixed(1));
     const [lo, hi] = m.target;
     // Use worst single reading so short dangerous excursions aren't diluted by the average
-    const status: TelemetryMetric['status'] =
-      (min < lo * 0.8 || max > hi * 1.2) ? 'critical' :
-      (min < lo * 0.9 || max > hi * 1.1) ? 'warning'  :
-      (min < lo       || max > hi)        ? 'watch'    : 'good';
+    const status: TelemetryMetric['status'] = m.key === 'orp'
+      ? classifyOrpRange(min, max)
+      : (min < lo * 0.8 || max > hi * 1.2) ? 'critical' :
+        (min < lo * 0.9 || max > hi * 1.1) ? 'warning'  :
+        (min < lo       || max > hi)        ? 'watch'    : 'good';
     return { key: m.key, label: m.label, unit: m.unit, avg, min, max, target: m.target, status };
   });
 
@@ -205,6 +219,12 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
         const v = m.get(r);
         if (v == null) return;
         observedAny = true;
+        if (m.key === 'orp') {
+          const s = classifyOrpRange(v, v);
+          if (s === 'critical')     { worst = 'critical'; notes.push(`${m.label} critical`); }
+          else if (s === 'warning') { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} high`); }
+          return;
+        }
         const [lo, hi] = m.target;
         if (v < lo * 0.8 || v > hi * 1.2)      { worst = 'critical'; notes.push(`${m.label} critical`); }
         else if (v < lo * 0.9 || v > hi * 1.1)  { if (worst !== 'critical') worst = 'warning'; notes.push(`${m.label} off`); }
@@ -286,7 +306,18 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
   const pressM = telemetry.find(m => m.key === 'press');
   const phM    = telemetry.find(m => m.key === 'ph');
   const clM    = telemetry.find(m => m.key === 'chlorine');
+  const orpM   = telemetry.find(m => m.key === 'orp');
 
+  if (orpM && orpM.min < DEFAULT_RANGES.sanitisationMv.min) {
+    advisories.push({ tier: 'critical', title: 'Sanitisation (ORP) dropped low', time: 'This week',
+      msg: `ORP fell to ${orpM.min} mV (below ${DEFAULT_RANGES.sanitisationMv.min} mV) — disinfection may have been inadequate.`,
+      action: 'Test free chlorine and confirm circulation/filtration was running at the time — ORP is not a direct chlorine ppm value.' });
+  }
+  if (orpM && orpM.max > 800) {
+    advisories.push({ tier: 'warning', title: 'Sanitisation (ORP) trended high', time: 'This week',
+      msg: `ORP reached ${orpM.max} mV (above 800 mV) — verify before swimming or adding more chlorine.`,
+      action: 'Retest and confirm dosing hadn\'t over-shot before any further additions.' });
+  }
   if (pressM && pressM.max > DEFAULT_RANGES.differentialPressure.max) {
     advisories.push({ tier: 'warning', title: 'Filter pressure spike', time: 'This week',
       msg: `Pressure reached ${pressM.max} kPa (target ${DEFAULT_RANGES.differentialPressure.min}–${DEFAULT_RANGES.differentialPressure.max} kPa). Possible partial bed clog.`,

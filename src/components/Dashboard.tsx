@@ -110,11 +110,19 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     }
   };
 
+  // Key on the actual LSI inputs, not latest.id: every 15-min auto-sync
+  // poll (see sync.ts) creates a new reading document, so keying on id
+  // alone re-triggers this paid AI call on every single poll once
+  // getLatestReadingForDisplay's alkalinity/calciumHardness backfill makes
+  // lsiScore computable from an otherwise-unchanged manual test. Only a
+  // genuine change in what calculateLSI() actually reads should re-run it.
+  const lsiInputsKey = latest ? [latest.ph, latest.temperature, latest.calciumHardness, latest.alkalinity].join('|') : null;
+
   React.useEffect(() => {
     if (latest) {
       runLsiAnalysis();
     }
-  }, [latest?.id]);
+  }, [lsiInputsKey]);
 
   // Reset dismissed alerts when a new reading is added
   React.useEffect(() => {
@@ -261,16 +269,24 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     }
   };
 
+  // Filter nulls before slicing to 7, not after: auto-synced controller
+  // readings (every 15 min, see sync.ts) only report pH/ORP/temperature, so
+  // slicing the 7 most recent documents first could hit seven consecutive
+  // controller-only polls (~105 minutes) and empty out the chlorine/
+  // alkalinity/pressure sparklines even when recent manual measurements
+  // exist just beyond that window.
   const getTrendData = (key: keyof Reading) => {
-    return readings.slice(0, 7)
+    return readings
       .map(r => r[key])
       .filter((v): v is number => typeof v === 'number' && !isNaN(v))
+      .slice(0, 7)
       .reverse();
   };
 
-  const combinedChlorineTrend = readings.slice(0, 7)
+  const combinedChlorineTrend = readings
     .map(r => combinedChlorineOf(r.chlorine, r.totalChlorine))
     .filter((v): v is number => v != null)
+    .slice(0, 7)
     .reverse();
 
   const handleAddTask = (e: React.FormEvent) => {

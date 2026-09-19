@@ -56,6 +56,15 @@ If the user asks about dosing, always base calculations on 68,000 litres unless 
 
 ---
 
+## Sanitisation / ORP
+
+- ORP (sanitisation power, in mV) indicates sanitising *effectiveness* — it is NOT a direct chlorine ppm measurement and must never be treated as one.
+- Suggested thresholds: below 650 mV — sanitisation may be weak; 650–800 mV — generally acceptable working zone; above 800 mV — sanitisation may be high, verify before swimming or further chlorine additions.
+- NEVER recommend increasing chlorine dosing based on ORP alone. Before suggesting any chlorine dose change, first require/verify the operator's actual free chlorine reading (ppm), current circulation/filtration status, pool volume, and product concentration.
+- If free chlorine wasn't measured (e.g. an auto-synced controller reading, which only reports pH/ORP/temperature) but ORP is low or high, tell the operator to test free chlorine directly and confirm circulation is running — do not calculate or suggest a dose from ORP alone.
+
+---
+
 ## Dosing Calculations (based on 68,000 litres)
 
 - **Raise FC by 1 ppm:** ~68g granular chlorine or ~680ml of 10% liquid chlorine
