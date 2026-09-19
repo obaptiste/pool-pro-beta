@@ -28,6 +28,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
+import { getLatestReadingForDisplay } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -71,7 +72,11 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   const [lsiAnalysis, setLsiAnalysis] = React.useState<string | null>(null);
   const [isLsiLoading, setIsLsiLoading] = React.useState(false);
-  const latest = readings[0];
+  // Backfills alkalinity/calciumHardness (LSI's slow-changing inputs) from
+  // history when the latest reading is a controller-only poll that
+  // doesn't report them — see getLatestReadingForDisplay's docstring for
+  // why only those two fields, and why this is presentation-only.
+  const latest = getLatestReadingForDisplay(readings);
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
 

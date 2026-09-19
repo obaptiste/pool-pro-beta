@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { syncLatestReading, type CarryForwardFields, type PoolControllerSyncStore } from './sync';
+import { syncLatestReading, type PoolControllerSyncStore } from './sync';
 import type { PoolControllerReading, PoolControllerSource } from './types';
 import type { Reading } from '../../../src/types';
 
@@ -50,7 +50,7 @@ test('writes a reading on first sync', async () => {
   assert.equal(store.written[0].notes, 'Auto-logged from fake-source');
 });
 
-test('without a carry-forward lookup, unmeasured chemistry fields stay null', async () => {
+test('fields the controller does not measure are stored null, never backfilled from history — a Reading\'s timestamp claims when each value was actually measured', async () => {
   const store = new FakeSyncStore();
   await syncLatestReading({ source: new FakeSource(sampleReading), store, ownerUid: 'uid-1' });
 
@@ -60,39 +60,6 @@ test('without a carry-forward lookup, unmeasured chemistry fields stay null', as
   assert.equal(store.written[0].calciumHardness, null);
   assert.equal(store.written[0].cyanuricAcid, null);
   assert.equal(store.written[0].differentialPressure, null);
-});
-
-test('carries forward the most recent known value for fields the controller does not measure', async () => {
-  const store = new FakeSyncStore();
-  const carryForward: Partial<CarryForwardFields> = { chlorine: 2.1, alkalinity: 90, calciumHardness: 220 };
-  await syncLatestReading({
-    source: new FakeSource(sampleReading),
-    store,
-    ownerUid: 'uid-1',
-    getCarryForwardFields: async () => carryForward,
-  });
-
-  assert.equal(store.written[0].chlorine, 2.1);
-  assert.equal(store.written[0].alkalinity, 90);
-  assert.equal(store.written[0].calciumHardness, 220);
-  // Fields the lookup didn't return anything for still fall back to null.
-  assert.equal(store.written[0].totalChlorine, null);
-  assert.equal(store.written[0].cyanuricAcid, null);
-  assert.equal(store.written[0].differentialPressure, null);
-});
-
-test('the controller\'s own measurements (ph/sanitisationMv/temperature) are never overridden by carry-forward', async () => {
-  const store = new FakeSyncStore();
-  await syncLatestReading({
-    source: new FakeSource(sampleReading),
-    store,
-    ownerUid: 'uid-1',
-    getCarryForwardFields: async () => ({ chlorine: 2.1 } as Partial<CarryForwardFields>),
-  });
-
-  assert.equal(store.written[0].ph, sampleReading.ph);
-  assert.equal(store.written[0].sanitisationMv, sampleReading.sanitisationMv);
-  assert.equal(store.written[0].temperature, sampleReading.temperature);
 });
 
 test('is a no-op when the source has no reading at all', async () => {

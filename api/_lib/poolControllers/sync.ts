@@ -1,11 +1,6 @@
 import type { Reading } from '../../../src/types';
 import type { PoolControllerSource } from './types';
 
-/** Chemistry fields no pool controller in this codebase measures — carried forward from history so an auto-synced reading doesn't blank them. */
-export const CARRY_FORWARD_FIELDS = ['chlorine', 'totalChlorine', 'alkalinity', 'calciumHardness', 'cyanuricAcid', 'differentialPressure'] as const;
-export type CarryForwardField = (typeof CARRY_FORWARD_FIELDS)[number];
-export type CarryForwardFields = Record<CarryForwardField, number | null>;
-
 /**
  * Persists a controller reading, atomically skipping the write if
  * `reading.timestamp` is not strictly newer than what was last synced for
@@ -33,19 +28,6 @@ export interface SyncLatestReadingDeps {
   source: PoolControllerSource;
   store: PoolControllerSyncStore;
   ownerUid: string;
-  /**
-   * Looks up the most recent known value per CARRY_FORWARD_FIELDS field
-   * (from readings of any source, not just this one) so a partial
-   * controller reading doesn't regress fields the controller doesn't
-   * measure — Dashboard and GeminiAssistant both treat the single most
-   * recent reading as the complete latest snapshot (they don't merge
-   * across readings), so leaving those fields `null` here would blank
-   * their cards and make LSI ("needs ph + temperature + calciumHardness +
-   * alkalinity") unavailable on every sync. Omit only when the caller
-   * doesn't care about carry-forward (e.g. a test asserting on the raw
-   * controller fields).
-   */
-  getCarryForwardFields?: () => Promise<Partial<CarryForwardFields>>;
 }
 
 /**
@@ -54,25 +36,35 @@ export interface SyncLatestReadingDeps {
  * source-agnostic — nothing here knows about Hanna Cloud, GraphQL, or
  * Firestore, so it's exercised in tests with an in-memory fake store and
  * would work unchanged against a second controller brand.
+ *
+ * Every field the source doesn't report is stored `null`, never
+ * backfilled from an earlier reading: a Reading's timestamp is a claim
+ * about when each of its values was actually measured, and copying an
+ * old chlorine/alkalinity reading into a freshly timestamped document
+ * would misrepresent hours- or days-old chemistry as just measured —
+ * corrupting TrendCharts' history (`buildTrendPoints` plots every
+ * reading with a value as an actual data point) and risking unsafe
+ * advice from GeminiAssistant. See "Pool controller telemetry" in
+ * CLAUDE.md for how Dashboard/GeminiAssistant instead handle a partial
+ * latest reading without fabricating data.
  */
-export async function syncLatestReading({ source, store, ownerUid, getCarryForwardFields }: SyncLatestReadingDeps): Promise<SyncResult> {
+export async function syncLatestReading({ source, store, ownerUid }: SyncLatestReadingDeps): Promise<SyncResult> {
   const reading = await source.getLatestReading();
   if (!reading) {
     return { written: false, outcome: 'no-reading-available' };
   }
 
-  const carryForward = (await getCarryForwardFields?.()) ?? {};
   const record: Omit<Reading, 'id'> = {
     timestamp: reading.recordedAt,
-    chlorine: carryForward.chlorine ?? null,
-    totalChlorine: carryForward.totalChlorine ?? null,
+    chlorine: null,
+    totalChlorine: null,
     sanitisationMv: reading.sanitisationMv,
     ph: reading.ph,
-    alkalinity: carryForward.alkalinity ?? null,
+    alkalinity: null,
     temperature: reading.temperature,
-    differentialPressure: carryForward.differentialPressure ?? null,
-    calciumHardness: carryForward.calciumHardness ?? null,
-    cyanuricAcid: carryForward.cyanuricAcid ?? null,
+    differentialPressure: null,
+    calciumHardness: null,
+    cyanuricAcid: null,
     notes: `Auto-logged from ${source.id}`,
     uid: ownerUid,
   };

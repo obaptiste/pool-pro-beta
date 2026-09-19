@@ -103,13 +103,31 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`
 (`sanitisationMv` is ORP in mV). The controller doesn't measure
 `chlorine`/`alkalinity`/`totalChlorine`/`calciumHardness`/`cyanuricAcid`/
-`differentialPressure` — these are a partial reading, not a replacement for
-a manual test — but Dashboard and GeminiAssistant both treat `readings[0]`
-as the complete latest snapshot rather than merging across readings, so
-`sync.ts` carries those fields forward from the most recent reading (of any
-source) that has them, rather than writing `null` and blanking their cards
-or making LSI ("needs ph + temperature + calciumHardness + alkalinity")
-unavailable every sync.
+`differentialPressure`, so these are stored `null` — a genuinely partial
+reading, not a replacement for a manual test. **`sync.ts` never backfills
+them from history before writing**: a Reading's timestamp is a claim about
+when its values were measured, and copying an old value into a freshly
+timestamped document would misrepresent stale chemistry as just measured —
+corrupting TrendCharts' history (`buildTrendPoints` plots every reading with
+a value as an actual data point) and risking unsafe advice from
+GeminiAssistant, which is exactly what an earlier version of this feature
+did before being caught in review.
+
+Since Dashboard and GeminiAssistant both treat the single latest reading as
+the complete current snapshot (they don't merge across readings), a
+controller-only poll becoming `readings[0]` would otherwise blank those
+fields' dashboard cards and make LSI ("needs ph + temperature +
+calciumHardness + alkalinity") unavailable until the next manual test.
+`src/lib/readings.ts`'s `getLatestReadingForDisplay()` — used by
+Dashboard.tsx and App.tsx (for GeminiAssistant) instead of raw `readings[0]`
+— fixes this at **presentation time only**: it backfills *just*
+`alkalinity`/`calciumHardness` (LSI's two slow-changing inputs, normally
+tested far less often than chlorine and reasonably treated as stable
+between tests) from the most recent reading that has them. Chlorine,
+totalChlorine, cyanuricAcid, and differentialPressure are deliberately never
+backfilled, at write time or display time — those can change fast enough,
+and matter enough for safety, that showing a stale value as current is
+worse than showing "not measured."
 
 - **No official API.** `api/_lib/poolControllers/hannaCloud/client.ts` is a
   TypeScript port of the reverse-engineered, MIT-licensed client behind Home

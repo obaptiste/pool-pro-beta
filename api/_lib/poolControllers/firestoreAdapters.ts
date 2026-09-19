@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import type { Reading } from '../../../src/types';
-import { CARRY_FORWARD_FIELDS, type CarryForwardFields, type PoolControllerSyncStore } from './sync';
+import type { PoolControllerSyncStore } from './sync';
 
 // Sync state lives in its own collection rather than being inferred from
 // the readings collection (e.g. "the newest reading with this notes tag")
@@ -43,33 +43,5 @@ export function createFirestoreSyncStore(db: Firestore, ownerUid: string): PoolC
         return true;
       });
     },
-  };
-}
-
-/**
- * Builds a lookup for the most recent known value of each
- * CARRY_FORWARD_FIELDS field, scanning a bounded window of recent
- * readings (of any source) rather than a single fixed query per field.
- */
-export function createFirestoreCarryForwardLookup(db: Firestore, ownerUid: string, sampleSize = 50): () => Promise<Partial<CarryForwardFields>> {
-  return async () => {
-    const snapshot = await db
-      .collection('readings')
-      .where('uid', '==', ownerUid)
-      .orderBy('timestamp', 'desc')
-      .limit(sampleSize)
-      .get();
-
-    const result: Partial<CarryForwardFields> = {};
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      for (const field of CARRY_FORWARD_FIELDS) {
-        if (result[field] === undefined && typeof data[field] === 'number') {
-          result[field] = data[field];
-        }
-      }
-      if (Object.keys(result).length === CARRY_FORWARD_FIELDS.length) break;
-    }
-    return result;
   };
 }

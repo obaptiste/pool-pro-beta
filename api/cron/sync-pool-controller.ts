@@ -1,5 +1,5 @@
 import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin';
-import { createFirestoreCarryForwardLookup, createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters';
+import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters';
 import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source';
 import { syncLatestReading } from '../_lib/poolControllers/sync';
 
@@ -61,7 +61,6 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
       source,
       store: createFirestoreSyncStore(db, ownerUid),
       ownerUid,
-      getCarryForwardFields: createFirestoreCarryForwardLookup(db, ownerUid),
     });
 
     res.status(200).json(result);
