@@ -31,6 +31,7 @@ import { callAiWithFallback } from '../lib/ai';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
+import { useToast } from '../lib/toast';
 
 // Per AGENTS.md's pool chemistry safety rules: keep dosing guidance
 // conservative, never state a specific amount without volume/concentration
@@ -95,6 +96,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // status (the ORP staleness caption above already covers "is the data
   // actually current").
   const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
+  const toast = useToast();
   const handleSyncClick = async () => {
     if (syncLight === 'syncing') return;
     setSyncLight('syncing');
@@ -104,6 +106,11 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     } catch (e) {
       console.error('Manual pool controller sync failed:', e);
       setSyncLight('error');
+      // The dot alone is aria-hidden and fades after a few seconds — on
+      // its own that's no feedback for a screen reader, and easy to miss
+      // even for a sighted user glancing away. toast's error variant is
+      // role="alert"/aria-live="assertive" (see lib/toast.tsx).
+      toast.error(e instanceof Error ? e.message : 'Pool controller sync failed');
     } finally {
       setTimeout(() => setSyncLight('idle'), 3000);
     }

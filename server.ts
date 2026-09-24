@@ -8,7 +8,17 @@ import { runAiFallback } from "./api/_lib/aiFallback";
 import mcpHandler from "./api/mcp";
 import syncPoolControllerHandler from "./api/cron/sync-pool-controller";
 
+// The documented local setup (CLAUDE.md) is "copy .env.example to
+// .env.local", matching Vite's own env-file convention for the client
+// bundle (vite.config.ts's loadEnv) -- but dotenv.config() alone only
+// reads .env, and Vite's loadEnv() result never reaches this Express
+// process. Load .env first (if present) for back-compat, then .env.local
+// so it overrides -- same precedence Vite itself uses -- or every
+// server-side route that reads process.env (AI fallback, MCP, and now
+// the pool-controller sync routes) silently gets undefined config in
+// local dev despite the documented setup being followed correctly.
 dotenv.config();
+dotenv.config({ path: ".env.local", override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
