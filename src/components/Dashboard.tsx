@@ -57,9 +57,10 @@ interface Props {
   onPrint: () => void;
   toggleTask: (id: string) => void;
   onAddTask: (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => void;
+  onSyncPoolController: () => Promise<{ written: boolean; outcome?: string }>;
 }
 
-export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask }: Props) {
+export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask, onSyncPoolController }: Props) {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
   const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [isAddingTask, setIsAddingTask] = React.useState(false);
@@ -85,6 +86,29 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // Small status light on the "Status" wordmark, doubling as a manual
+  // "sync now" button for the Hanna Cloud pool controller telemetry job
+  // (see CLAUDE.md's "Pool controller telemetry" section) — rather than
+  // waiting for the next scheduled poll. syncLight reflects the outcome
+  // briefly, then fades back to idle so it never looks like a permanent
+  // status (the ORP staleness caption above already covers "is the data
+  // actually current").
+  const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
+  const handleSyncClick = async () => {
+    if (syncLight === 'syncing') return;
+    setSyncLight('syncing');
+    try {
+      const result = await onSyncPoolController();
+      setSyncLight(result.written ? 'success' : 'neutral');
+    } catch (e) {
+      console.error('Manual pool controller sync failed:', e);
+      setSyncLight('error');
+    } finally {
+      setTimeout(() => setSyncLight('idle'), 3000);
+    }
+  };
+
   // Backfills alkalinity/calciumHardness (LSI's slow-changing inputs) from
   // history when the latest reading is a controller-only poll that
   // doesn't report them — see getLatestReadingForDisplay's docstring for
@@ -339,7 +363,26 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       <header className="flex items-center justify-between">
         <div>
           <h1 className="wordmark text-2xl text-white">
-            Pool<span className="text-accent">Status</span>
+            Pool
+            <button
+              type="button"
+              onClick={handleSyncClick}
+              disabled={syncLight === 'syncing'}
+              className="relative inline bg-transparent border-0 p-0 m-0 text-accent hover:opacity-80 transition-opacity disabled:cursor-wait disabled:opacity-60 no-print"
+              title="Tap to sync the latest reading from the pool controller now"
+            >
+              Status
+              <span
+                aria-hidden="true"
+                className={`absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full transition-colors duration-300 ${
+                  syncLight === 'syncing' ? 'bg-accent animate-pulse' :
+                  syncLight === 'success' ? 'bg-success' :
+                  syncLight === 'error'   ? 'bg-critical' :
+                  syncLight === 'neutral' ? 'bg-warning' :
+                  'bg-transparent'
+                }`}
+              />
+            </button>
           </h1>
           <p className="text-[10px] font-mono text-ink-dim uppercase tracking-[0.2em]">
             Last reading: {latest ? latest.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data'}

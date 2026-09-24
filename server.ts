@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { runAiFallback } from "./api/_lib/aiFallback";
 import mcpHandler from "./api/mcp";
+import syncPoolControllerHandler from "./api/cron/sync-pool-controller";
 
 dotenv.config();
 
@@ -51,6 +52,16 @@ async function startServer() {
   app.all("/api/mcp", (req, res) => {
     mcpHandler(req, res).catch((error) => {
       console.error("MCP handler error:", error);
+      if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+    });
+  });
+
+  // Pool controller telemetry sync — same handler Vercel runs from
+  // api/cron/sync-pool-controller.ts, wired here so the dashboard's manual
+  // "sync now" button also works against a local dev server.
+  app.post("/api/cron/sync-pool-controller", (req, res) => {
+    syncPoolControllerHandler(req, res).catch((error) => {
+      console.error("Pool controller sync handler error:", error);
       if (!res.headersSent) res.status(500).json({ error: "Internal error" });
     });
   });
