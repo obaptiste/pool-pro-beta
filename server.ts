@@ -12,13 +12,22 @@ import syncPoolControllerHandler from "./api/cron/sync-pool-controller";
 // .env.local", matching Vite's own env-file convention for the client
 // bundle (vite.config.ts's loadEnv) -- but dotenv.config() alone only
 // reads .env, and Vite's loadEnv() result never reaches this Express
-// process. Load .env first (if present) for back-compat, then .env.local
-// so it overrides -- same precedence Vite itself uses -- or every
-// server-side route that reads process.env (AI fallback, MCP, and now
-// the pool-controller sync routes) silently gets undefined config in
-// local dev despite the documented setup being followed correctly.
+// process. Load .env first (if present), then .env.local so it overrides
+// -- same file precedence Vite itself uses -- or every server-side route
+// that reads process.env (AI fallback, MCP, and now the pool-controller
+// sync routes) silently gets undefined config in local dev despite the
+// documented setup being followed correctly.
+//
+// Snapshotting and restoring pre-existing keys afterward matters: with
+// override:true on the .env.local load, a variable already set by the
+// real shell/CI/hosting environment (e.g. `CRON_SECRET=real npm run dev`)
+// would otherwise get clobbered by a blank or different value from a
+// committed .env.local -- Vite's own loadEnv() never lets a file override
+// a real environment variable, only another file, so this matches that.
+const realEnv = { ...process.env };
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
+Object.assign(process.env, realEnv);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

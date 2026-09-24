@@ -97,8 +97,21 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // actually current").
   const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
   const toast = useToast();
+  // Tracks the pending "fade back to idle" timer so a second sync started
+  // during that 3s window can cancel it: otherwise the first sync's timer
+  // could fire while the second request is still in flight, resetting the
+  // light to idle (re-enabling the button, since handleSyncClick's guard
+  // reads syncLight) and hiding that a sync is still actually running.
+  const syncResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (syncResetTimer.current) clearTimeout(syncResetTimer.current);
+  }, []);
   const handleSyncClick = async () => {
     if (syncLight === 'syncing') return;
+    if (syncResetTimer.current) {
+      clearTimeout(syncResetTimer.current);
+      syncResetTimer.current = null;
+    }
     setSyncLight('syncing');
     try {
       const result = await onSyncPoolController();
@@ -112,7 +125,10 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       // role="alert"/aria-live="assertive" (see lib/toast.tsx).
       toast.error(e instanceof Error ? e.message : 'Pool controller sync failed');
     } finally {
-      setTimeout(() => setSyncLight('idle'), 3000);
+      syncResetTimer.current = setTimeout(() => {
+        setSyncLight('idle');
+        syncResetTimer.current = null;
+      }, 3000);
     }
   };
 
