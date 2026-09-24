@@ -38,6 +38,8 @@ function bearerToken(req: VercelLikeRequest): string | undefined {
   return value?.startsWith('Bearer ') ? value.slice('Bearer '.length) : undefined;
 }
 
+type AuthResult = { authorized: true; ownerUid?: string } | { authorized: false };
+
 /**
  * Accepts either CRON_SECRET (the scheduled triggers above) or a Firebase
  * ID token belonging to this app's single owner account (the dashboard's
@@ -47,25 +49,37 @@ function bearerToken(req: VercelLikeRequest): string | undefined {
  * treated the same as no token at all: this app has exactly one user, and
  * server-side Admin SDK access here already acts only on that account's
  * data (see resolveOwnerUid).
+ *
+ * `resolveOwnerUid()` is only called once the token has already verified.
+ * This endpoint isn't behind the Express rate limiter in production (that
+ * only wraps the local dev server), so resolving it eagerly for every
+ * request carrying *any* bearer token — including junk from scanners —
+ * would let invalid-token traffic burn through Firebase Auth's
+ * `getUserByEmail()` quota when POOLSTATUS_OWNER_EMAIL is configured
+ * (POOLSTATUS_OWNER_UID, the preferred setting, is just an env read and
+ * has no such cost either way). The resolved uid is returned so the
+ * handler can reuse it instead of looking it up again.
  */
-async function isAuthorized(req: VercelLikeRequest): Promise<boolean> {
+async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
   const token = bearerToken(req);
-  if (!token) return false;
+  if (!token) return { authorized: false };
 
   const secret = process.env.CRON_SECRET?.trim();
-  if (secret && token === secret) return true;
+  if (secret && token === secret) return { authorized: true };
 
   try {
     const app = getAdminApp();
-    const [decoded, ownerUid] = await Promise.all([getAuth(app).verifyIdToken(token), resolveOwnerUid(app)]);
-    return decoded.uid === ownerUid;
+    const decoded = await getAuth(app).verifyIdToken(token);
+    const ownerUid = await resolveOwnerUid(app);
+    return decoded.uid === ownerUid ? { authorized: true, ownerUid } : { authorized: false };
   } catch {
-    return false;
+    return { authorized: false };
   }
 }
 
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {
-  if (!(await isAuthorized(req))) {
+  const auth = await checkAuthorization(req);
+  if (!auth.authorized) {
     // Distinguishes "the operator never finished setup" from "this specific
     // request's credentials were wrong" — useful for whoever's watching the
     // GitHub Actions / Vercel Cron logs, and harmless to a manual caller
@@ -88,7 +102,10 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
   try {
     const source = new HannaCloudSource({ email, password, deviceId: process.env.HANNA_CLOUD_DEVICE_ID });
-    const ownerUid = await resolveOwnerUid(getAdminApp());
+    // Reuse the uid resolved during auth (the manual-sync path) rather than
+    // looking it up again; the CRON_SECRET path doesn't derive one, so it
+    // still needs this one call.
+    const ownerUid = auth.ownerUid ?? (await resolveOwnerUid(getAdminApp()));
     const db = getFirestoreAdmin();
 
     const result = await syncLatestReading({

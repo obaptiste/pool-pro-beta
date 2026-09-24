@@ -21,7 +21,8 @@ import {
   Sparkles,
   Bell,
   Calendar,
-  ChevronDown
+  ChevronDown,
+  RotateCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
@@ -385,24 +386,33 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       {/* Header Section */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="wordmark text-2xl text-white">
-            Pool
+          <h1 className="wordmark text-2xl text-white flex items-center">
+            Pool<span className="text-accent">Status</span>
+            {/* A dot overlaid on the wordmark text (the original design) is
+                invisible at idle and only ~text-height on a touch screen --
+                easy for a poolside operator to never discover or to miss
+                with wet fingers. This is a separate, always-visible icon
+                with a real touch target (44px via padding, independent of
+                the icon's own small visual size) right after the wordmark,
+                colored/animated by syncLight so the affordance itself
+                explains what it does without depending on a hover tooltip. */}
             <button
               type="button"
               onClick={handleSyncClick}
               disabled={syncLight === 'syncing'}
-              className="relative inline bg-transparent border-0 p-0 m-0 text-accent hover:opacity-80 transition-opacity disabled:cursor-wait disabled:opacity-60 no-print"
-              title="Tap to sync the latest reading from the pool controller now"
+              aria-label="Sync latest reading from the pool controller now"
+              title="Sync latest reading from the pool controller now"
+              className="no-print inline-flex items-center justify-center w-11 h-11 -m-3.5 ml-0.5 rounded-full bg-transparent border-0 hover:bg-white/5 active:bg-white/10 transition-colors disabled:cursor-wait"
             >
-              Status
-              <span
+              <RotateCw
+                size={15}
                 aria-hidden="true"
-                className={`absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full transition-colors duration-300 ${
-                  syncLight === 'syncing' ? 'bg-accent animate-pulse' :
-                  syncLight === 'success' ? 'bg-success' :
-                  syncLight === 'error'   ? 'bg-critical' :
-                  syncLight === 'neutral' ? 'bg-warning' :
-                  'bg-transparent'
+                className={`transition-colors duration-300 ${
+                  syncLight === 'syncing' ? 'text-accent animate-spin' :
+                  syncLight === 'success' ? 'text-success' :
+                  syncLight === 'error'   ? 'text-critical' :
+                  syncLight === 'neutral' ? 'text-warning' :
+                  'text-ink-dim'
                 }`}
               />
             </button>
