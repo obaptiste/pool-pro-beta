@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { FieldPath, Timestamp, type Query } from 'firebase-admin/firestore';
-import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../firebaseAdmin';
+import { getDownloadURL } from 'firebase-admin/storage';
+import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
 import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
 import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types';
-import type { ListReadingsOptions, PoolDataSource } from './types';
+import { NotFoundError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
 
 export const McpConfigError = FirebaseAdminConfigError;
 
@@ -22,6 +24,31 @@ function toPreviousValues(value: unknown): Reading['previousValues'] {
     if (raw === null || typeof raw === 'number') result[field] = raw as number | null;
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+const PHOTO_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/**
+ * Uploads a reading's evidence photo and returns a stable, unexpiring
+ * download URL via the Admin SDK's own getDownloadURL() helper — chosen
+ * over a signed URL because Google Cloud Storage caps V4 signed URLs at 7
+ * days, which would silently break the link long after the reading it
+ * evidences is still on record. Access is gated by the download token
+ * being unguessable, not by bucket-wide public ACLs.
+ */
+async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: CreateReadingInput['photo']): Promise<string> {
+  const extension = PHOTO_EXTENSION_BY_CONTENT_TYPE[photo.contentType] ?? 'bin';
+  const path = `readingPhotos/${ownerUid}/${readingId}.${extension}`;
+  const file = getStorageAdmin().file(path);
+  await file.save(photo.data, {
+    contentType: photo.contentType,
+    metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
+  });
+  return getDownloadURL(file);
 }
 
 /**
@@ -138,6 +165,99 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         lastTestDate: toDate(data.lastTestDate),
         nextTestDate: toDate(data.nextTestDate),
         remindersEnabled: Boolean(data.remindersEnabled),
+      };
+    },
+
+    async createReading(input: CreateReadingInput): Promise<Reading> {
+      // The doc's own id doubles as the photo's storage path, so the
+      // reference is allocated before the write — same reason sync.ts
+      // assigns an id up front (App.tsx's listener needs doc.id restored).
+      const ref = db.collection('readings').doc();
+      const photoUrl = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
+      const timestamp = input.timestamp ?? new Date();
+      const record = {
+        uid: ownerUid,
+        timestamp: Timestamp.fromDate(timestamp),
+        chlorine: input.chlorine ?? null,
+        totalChlorine: input.totalChlorine ?? null,
+        sanitisationMv: input.sanitisationMv ?? null,
+        ph: input.ph ?? null,
+        alkalinity: input.alkalinity ?? null,
+        temperature: input.temperature ?? null,
+        differentialPressure: input.differentialPressure ?? null,
+        calciumHardness: input.calciumHardness ?? null,
+        cyanuricAcid: input.cyanuricAcid ?? null,
+        ...(input.notes ? { notes: input.notes } : {}),
+        photoUrl,
+      };
+      await ref.set(record);
+      return {
+        id: ref.id,
+        uid: ownerUid,
+        timestamp,
+        chlorine: record.chlorine,
+        totalChlorine: record.totalChlorine,
+        sanitisationMv: record.sanitisationMv,
+        ph: record.ph,
+        alkalinity: record.alkalinity,
+        temperature: record.temperature,
+        differentialPressure: record.differentialPressure,
+        calciumHardness: record.calciumHardness,
+        cyanuricAcid: record.cyanuricAcid,
+        notes: input.notes,
+        photoUrl,
+      };
+    },
+
+    async addTask({ title, priority, frequency }: AddTaskInput): Promise<MaintenanceTask> {
+      const ref = db.collection('tasks').doc();
+      const createdAt = new Date();
+      // isAI: true to match GeminiAssistant's own task-creation flow — a
+      // task an MCP conversation asked for is the same kind of
+      // AI-suggested item, so poolstatus_list_tasks labels it the same way.
+      const record = { uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt: Timestamp.fromDate(createdAt) };
+      await ref.set(record);
+      return { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt };
+    },
+
+    async completeTask(id: string): Promise<MaintenanceTask> {
+      const ref = db.collection('tasks').doc(id);
+      const doc = await ref.get();
+      const data = doc.data();
+      if (!doc.exists || !data || data.uid !== ownerUid) {
+        throw new NotFoundError(`No task with id "${id}".`);
+      }
+      await ref.update({ completed: true });
+      return {
+        id: doc.id,
+        uid: ownerUid,
+        title: String(data.title ?? ''),
+        completed: true,
+        priority: data.priority,
+        frequency: data.frequency,
+        isAI: Boolean(data.isAI),
+        createdAt: toDate(data.createdAt) ?? new Date(0),
+      };
+    },
+
+    async adjustInventory({ id, delta }: AdjustInventoryInput): Promise<InventoryItem> {
+      const ref = db.collection('inventory').doc(id);
+      const doc = await ref.get();
+      const data = doc.data();
+      if (!doc.exists || !data || data.uid !== ownerUid) {
+        throw new NotFoundError(`No inventory item with id "${id}".`);
+      }
+      // Matches Inventory.tsx's own decrement button: stock never goes
+      // negative, however large a consuming delta is requested.
+      const quantity = Math.max(0, (numOrNull(data.quantity) ?? 0) + delta);
+      await ref.update({ quantity });
+      return {
+        id: doc.id,
+        uid: ownerUid,
+        name: String(data.name ?? ''),
+        quantity,
+        unit: String(data.unit ?? ''),
+        minThreshold: numOrNull(data.minThreshold) ?? 0,
       };
     },
   };

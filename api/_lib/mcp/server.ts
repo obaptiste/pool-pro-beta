@@ -7,13 +7,14 @@ import {
   combinedChlorineOf,
   getCombinedChlorineStatus,
   getCombinedChlorineWarning,
+  getHardValidationError,
   getSoftWarning,
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
 } from '../../../src/lib/readingValidation';
-import { DEFAULT_RANGES, type EquipmentItem, type Reading, type Status } from '../../../src/types';
+import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types';
 import { decodeReadingCursor, encodeReadingCursor } from './cursor';
-import type { PoolDataSource, ReadingCursor } from './types';
+import { NotFoundError, type PoolDataSource, type ReadingCursor } from './types';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';
@@ -256,6 +257,7 @@ function serializeReading(reading: Reading) {
       cyanuricAcid: reading.cyanuricAcid,
     },
     notes: reading.notes ?? null,
+    photoUrl: reading.photoUrl ?? null,
     derived: {
       lsi,
       lsiStatus: lsi == null ? null : lsiStatus(lsi),
@@ -315,6 +317,7 @@ function readingToMarkdown(reading: SerializedReading): string {
   }
   if (derived.combinedChlorineWarning) lines.push(`- ⚠ ${derived.combinedChlorineWarning}`);
   if (reading.notes) lines.push(`- Notes: ${reading.notes}`);
+  if (reading.photoUrl) lines.push(`- Photo evidence: ${reading.photoUrl}`);
   return lines.join('\n');
 }
 
@@ -331,6 +334,21 @@ function toolResult(structured: Record<string, unknown>, text: string) {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+// Setting completed:true twice (or adjusting inventory by the same delta
+// twice) isn't idempotent in the strict sense (a second call to
+// adjust_inventory keeps moving the quantity), but complete_task's *result*
+// converges — annotated per-tool below rather than shared.
+const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+const PhotoEvidence = z.object({
+  data_base64: z.string().describe('Raw base64-encoded photo bytes — no "data:" URL prefix, just the payload.'),
+  content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']).describe('The photo\'s MIME type.'),
+}).describe('A photo of the test strip/meter/report this reading is transcribed from — required, since a number typed into a conversation has no other evidence trail.');
+
+const NumericFieldInput = z.number().optional();
 
 export function createPoolStatusMcpServer(source: PoolDataSource): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
@@ -694,6 +712,169 @@ Use when: "When is the next test due?", "Am I behind on testing?"`,
         `Next test: ${output.schedule.nextTestDate ?? 'not scheduled'}${overdue ? ' — OVERDUE' : ''}.`,
       ].join(' ');
       return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_log_reading',
+    {
+      title: 'Log a pool reading (photo required)',
+      description: `Log a new water-chemistry reading from numbers discussed in this conversation. Requires a photo of the test strip, meter, or report the numbers came from — this tool has no other way to back a number typed into a conversation with evidence, unlike a manual test or a controller's own sensor. A reading logged this way is marked with that photo's URL, visible to poolstatus_get_latest_reading/list_readings/get_reading_trends the same as any other.
+
+Args:
+  - photo: { data_base64, content_type } (required)
+  - chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid (all optional numbers, but at least one is required — a photo alone isn't a completed test)
+  - notes (optional string)
+  - timestamp (ISO date-time, optional, defaults to now)
+
+Values are checked against the app's own hard limits (e.g. pH 0–14) and rejected if outside them; values outside the normal *target* range still save but come back with a warning, same as the manual entry form.
+
+Use when: "Log this reading: pH 7.4, chlorine 2.1, here's a photo of the strip."
+Don't use when: no photo is available, or the operator is just describing what they observed without a photo (offer poolstatus_add_task for a follow-up reminder instead).`,
+      inputSchema: {
+        photo: PhotoEvidence,
+        chlorine: NumericFieldInput,
+        total_chlorine: NumericFieldInput,
+        sanitisation_mv: NumericFieldInput,
+        ph: NumericFieldInput,
+        alkalinity: NumericFieldInput,
+        temperature: NumericFieldInput,
+        differential_pressure: NumericFieldInput,
+        calcium_hardness: NumericFieldInput,
+        cyanuric_acid: NumericFieldInput,
+        notes: z.string().optional(),
+        timestamp: IsoDate.optional(),
+      },
+      annotations: WRITE_CREATE,
+    },
+    async ({ photo, chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid, notes, timestamp }) => {
+      const fields: Partial<Record<NumericReadingField, number>> = {
+        ...(chlorine != null ? { chlorine } : {}),
+        ...(total_chlorine != null ? { totalChlorine: total_chlorine } : {}),
+        ...(sanitisation_mv != null ? { sanitisationMv: sanitisation_mv } : {}),
+        ...(ph != null ? { ph } : {}),
+        ...(alkalinity != null ? { alkalinity } : {}),
+        ...(temperature != null ? { temperature } : {}),
+        ...(differential_pressure != null ? { differentialPressure: differential_pressure } : {}),
+        ...(calcium_hardness != null ? { calciumHardness: calcium_hardness } : {}),
+        ...(cyanuric_acid != null ? { cyanuricAcid: cyanuric_acid } : {}),
+      };
+      if (Object.keys(fields).length === 0) {
+        return { content: [{ type: 'text' as const, text: 'At least one measurement is required — a photo alone isn\'t a completed test.' }], isError: true };
+      }
+      const hardErrors = Object.entries(fields)
+        .map(([field, value]) => getHardValidationError(field as NumericReadingField, value))
+        .filter(Boolean);
+      if (hardErrors.length > 0) {
+        return { content: [{ type: 'text' as const, text: hardErrors.join(' ') }], isError: true };
+      }
+
+      let data: Buffer;
+      try {
+        data = Buffer.from(photo.data_base64, 'base64');
+      } catch {
+        return { content: [{ type: 'text' as const, text: 'photo.data_base64 is not valid base64.' }], isError: true };
+      }
+      if (data.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'The decoded photo is empty.' }], isError: true };
+      }
+      if (data.length > MAX_PHOTO_BYTES) {
+        return { content: [{ type: 'text' as const, text: `The photo is too large (${(data.length / 1024 / 1024).toFixed(1)} MB, max ${MAX_PHOTO_BYTES / 1024 / 1024} MB).` }], isError: true };
+      }
+
+      const created = await source.createReading({
+        timestamp: parseDate(timestamp),
+        notes,
+        photo: { data, contentType: photo.content_type },
+        ...fields,
+      });
+      const serialized = serializeReading(created);
+      const warnings = Object.entries(fields)
+        .map(([field, value]) => getSoftWarning(field as NumericReadingField, value)?.message)
+        .filter((message): message is string => Boolean(message));
+      const text = [
+        'Reading logged.',
+        '',
+        readingToMarkdown(serialized),
+        ...(warnings.length > 0 ? ['', ...warnings.map((w) => `- ⚠ ${w}`)] : []),
+      ].join('\n');
+      return toolResult({ reading: serialized }, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_add_task',
+    {
+      title: 'Add a maintenance task',
+      description: `Add an item to the maintenance checklist — e.g. a follow-up or reminder that came up in this conversation. Marked isAI (shown as "AI-suggested" in poolstatus_list_tasks), same as tasks the in-app AI assistant creates.
+
+Args:
+  - title (required, max 100 chars)
+  - priority ('low' | 'medium' | 'high' | 'critical', default 'medium')
+  - frequency ('daily' | 'weekly' | 'monthly' | 'once', default 'once')
+
+Use when: "Remind me to backwash the filter Friday", "Add a task to reorder soda ash."`,
+      inputSchema: {
+        title: z.string().min(1).max(100),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+        frequency: z.enum(['daily', 'weekly', 'monthly', 'once']).default('once'),
+      },
+      annotations: WRITE_CREATE,
+    },
+    async ({ title, priority, frequency }: { title: string; priority: Priority; frequency: TaskFrequency }) => {
+      const task = await source.addTask({ title, priority, frequency });
+      const output = { task: { ...task, createdAt: task.createdAt.toISOString() } };
+      return toolResult(output, `Task added: "${task.title}" — ${task.priority} priority, ${task.frequency}.`);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_complete_task',
+    {
+      title: 'Complete a maintenance task',
+      description: `Mark a checklist item completed by id (see poolstatus_list_tasks for ids).
+
+Args:
+  - id (required)
+
+Use when: "Mark 'backwash filter' as done."`,
+      inputSchema: { id: z.string().min(1) },
+      annotations: WRITE_IDEMPOTENT,
+    },
+    async ({ id }) => {
+      try {
+        const task = await source.completeTask(id);
+        return toolResult({ task: { ...task, createdAt: task.createdAt.toISOString() } }, `Marked "${task.title}" completed.`);
+      } catch (error) {
+        if (error instanceof NotFoundError) return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_adjust_inventory',
+    {
+      title: 'Adjust chemical inventory',
+      description: `Add or consume stock of a chemical inventory item by id (see poolstatus_list_inventory for ids). The resulting quantity never goes below 0, however large a consuming delta is requested.
+
+Args:
+  - id (required)
+  - delta (required — positive to add stock, negative to consume it)
+
+Use when: "We used 2 gallons of muriatic acid today", "Log that a new drum of chlorine granules came in (+25 kg)."`,
+      inputSchema: { id: z.string().min(1), delta: z.number() },
+      annotations: WRITE_CREATE,
+    },
+    async ({ id, delta }) => {
+      try {
+        const item = await source.adjustInventory({ id, delta });
+        const low = item.quantity <= item.minThreshold;
+        return toolResult({ item: { ...item, low } }, `${item.name}: ${item.quantity} ${item.unit} in stock${low ? ' ⚠ LOW' : ''}.`);
+      } catch (error) {
+        if (error instanceof NotFoundError) return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        throw error;
+      }
     },
   );
 

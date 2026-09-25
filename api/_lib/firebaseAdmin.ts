@@ -1,6 +1,8 @@
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
+import type { Bucket } from '@google-cloud/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export class FirebaseAdminConfigError extends Error {}
@@ -69,8 +71,8 @@ export async function resolveOwnerUid(app: App): Promise<string> {
 
 /**
  * Shared bootstrap for server-side (Admin SDK) Firestore access: used by
- * the read-only MCP source and by the pool-controller telemetry sync job.
- * Targets the same named database the client app uses (see src/firebase.ts).
+ * the MCP source and by the pool-controller telemetry sync job. Targets
+ * the same named database the client app uses (see src/firebase.ts).
  */
 export function getFirestoreAdmin(): Firestore {
   return getFirestore(getOrInitApp(), firebaseConfig.firestoreDatabaseId);
@@ -78,4 +80,18 @@ export function getFirestoreAdmin(): Firestore {
 
 export function getAdminApp(): App {
   return getOrInitApp();
+}
+
+/**
+ * Admin-SDK handle to the app's default Storage bucket, named explicitly
+ * from firebase-applet-config.json rather than left to getStorage()'s
+ * default: this project's bucket is a "firebasestorage.app"-style name,
+ * not the legacy "<project-id>.appspot.com" default the SDK assumes when
+ * no bucket is passed to initializeApp/getStorage. Used by the MCP
+ * source's poolstatus_log_reading tool to store photo evidence
+ * server-side, bypassing storage.rules the same way Firestore access here
+ * bypasses firestore.rules.
+ */
+export function getStorageAdmin(): Bucket {
+  return getStorage(getOrInitApp()).bucket(firebaseConfig.storageBucket);
 }
