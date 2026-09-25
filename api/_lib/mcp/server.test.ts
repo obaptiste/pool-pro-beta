@@ -281,6 +281,12 @@ describe('MCP tools', () => {
     const byName = new Map(tools.map((t) => [t.name, t]));
     for (const name of readOnly) assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, name);
     for (const name of write) assert.equal(byName.get(name)?.annotations?.readOnlyHint, false, name);
+    // complete_task and adjust_inventory both overwrite existing state with
+    // no way to undo it (no "reopen task" / no unit-aware negation), so a
+    // host relying on annotations to gate confirmation must see both as
+    // destructive, not just adjust_inventory's negative-delta case.
+    assert.equal(byName.get('poolstatus_complete_task')?.annotations?.destructiveHint, true);
+    assert.equal(byName.get('poolstatus_adjust_inventory')?.annotations?.destructiveHint, true);
     await client.close();
   });
 

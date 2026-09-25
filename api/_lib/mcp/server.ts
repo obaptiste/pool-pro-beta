@@ -341,11 +341,12 @@ const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHi
 // must not treat this as purely additive the way WRITE_CREATE's readings/
 // tasks are.
 const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
-// Setting completed:true twice (or adjusting inventory by the same delta
-// twice) isn't idempotent in the strict sense (a second call to
-// adjust_inventory keeps moving the quantity), but complete_task's *result*
-// converges — annotated per-tool below rather than shared.
-const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+// complete_task's *result* converges on a second call with the same id
+// (idempotentHint: true), but unlike WRITE_CREATE it overwrites existing
+// state rather than only adding to it, and PoolDataSource exposes no way
+// to reopen a task — so, like WRITE_DESTRUCTIVE, a host must not treat it
+// as safe to apply without confirmation just because it's additive.
+const WRITE_COMPLETE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false };
 
 // Bounded well under Vercel's ~4.5 MB serverless request-body cap, not
 // just an arbitrary "reasonable photo" ceiling: the photo travels as
@@ -895,7 +896,7 @@ Args:
 
 Use when: "Mark 'backwash filter' as done."`,
       inputSchema: { id: z.string().min(1) },
-      annotations: WRITE_IDEMPOTENT,
+      annotations: WRITE_COMPLETE,
     },
     async ({ id }) => {
       try {
