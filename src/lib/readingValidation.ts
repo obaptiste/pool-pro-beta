@@ -85,9 +85,16 @@ export function getHardValidationError(field: NumericReadingField, value: number
  * getSoftWarning, it just isn't blocked from saving. Used by the MCP
  * server's poolstatus_log_reading, where a value came from an AI's photo
  * transcription rather than a human typing directly into a form.
+ *
+ * sanitisationMv (ORP) has no minimum at all, unlike every other field
+ * here: it's a signed electrode potential, not a concentration, so a
+ * negative reading is abnormal but physically real — and AGENTS.md calls
+ * out ORP specifically: "Never block saving low or high ORP values. These
+ * values are essential for incident reports."
  */
 export function getImpossibleValueError(field: NumericReadingField, value: number): string {
   if (!Number.isFinite(value)) return 'Enter a valid number.';
+  if (field === 'sanitisationMv') return '';
   const label = FIELD_LABEL[field];
   const min = HARD_MIN_BY_FIELD[field];
   if (typeof min === 'number' && value < min) {

@@ -136,7 +136,11 @@ schedule) plus four write tools:
   — `Buffer.from(str, 'base64')` silently drops invalid characters rather
   than throwing, so decoding alone can't catch malformed input). Values are
   checked against `getImpossibleValueError` (`readingValidation.ts`) —
-  non-finite or below a field's physical minimum only — and rejected if so;
+  non-finite or below a field's physical minimum only (ORP/`sanitisationMv`
+  has no minimum at all: it's a signed electrode potential, not a
+  concentration, and AGENTS.md calls out never blocking a low/high ORP
+  reading specifically — "essential for incident reports") — and rejected
+  if so;
   **AGENTS.md is explicit that out-of-range values must not block
   submission**, so unlike the manual entry form's `getHardValidationError`
   (which also enforces a per-field plausibility ceiling to catch likely

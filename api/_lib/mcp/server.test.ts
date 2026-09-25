@@ -799,6 +799,17 @@ describe('MCP write tools', () => {
     close();
   });
 
+  it('log_reading saves a negative ORP reading instead of blocking it — ORP is a signed potential, not a concentration', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, sanitisation_mv: -50 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { sanitisationMv: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.sanitisationMv, -50);
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too low (<650 mV).');
+    await client.close();
+    close();
+  });
+
   it('log_reading rejects malformed base64 without writing anything', async () => {
     const { client, close } = await connectToSource(createWritableMemorySource());
     const result = await client.callTool({
