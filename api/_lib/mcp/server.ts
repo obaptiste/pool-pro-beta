@@ -863,7 +863,7 @@ Don't use when: no photo is available, or the operator is just describing what t
     'poolstatus_add_task',
     {
       title: 'Add a maintenance task',
-      description: `Add an item to the maintenance checklist — e.g. a follow-up or reminder that came up in this conversation. Marked isAI (shown as "AI-suggested" in poolstatus_list_tasks), same as tasks the in-app AI assistant creates.
+      description: `Add an item to the maintenance checklist — e.g. a follow-up or reminder that came up in this conversation. Stored as an ordinary (non-AI-suggested) task, unlike the in-app AI assistant's own protocol suggestions: those get cleared out automatically the next time a protocol runs, which would silently delete a reminder this tool was asked to add.
 
 Args:
   - title (required, max 100 chars)

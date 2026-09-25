@@ -318,16 +318,21 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
     async addTask({ title, priority, frequency }: AddTaskInput): Promise<MaintenanceTask> {
       const ref = db.collection('tasks').doc();
       const createdAt = new Date();
-      // isAI: true to match GeminiAssistant's own task-creation flow — a
-      // task an MCP conversation asked for is the same kind of
-      // AI-suggested item, so poolstatus_list_tasks labels it the same way.
+      // isAI: false, *not* matching GeminiAssistant's own task-creation
+      // flow: App.tsx's handleExecuteProtocol deletes every uncompleted
+      // isAI task the moment a new AI protocol is executed, treating
+      // isAI:true as "disposable, replace on next suggestion." A task an
+      // MCP conversation was explicitly asked to add is a durable,
+      // user-requested reminder, not a suggestion to be silently wiped out
+      // by an unrelated later protocol run — so it's stored like a
+      // manually-added task instead.
       // id: ref.id for the same reason createReading stores it on readings
       // — firestore.rules' isValidTask requires an `id` field on the
       // document for a client update to pass, so a task missing it could
       // never be completed/reopened from the dashboard afterward.
-      const record = { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt: Timestamp.fromDate(createdAt) };
+      const record = { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: false, createdAt: Timestamp.fromDate(createdAt) };
       await ref.set(record);
-      return { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt };
+      return { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: false, createdAt };
     },
 
     async completeTask(id: string): Promise<MaintenanceTask> {

@@ -122,7 +122,7 @@ function createWritableMemorySource(initialTasks: MaintenanceTask[] = [], initia
       };
     },
     async addTask({ title, priority, frequency }: AddTaskInput): Promise<MaintenanceTask> {
-      const task: MaintenanceTask = { id: `t${nextId++}`, uid: 'owner', title, completed: false, priority, frequency, isAI: true, createdAt: new Date(now) };
+      const task: MaintenanceTask = { id: `t${nextId++}`, uid: 'owner', title, completed: false, priority, frequency, isAI: false, createdAt: new Date(now) };
       tasks.push(task);
       return task;
     },
@@ -895,14 +895,14 @@ describe('MCP write tools', () => {
     close();
   });
 
-  it('add_task defaults priority/frequency and marks the task AI-suggested', async () => {
+  it('add_task defaults priority/frequency and does not mark the task isAI (so protocol execution can\'t silently delete it)', async () => {
     const { client, close } = await connectToSource(createWritableMemorySource());
     const result = await client.callTool({ name: 'poolstatus_add_task', arguments: { title: 'Backwash the filter' } });
     const out = structured<{ task: { title: string; priority: string; frequency: string; isAI: boolean } }>(result);
     assert.equal(out.task.title, 'Backwash the filter');
     assert.equal(out.task.priority, 'medium');
     assert.equal(out.task.frequency, 'once');
-    assert.equal(out.task.isAI, true);
+    assert.equal(out.task.isAI, false);
     await client.close();
     close();
   });

@@ -119,7 +119,13 @@ so they don't need real Firestore credentials.
 Seven read tools (get/list readings, trends, tasks, inventory, equipment,
 schedule) plus four write tools:
 - `poolstatus_add_task` / `poolstatus_complete_task` — checklist items;
-  added tasks are marked `isAI: true`, same as GeminiAssistant's own.
+  added tasks are stored `isAI: false` (an ordinary task), deliberately
+  *not* matching GeminiAssistant's own protocol-suggested tasks:
+  `handleExecuteProtocol` (App.tsx) deletes every uncompleted `isAI: true`
+  task each time a new AI protocol is executed, and a reminder an MCP
+  conversation was explicitly asked to add is a durable, user-requested
+  item, not a disposable suggestion that a later, unrelated protocol run
+  should be able to silently wipe out.
 - `poolstatus_adjust_inventory` — apply a signed delta to a chemical's
   stock inside a Firestore transaction (concurrent/retried calls must not
   read-modify-write past each other), clamped so it never goes below 0
