@@ -838,6 +838,18 @@ describe('MCP write tools', () => {
     close();
   });
 
+  it('log_reading rejects an implausibly far-future timestamp without writing anything', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, timestamp: '2099-01-01T00:00:00Z' },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /implausibly far in the future/);
+    await client.close();
+    close();
+  });
+
   it('log_reading saves a value outside the normal range with a warning, same as the manual form', async () => {
     const { client, close } = await connectToSource(createWritableMemorySource());
     const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, sanitisation_mv: 233, notes: 'from a photo of the meter' } });

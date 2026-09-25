@@ -355,6 +355,15 @@ const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempote
 // leaves headroom for the rest of the JSON-RPC envelope.
 const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 
+// Same constant and reasoning as hannaCloud/source.ts's parseHannaTimestamp:
+// an implausibly-far-future timestamp (garbled input, or a model guessing
+// at "now") would otherwise become the newest reading and sort ahead of
+// every real one — advancing the testing schedule and burying subsequent
+// legitimate readings behind it — potentially for a long time, since
+// nothing else in this app corrects a wrong-but-plausible-looking future
+// date. Not a guess at "now", just a sanity ceiling.
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 // Buffer.from(str, 'base64') silently drops characters outside the
 // base64 alphabet instead of throwing — 'not-base64!!' decodes to
 // nonempty garbage bytes rather than raising an error — so it can't be
@@ -810,6 +819,10 @@ Don't use when: no photo is available, or the operator is just describing what t
       if (impossibleErrors.length > 0) {
         return { content: [{ type: 'text' as const, text: impossibleErrors.join(' ') }], isError: true };
       }
+      const readingTimestamp = parseDate(timestamp) ?? new Date();
+      if (readingTimestamp.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+        return { content: [{ type: 'text' as const, text: `timestamp is implausibly far in the future: ${readingTimestamp.toISOString()}` }], isError: true };
+      }
 
       if (!isValidBase64(photo.data_base64)) {
         return { content: [{ type: 'text' as const, text: 'photo.data_base64 is not valid base64.' }], isError: true };
@@ -826,7 +839,7 @@ Don't use when: no photo is available, or the operator is just describing what t
       }
 
       const created = await source.createReading({
-        timestamp: parseDate(timestamp),
+        timestamp: readingTimestamp,
         notes,
         photo: { data, contentType: photo.content_type },
         ...fields,

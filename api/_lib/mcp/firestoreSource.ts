@@ -51,7 +51,19 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
     contentType: photo.contentType,
     metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
   });
-  return { url: await getDownloadURL(file), file };
+  // getDownloadURL() is a second, separate authenticated request after the
+  // upload — if it fails, the object is already durably stored, so this
+  // function must clean up after itself rather than leaving the caller
+  // with no File handle to do it (createReading's own cleanup only covers
+  // failures after this function returns successfully).
+  try {
+    return { url: await getDownloadURL(file), file };
+  } catch (error) {
+    await file.delete().catch((deleteError) => {
+      console.error('uploadReadingPhoto: getDownloadURL failed and photo cleanup also failed', deleteError);
+    });
+    throw error;
+  }
 }
 
 // Mirrors handleSaveReading's daysToAdd map in App.tsx — kept in sync by
