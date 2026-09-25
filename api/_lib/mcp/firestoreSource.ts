@@ -5,7 +5,7 @@ import { getDownloadURL } from 'firebase-admin/storage';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
 import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
 import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types';
-import { NotFoundError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
 
 export const McpConfigError = FirebaseAdminConfigError;
 
@@ -350,7 +350,7 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       };
     },
 
-    async adjustInventory({ id, delta }: AdjustInventoryInput): Promise<InventoryItem> {
+    async adjustInventory({ id, delta, unit }: AdjustInventoryInput): Promise<InventoryItem> {
       const ref = db.collection('inventory').doc(id);
       // Read-modify-write in a transaction: two overlapping adjustments
       // (concurrent MCP calls, or a client retry racing the original)
@@ -361,6 +361,10 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         const data = doc.data();
         if (!doc.exists || !data || data.uid !== ownerUid) {
           throw new NotFoundError(`No inventory item with id "${id}".`);
+        }
+        const storedUnit = String(data.unit ?? '');
+        if (storedUnit !== unit) {
+          throw new UnitMismatchError(`"${id}" is tracked in ${storedUnit}, not ${unit}. Convert the amount and pass unit: "${storedUnit}".`);
         }
         // Matches Inventory.tsx's own decrement button: stock never goes
         // negative, however large a consuming delta is requested.

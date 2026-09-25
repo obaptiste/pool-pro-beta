@@ -123,7 +123,10 @@ schedule) plus four write tools:
 - `poolstatus_adjust_inventory` — apply a signed delta to a chemical's
   stock inside a Firestore transaction (concurrent/retried calls must not
   read-modify-write past each other), clamped so it never goes below 0
-  (matching Inventory.tsx's own decrement button).
+  (matching Inventory.tsx's own decrement button). Requires a `unit` that
+  must exactly match the item's own stored unit — no conversion is
+  attempted, so e.g. "2 gallons" against a litres-tracked item is rejected
+  rather than silently recorded as 2 of whatever unit the item tracks.
 - `poolstatus_log_reading` — logs a real `Reading` from numbers discussed
   in a conversation. **Requires a photo** (`photo.data_base64` +
   `content_type`) of the strip/meter/report the numbers came from: unlike a

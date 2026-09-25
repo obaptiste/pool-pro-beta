@@ -4,6 +4,12 @@ import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask
 export class NotFoundError extends Error {}
 
 /**
+ * Thrown by adjustInventory when the caller's `unit` doesn't match the
+ * item's stored unit — see AdjustInventoryInput.unit.
+ */
+export class UnitMismatchError extends Error {}
+
+/**
  * Pagination cursor for readings: the (timestamp, id) of the last row on
  * the previous page. Both fields are needed — readings can share a
  * timestamp (same-millisecond writes), so a timestamp-only cursor would
@@ -66,6 +72,17 @@ export interface AdjustInventoryInput {
   id: string;
   /** Positive to add stock, negative to consume it. */
   delta: number;
+  /**
+   * Must exactly match the item's own stored unit (see
+   * poolstatus_list_inventory) — no conversion is attempted, so a caller
+   * that means gallons against a litres-tracked item must convert before
+   * calling, not rely on this to do it. Required rather than assumed: a
+   * bare unitless delta applied to the wrong unit silently records the
+   * wrong quantity (e.g. "-2" meant as gallons against a 5 L stock would
+   * leave 3 L on record while the operator actually used more than the
+   * entire supply).
+   */
+  unit: string;
 }
 
 /**

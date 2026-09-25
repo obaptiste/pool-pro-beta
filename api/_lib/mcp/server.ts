@@ -14,7 +14,7 @@ import {
 } from '../../../src/lib/readingValidation';
 import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types';
 import { decodeReadingCursor, encodeReadingCursor } from './cursor';
-import { NotFoundError, type PoolDataSource, type ReadingCursor } from './types';
+import { NotFoundError, UnitMismatchError, type PoolDataSource, type ReadingCursor } from './types';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';
@@ -912,23 +912,26 @@ Use when: "Mark 'backwash filter' as done."`,
     'poolstatus_adjust_inventory',
     {
       title: 'Adjust chemical inventory',
-      description: `Add or consume stock of a chemical inventory item by id (see poolstatus_list_inventory for ids). The resulting quantity never goes below 0, however large a consuming delta is requested.
+      description: `Add or consume stock of a chemical inventory item by id (see poolstatus_list_inventory for ids and their units). The resulting quantity never goes below 0, however large a consuming delta is requested.
 
 Args:
   - id (required)
   - delta (required — positive to add stock, negative to consume it)
+  - unit (required — must exactly match the item's own unit from poolstatus_list_inventory, e.g. "L" or "kg"; no conversion is attempted, so convert the amount yourself before calling if the operator gave a different unit — this prevents e.g. "2 gallons" silently being recorded as 2 of whatever unit the item actually tracks)
 
-Use when: "We used 2 gallons of muriatic acid today", "Log that a new drum of chlorine granules came in (+25 kg)."`,
-      inputSchema: { id: z.string().min(1), delta: z.number() },
+Use when: "We used 2 L of muriatic acid today" (call with delta: -2, unit: "L" if that's the item's unit), "Log that a new drum of chlorine granules came in (+25 kg)" (delta: 25, unit: "kg" if that matches).`,
+      inputSchema: { id: z.string().min(1), delta: z.number(), unit: z.string().min(1) },
       annotations: WRITE_DESTRUCTIVE,
     },
-    async ({ id, delta }) => {
+    async ({ id, delta, unit }) => {
       try {
-        const item = await source.adjustInventory({ id, delta });
+        const item = await source.adjustInventory({ id, delta, unit });
         const low = item.quantity <= item.minThreshold;
         return toolResult({ item: { ...item, low } }, `${item.name}: ${item.quantity} ${item.unit} in stock${low ? ' ⚠ LOW' : ''}.`);
       } catch (error) {
-        if (error instanceof NotFoundError) return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        if (error instanceof NotFoundError || error instanceof UnitMismatchError) {
+          return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        }
         throw error;
       }
     },

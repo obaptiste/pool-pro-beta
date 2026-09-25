@@ -7,7 +7,7 @@ import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types
 import { handleMcpRequest } from './handler';
 import { __resetRateLimitForTests } from '../rateLimit';
 import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
-import { NotFoundError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
 
 // Spread into every ad-hoc fixture below that only exercises read tools —
 // keeps each of those focused on the one thing it's testing rather than
@@ -132,9 +132,10 @@ function createWritableMemorySource(initialTasks: MaintenanceTask[] = [], initia
       task.completed = true;
       return task;
     },
-    async adjustInventory({ id, delta }: AdjustInventoryInput): Promise<InventoryItem> {
+    async adjustInventory({ id, delta, unit }: AdjustInventoryInput): Promise<InventoryItem> {
       const item = inventory.find((i) => i.id === id);
       if (!item) throw new NotFoundError(`No inventory item with id "${id}".`);
+      if (item.unit !== unit) throw new UnitMismatchError(`"${id}" is tracked in ${item.unit}, not ${unit}.`);
       item.quantity = Math.max(0, item.quantity + delta);
       return item;
     },
@@ -901,19 +902,38 @@ describe('MCP write tools', () => {
     ]);
     const { client, close } = await connectToSource(source);
     const added = structured<{ item: { quantity: number } }>(
-      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: 3 } }),
+      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: 3, unit: 'kg' } }),
     );
     assert.equal(added.item.quantity, 5);
 
     const consumed = structured<{ item: { quantity: number; low: boolean } }>(
-      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: -100 } }),
+      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: -100, unit: 'kg' } }),
     );
     assert.equal(consumed.item.quantity, 0);
     assert.equal(consumed.item.low, true);
 
-    const missing = await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'nope', delta: 1 } });
+    const missing = await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'nope', delta: 1, unit: 'kg' } });
     assert.equal(missing.isError, true);
     assert.match((missing.content as { type: string; text: string }[])[0].text, /No inventory item with id "nope"/);
+    await client.close();
+    close();
+  });
+
+  it('adjust_inventory rejects a unit that does not match the item\'s own unit, without applying the delta', async () => {
+    const source = createWritableMemorySource([], [
+      { id: 'i1', uid: 'owner', name: 'Muriatic Acid', quantity: 5, unit: 'L', minThreshold: 1 },
+    ]);
+    const { client, close } = await connectToSource(source);
+    // "2 gallons" against a litres-tracked item must not be silently
+    // treated as "2 L" — that would misrecord how much is actually left.
+    const result = await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: -2, unit: 'gallons' } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /tracked in L, not gallons/);
+
+    const unchanged = structured<{ items: { quantity: number }[] }>(
+      await client.callTool({ name: 'poolstatus_list_inventory', arguments: {} }),
+    );
+    assert.equal(unchanged.items[0].quantity, 5);
     await client.close();
     close();
   });
