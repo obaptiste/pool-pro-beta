@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { File } from '@google-cloud/storage';
 import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import { getDownloadURL } from 'firebase-admin/storage';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
@@ -33,14 +34,16 @@ const PHOTO_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
 };
 
 /**
- * Uploads a reading's evidence photo and returns a stable, unexpiring
- * download URL via the Admin SDK's own getDownloadURL() helper — chosen
- * over a signed URL because Google Cloud Storage caps V4 signed URLs at 7
- * days, which would silently break the link long after the reading it
- * evidences is still on record. Access is gated by the download token
+ * Uploads a reading's evidence photo and returns both a stable,
+ * unexpiring download URL (via the Admin SDK's own getDownloadURL()
+ * helper — chosen over a signed URL because Google Cloud Storage caps V4
+ * signed URLs at 7 days, which would silently break the link long after
+ * the reading it evidences is still on record) and the Storage File
+ * handle, so a caller whose later write fails can delete this upload
+ * rather than leaving it orphaned. Access is gated by the download token
  * being unguessable, not by bucket-wide public ACLs.
  */
-async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: CreateReadingInput['photo']): Promise<string> {
+async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: CreateReadingInput['photo']): Promise<{ url: string; file: File }> {
   const extension = PHOTO_EXTENSION_BY_CONTENT_TYPE[photo.contentType] ?? 'bin';
   const path = `readingPhotos/${ownerUid}/${readingId}.${extension}`;
   const file = getStorageAdmin().file(path);
@@ -48,7 +51,7 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
     contentType: photo.contentType,
     metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
   });
-  return getDownloadURL(file);
+  return { url: await getDownloadURL(file), file };
 }
 
 // Mirrors handleSaveReading's daysToAdd map in App.tsx — kept in sync by
@@ -221,12 +224,20 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
     },
 
     async createReading(input: CreateReadingInput): Promise<Reading> {
+      const timestamp = input.timestamp ?? new Date();
+      // Converted — and so validated against Firestore's own acceptable
+      // range (roughly years 1–9999) — before anything is uploaded. A
+      // syntactically-valid-but-absurd ISO date (e.g. "0000-01-01") passes
+      // the MCP input schema's format check but not this; catching it here
+      // means the request fails before a photo is ever stored for it,
+      // rather than leaving one orphaned in Storage.
+      const firestoreTimestamp = Timestamp.fromDate(timestamp);
+
       // The doc's own id doubles as the photo's storage path, so the
       // reference is allocated before the write — same reason sync.ts
       // assigns an id up front (App.tsx's listener needs doc.id restored).
       const ref = db.collection('readings').doc();
-      const photoUrl = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
-      const timestamp = input.timestamp ?? new Date();
+      const { url: photoUrl, file: photoFile } = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
       const record = {
         // App.tsx's readings listener spreads doc.data() without restoring
         // doc.id (see handleSaveReading and sync.ts) — a reading document
@@ -234,7 +245,7 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         // keys and History's edit/delete targets.
         id: ref.id,
         uid: ownerUid,
-        timestamp: Timestamp.fromDate(timestamp),
+        timestamp: firestoreTimestamp,
         chlorine: input.chlorine ?? null,
         totalChlorine: input.totalChlorine ?? null,
         sanitisationMv: input.sanitisationMv ?? null,
@@ -247,7 +258,17 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         ...(input.notes ? { notes: input.notes } : {}),
         photoUrl,
       };
-      await ref.set(record);
+      try {
+        await ref.set(record);
+      } catch (error) {
+        // The photo is already durably stored at this point — a failed
+        // write here must not leave it orphaned with its unexpiring
+        // download token still live.
+        await photoFile.delete().catch((deleteError) => {
+          console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
+        });
+        throw error;
+      }
       // Every poolstatus_log_reading call carries at least one measurement
       // (server.ts rejects a photo-only call), so — like handleSaveReading
       // in App.tsx — this always counts as a completed test and advances

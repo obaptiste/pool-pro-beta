@@ -335,6 +335,12 @@ function toolResult(structured: Record<string, unknown>, text: string) {
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+// destructiveHint: true, unlike WRITE_CREATE — a negative delta consumes
+// (overwrites, not just adds to) existing stock, so a host that uses
+// annotations to decide whether a tool call needs explicit confirmation
+// must not treat this as purely additive the way WRITE_CREATE's readings/
+// tasks are.
+const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 // Setting completed:true twice (or adjusting inventory by the same delta
 // twice) isn't idempotent in the strict sense (a second call to
 // adjust_inventory keeps moving the quantity), but complete_task's *result*
@@ -763,7 +769,7 @@ Args:
   - notes (optional string)
   - timestamp (ISO date-time, optional, defaults to now)
 
-Values are checked against the app's own hard limits (e.g. pH 0–14) and rejected if outside them; values outside the normal *target* range still save but come back with a warning, same as the manual entry form.
+Abnormal-but-possible values (e.g. very high or low ORP, unusual alkalinity) are never rejected and always save — they're exactly the kind of incident evidence this tool exists to capture — but come back with a warning, same as the manual entry form's non-blocking validation. Only a genuinely impossible value (non-finite, or below the field's physical minimum, e.g. a negative concentration) is rejected.
 
 Use when: "Log this reading: pH 7.4, chlorine 2.1, here's a photo of the strip."
 Don't use when: no photo is available, or the operator is just describing what they observed without a photo (offer poolstatus_add_task for a follow-up reminder instead).`,
@@ -901,7 +907,7 @@ Args:
 
 Use when: "We used 2 gallons of muriatic acid today", "Log that a new drum of chlorine granules came in (+25 kg)."`,
       inputSchema: { id: z.string().min(1), delta: z.number() },
-      annotations: WRITE_CREATE,
+      annotations: WRITE_DESTRUCTIVE,
     },
     async ({ id, delta }) => {
       try {
