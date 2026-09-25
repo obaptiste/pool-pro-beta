@@ -273,13 +273,24 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       try {
         await ref.set(record);
       } catch (error) {
-        // The photo is already durably stored at this point — a failed
-        // write here must not leave it orphaned with its unexpiring
-        // download token still live.
-        await photoFile.delete().catch((deleteError) => {
-          console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
-        });
-        throw error;
+        // A rejected set() doesn't guarantee the write never reached
+        // Firestore — the client can lose the acknowledgement (network
+        // blip, timeout) after the server already committed it, and set()
+        // is idempotent, so the document really being there is the only
+        // reliable signal. Deleting the photo unconditionally here would
+        // risk orphaning photoUrl on a reading that actually saved fine —
+        // AGENTS.md: "Never block evidence... the historical record
+        // matters." Only clean up (and only then rethrow) once the doc is
+        // confirmed absent.
+        const wasWritten = (await ref.get().catch(() => null))?.exists ?? false;
+        if (!wasWritten) {
+          await photoFile.delete().catch((deleteError) => {
+            console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
+          });
+          throw error;
+        }
+        // The write actually landed despite the client-side error — fall
+        // through and report success, same as a normal call.
       }
       // Every poolstatus_log_reading call carries at least one measurement
       // (server.ts rejects a photo-only call), so — like handleSaveReading
