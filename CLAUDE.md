@@ -121,24 +121,45 @@ schedule) plus four write tools:
 - `poolstatus_add_task` / `poolstatus_complete_task` — checklist items;
   added tasks are marked `isAI: true`, same as GeminiAssistant's own.
 - `poolstatus_adjust_inventory` — apply a signed delta to a chemical's
-  stock, clamped so it never goes below 0 (matching Inventory.tsx's own
-  decrement button).
+  stock inside a Firestore transaction (concurrent/retried calls must not
+  read-modify-write past each other), clamped so it never goes below 0
+  (matching Inventory.tsx's own decrement button).
 - `poolstatus_log_reading` — logs a real `Reading` from numbers discussed
   in a conversation. **Requires a photo** (`photo.data_base64` +
   `content_type`) of the strip/meter/report the numbers came from: unlike a
   manual test or a controller's own sensor, a conversation has no other way
-  to back a number with evidence, so the tool rejects a call with no photo.
-  Values are still checked against `getHardValidationError` (same hard
-  limits, e.g. pH 0–14, the manual entry form enforces) and rejected if
-  outside them; values outside the *target* range save with a warning,
-  same as the form's soft validation. The photo is uploaded to Firebase
-  Storage (`firebaseAdmin.ts`'s `getStorageAdmin()`) under
-  `readingPhotos/{ownerUid}/{readingId}.{ext}` and the reading is stored
-  with a `photoUrl` (an unexpiring Firebase download-token URL, via the
-  Admin SDK's `getDownloadURL()` — a signed URL was rejected for this since
-  GCS caps V4 signed URLs at 7 days). `Reading.photoUrl`'s presence is
-  itself the marker that a reading was MCP-submitted; every read tool that
-  returns a reading surfaces it.
+  to back a number with evidence, so the tool rejects a call with no photo
+  (`data_base64` is validated against the base64 alphabet before decoding
+  — `Buffer.from(str, 'base64')` silently drops invalid characters rather
+  than throwing, so decoding alone can't catch malformed input). Values are
+  checked against `getImpossibleValueError` (`readingValidation.ts`) —
+  non-finite or below a field's physical minimum only — and rejected if so;
+  **AGENTS.md is explicit that out-of-range values must not block
+  submission**, so unlike the manual entry form's `getHardValidationError`
+  (which also enforces a per-field plausibility ceiling to catch likely
+  typos an operator can immediately notice), an extreme-but-conceivable
+  value here still saves, with a warning surfaced in the response via
+  `getSoftWarning`. Like `handleSaveReading` in App.tsx, a successful call
+  also advances `schedules/{ownerUid}` (`lastTestDate`/`nextTestDate` per
+  the current test cadence) — otherwise the dashboard would keep reporting
+  the last *manual* test as the most recent one. The photo is uploaded to
+  Firebase Storage (`firebaseAdmin.ts`'s `getStorageAdmin()`) under
+  `readingPhotos/{ownerUid}/{readingId}.{ext}`, and the reading document
+  stores both its own `id` (App.tsx's readings listener doesn't restore
+  `doc.id`, same reason `sync.ts` assigns one) and a `photoUrl` (an
+  unexpiring Firebase download-token URL, via the Admin SDK's
+  `getDownloadURL()` — a signed URL was rejected for this since GCS caps
+  V4 signed URLs at 7 days). `Reading.photoUrl`'s presence is itself the
+  marker that a reading was MCP-submitted; every read tool that returns a
+  reading surfaces it.
+  **Known limitation**: deleting a reading (`handleDeleteReading` in
+  App.tsx) best-effort-deletes its evidence photo from Storage too, but no
+  `storage.rules` exist yet to actually authorize that from the client —
+  today it quietly no-ops (logged to console, never blocks or surfaces as
+  a failed reading delete), leaving the photo and its unexpiring URL
+  orphaned. Fixing it for real needs ownership-scoped storage rules (or a
+  server-side delete path); accepted for now rather than a rushed partial
+  fix, same reasoning as the unbounded `readings` growth limitation below.
 
 ### Pool controller telemetry (Hanna Cloud)
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool

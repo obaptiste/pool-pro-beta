@@ -786,11 +786,37 @@ describe('MCP write tools', () => {
     close();
   });
 
-  it('log_reading rejects a hard-invalid value without writing anything', async () => {
+  it('log_reading rejects a genuinely impossible value (negative concentration) without writing anything', async () => {
     const { client, close } = await connectToSource(createWritableMemorySource());
-    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, ph: 20 } });
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, chlorine: -5 } });
     assert.equal(result.isError, true);
-    assert.match((result.content as { type: string; text: string }[])[0].text, /pH cannot exceed 14/);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /Free Chlorine cannot be negative/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects malformed base64 without writing anything', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: { data_base64: 'not-valid-base64!!', content_type: 'image/jpeg' }, ph: 7.4 },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /not valid base64/i);
+    await client.close();
+    close();
+  });
+
+  it('log_reading saves an extreme-but-conceivable value instead of blocking it (AGENTS.md: out-of-range must not prevent submission)', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    // Well past getHardValidationError's old pH<=14 ceiling — the manual
+    // form still blocks this, but the MCP tool must not: a value this far
+    // outside DEFAULT_RANGES still surfaces a warning via getSoftWarning.
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, ph: 20 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { ph: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.ph, 20);
+    assert.ok(out.reading.fieldWarnings.ph);
     await client.close();
     close();
   });

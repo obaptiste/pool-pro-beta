@@ -7,7 +7,7 @@ import {
   combinedChlorineOf,
   getCombinedChlorineStatus,
   getCombinedChlorineWarning,
-  getHardValidationError,
+  getImpossibleValueError,
   getSoftWarning,
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
@@ -342,6 +342,16 @@ const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHi
 const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+
+// Buffer.from(str, 'base64') silently drops characters outside the
+// base64 alphabet instead of throwing — 'not-base64!!' decodes to
+// nonempty garbage bytes rather than raising an error — so it can't be
+// relied on to reject malformed input on its own. Checked before
+// decoding, not after.
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+function isValidBase64(value: string): boolean {
+  return value.length > 0 && value.length % 4 === 0 && BASE64_PATTERN.test(value);
+}
 
 const PhotoEvidence = z.object({
   data_base64: z.string().describe('Raw base64-encoded photo bytes — no "data:" URL prefix, just the payload.'),
@@ -762,19 +772,17 @@ Don't use when: no photo is available, or the operator is just describing what t
       if (Object.keys(fields).length === 0) {
         return { content: [{ type: 'text' as const, text: 'At least one measurement is required — a photo alone isn\'t a completed test.' }], isError: true };
       }
-      const hardErrors = Object.entries(fields)
-        .map(([field, value]) => getHardValidationError(field as NumericReadingField, value))
+      const impossibleErrors = Object.entries(fields)
+        .map(([field, value]) => getImpossibleValueError(field as NumericReadingField, value))
         .filter(Boolean);
-      if (hardErrors.length > 0) {
-        return { content: [{ type: 'text' as const, text: hardErrors.join(' ') }], isError: true };
+      if (impossibleErrors.length > 0) {
+        return { content: [{ type: 'text' as const, text: impossibleErrors.join(' ') }], isError: true };
       }
 
-      let data: Buffer;
-      try {
-        data = Buffer.from(photo.data_base64, 'base64');
-      } catch {
+      if (!isValidBase64(photo.data_base64)) {
         return { content: [{ type: 'text' as const, text: 'photo.data_base64 is not valid base64.' }], isError: true };
       }
+      const data = Buffer.from(photo.data_base64, 'base64');
       if (data.length === 0) {
         return { content: [{ type: 'text' as const, text: 'The decoded photo is empty.' }], isError: true };
       }

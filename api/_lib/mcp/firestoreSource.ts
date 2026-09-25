@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { FieldPath, Timestamp, type Query } from 'firebase-admin/firestore';
+import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import { getDownloadURL } from 'firebase-admin/storage';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
 import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
@@ -49,6 +49,42 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
     metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
   });
   return getDownloadURL(file);
+}
+
+// Mirrors handleSaveReading's daysToAdd map in App.tsx — kept in sync by
+// hand since it's a small, stable literal not worth a shared import for.
+const DAYS_BY_TEST_FREQUENCY: Record<MaintenanceSchedule['testFrequency'], number> = {
+  daily: 1,
+  weekly: 7,
+  biweekly: 14,
+  monthly: 30,
+};
+
+/**
+ * Advances schedules/{ownerUid} the same way handleSaveReading (App.tsx)
+ * does after a manual reading with at least one measurement: lastTestDate
+ * to this reading's own timestamp, nextTestDate that many days out per
+ * the current cadence. Defaults testFrequency to 'weekly' (App.tsx's own
+ * initial state) when no schedule doc exists yet, so logging a reading
+ * before the operator has ever opened schedule settings still creates a
+ * sensible one rather than leaving nextTestDate unset.
+ */
+async function advanceSchedule(db: Firestore, ownerUid: string, testedAt: Date): Promise<void> {
+  const ref = db.collection('schedules').doc(ownerUid);
+  const existing = (await ref.get()).data();
+  const testFrequency: MaintenanceSchedule['testFrequency'] = existing?.testFrequency ?? 'weekly';
+  const nextTest = new Date(testedAt);
+  nextTest.setDate(nextTest.getDate() + DAYS_BY_TEST_FREQUENCY[testFrequency]);
+  await ref.set(
+    {
+      uid: ownerUid,
+      testFrequency,
+      remindersEnabled: Boolean(existing?.remindersEnabled),
+      lastTestDate: Timestamp.fromDate(testedAt),
+      nextTestDate: Timestamp.fromDate(nextTest),
+    },
+    { merge: true },
+  );
 }
 
 /**
@@ -102,6 +138,7 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
           calciumHardness: numOrNull(data.calciumHardness),
           cyanuricAcid: numOrNull(data.cyanuricAcid),
           notes: typeof data.notes === 'string' && data.notes ? data.notes : undefined,
+          photoUrl: typeof data.photoUrl === 'string' ? data.photoUrl : undefined,
           editedAt: toDate(data.editedAt) ?? undefined,
           previousValues: toPreviousValues(data.previousValues),
         };
@@ -176,6 +213,11 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       const photoUrl = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
       const timestamp = input.timestamp ?? new Date();
       const record = {
+        // App.tsx's readings listener spreads doc.data() without restoring
+        // doc.id (see handleSaveReading and sync.ts) — a reading document
+        // missing this field renders with id: undefined, breaking React
+        // keys and History's edit/delete targets.
+        id: ref.id,
         uid: ownerUid,
         timestamp: Timestamp.fromDate(timestamp),
         chlorine: input.chlorine ?? null,
@@ -191,6 +233,13 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         photoUrl,
       };
       await ref.set(record);
+      // Every poolstatus_log_reading call carries at least one measurement
+      // (server.ts rejects a photo-only call), so — like handleSaveReading
+      // in App.tsx — this always counts as a completed test and advances
+      // the schedule the same way a manual save does; otherwise the
+      // dashboard and poolstatus_get_schedule would keep reporting the
+      // last *manual* test as due even right after a photo-backed one.
+      await advanceSchedule(db, ownerUid, timestamp);
       return {
         id: ref.id,
         uid: ownerUid,
@@ -242,23 +291,29 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
 
     async adjustInventory({ id, delta }: AdjustInventoryInput): Promise<InventoryItem> {
       const ref = db.collection('inventory').doc(id);
-      const doc = await ref.get();
-      const data = doc.data();
-      if (!doc.exists || !data || data.uid !== ownerUid) {
-        throw new NotFoundError(`No inventory item with id "${id}".`);
-      }
-      // Matches Inventory.tsx's own decrement button: stock never goes
-      // negative, however large a consuming delta is requested.
-      const quantity = Math.max(0, (numOrNull(data.quantity) ?? 0) + delta);
-      await ref.update({ quantity });
-      return {
-        id: doc.id,
-        uid: ownerUid,
-        name: String(data.name ?? ''),
-        quantity,
-        unit: String(data.unit ?? ''),
-        minThreshold: numOrNull(data.minThreshold) ?? 0,
-      };
+      // Read-modify-write in a transaction: two overlapping adjustments
+      // (concurrent MCP calls, or a client retry racing the original)
+      // would otherwise both read the same starting quantity and one
+      // delta could silently overwrite the other instead of both applying.
+      return db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.data();
+        if (!doc.exists || !data || data.uid !== ownerUid) {
+          throw new NotFoundError(`No inventory item with id "${id}".`);
+        }
+        // Matches Inventory.tsx's own decrement button: stock never goes
+        // negative, however large a consuming delta is requested.
+        const quantity = Math.max(0, (numOrNull(data.quantity) ?? 0) + delta);
+        tx.update(ref, { quantity });
+        return {
+          id: doc.id,
+          uid: ownerUid,
+          name: String(data.name ?? ''),
+          quantity,
+          unit: String(data.unit ?? ''),
+          minThreshold: numOrNull(data.minThreshold) ?? 0,
+        };
+      });
     },
   };
 }

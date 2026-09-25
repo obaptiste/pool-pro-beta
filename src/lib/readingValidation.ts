@@ -72,6 +72,32 @@ export function getHardValidationError(field: NumericReadingField, value: number
   return '';
 }
 
+/**
+ * Rejects only genuinely impossible input — non-finite, or below the
+ * field's physical minimum (e.g. a negative concentration) — never an
+ * extreme-but-conceivably-real value. AGENTS.md is explicit: "out-of-range
+ * values must not prevent submission" and validation should catch
+ * "impossible input formats, not real-world abnormal readings." Unlike
+ * getHardValidationError above (used by the manual entry form, which also
+ * enforces a per-field plausibility ceiling to catch likely typos an
+ * operator can immediately notice and correct), this has no upper bound:
+ * a value this far outside DEFAULT_RANGES still gets a warning via
+ * getSoftWarning, it just isn't blocked from saving. Used by the MCP
+ * server's poolstatus_log_reading, where a value came from an AI's photo
+ * transcription rather than a human typing directly into a form.
+ */
+export function getImpossibleValueError(field: NumericReadingField, value: number): string {
+  if (!Number.isFinite(value)) return 'Enter a valid number.';
+  const label = FIELD_LABEL[field];
+  const min = HARD_MIN_BY_FIELD[field];
+  if (typeof min === 'number' && value < min) {
+    return min === 0
+      ? `${label} cannot be negative.`
+      : `${label} must be at least ${min}.`;
+  }
+  return '';
+}
+
 // Combined chlorine (chloramines) = total − free. It isn't a stored field,
 // so it has no DEFAULT_RANGES entry: under 0.5 ppm is the usual commercial
 // target, and above 1 ppm is where bathers notice it (the "chlorine smell"
