@@ -137,10 +137,11 @@ schedule) plus four write tools:
   than throwing, so decoding alone can't catch malformed input). Values are
   checked against `getImpossibleValueError` (`readingValidation.ts`) —
   non-finite or below a field's physical minimum only (ORP/`sanitisationMv`
-  has no minimum at all: it's a signed electrode potential, not a
-  concentration, and AGENTS.md calls out never blocking a low/high ORP
-  reading specifically — "essential for incident reports") — and rejected
-  if so;
+  and `ph` have no minimum at all: ORP is a signed electrode potential, not
+  a concentration, and AGENTS.md calls out never blocking a low/high ORP
+  reading specifically — "essential for incident reports"; pH can likewise
+  go negative in a genuine acid-spill incident, so it's abnormal-but-real
+  rather than impossible) — and rejected if so;
   **AGENTS.md is explicit that out-of-range values must not block
   submission**, so unlike the manual entry form's `getHardValidationError`
   (which also enforces a per-field plausibility ceiling to catch likely

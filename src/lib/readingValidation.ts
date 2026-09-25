@@ -91,10 +91,18 @@ export function getHardValidationError(field: NumericReadingField, value: number
  * negative reading is abnormal but physically real — and AGENTS.md calls
  * out ORP specifically: "Never block saving low or high ORP values. These
  * values are essential for incident reports."
+ *
+ * pH has no minimum here either: the pH scale itself goes negative in
+ * strongly acidic solutions (e.g. an acid-spill incident), so unlike a
+ * concentration or a count, a negative pH is abnormal-but-real rather than
+ * impossible — AGENTS.md's "out-of-range values must not prevent
+ * submission" applies. getHardValidationError (the manual entry form)
+ * intentionally keeps rejecting it there, since a human typing a negative
+ * pH is almost always a typo they can immediately notice and correct.
  */
 export function getImpossibleValueError(field: NumericReadingField, value: number): string {
   if (!Number.isFinite(value)) return 'Enter a valid number.';
-  if (field === 'sanitisationMv') return '';
+  if (field === 'sanitisationMv' || field === 'ph') return '';
   const label = FIELD_LABEL[field];
   const min = HARD_MIN_BY_FIELD[field];
   if (typeof min === 'number' && value < min) {

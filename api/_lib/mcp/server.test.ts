@@ -810,6 +810,17 @@ describe('MCP write tools', () => {
     close();
   });
 
+  it('log_reading saves a negative pH reading instead of blocking it — extreme acidity (e.g. an acid spill) is real, not impossible', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, ph: -0.2 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { ph: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.ph, -0.2);
+    assert.ok(out.reading.fieldWarnings.ph);
+    await client.close();
+    close();
+  });
+
   it('log_reading rejects malformed base64 without writing anything', async () => {
     const { client, close } = await connectToSource(createWritableMemorySource());
     const result = await client.callTool({
