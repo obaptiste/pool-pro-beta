@@ -47,10 +47,27 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
   const extension = PHOTO_EXTENSION_BY_CONTENT_TYPE[photo.contentType] ?? 'bin';
   const path = `readingPhotos/${ownerUid}/${readingId}.${extension}`;
   const file = getStorageAdmin().file(path);
-  await file.save(photo.data, {
-    contentType: photo.contentType,
-    metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
-  });
+  try {
+    await file.save(photo.data, {
+      contentType: photo.contentType,
+      metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
+    });
+  } catch (error) {
+    // A rejected save() doesn't guarantee the object never landed — the
+    // client can lose the acknowledgement after Storage already committed
+    // it. Unlike the cleanup below (and createReading's own cleanup),
+    // nothing could possibly reference this path yet: this function hasn't
+    // returned a URL to any caller, so there's no live evidence link to
+    // protect — only a chance of leaving an unreferenced, token-accessible
+    // blob behind. Always safe to delete it if it's actually there.
+    const [exists] = await file.exists().catch(() => [false]);
+    if (exists) {
+      await file.delete().catch((deleteError) => {
+        console.error('uploadReadingPhoto: save() ack lost but upload landed; cleanup also failed', deleteError);
+      });
+    }
+    throw error;
+  }
   // getDownloadURL() is a second, separate authenticated request after the
   // upload — if it fails, the object is already durably stored, so this
   // function must clean up after itself rather than leaving the caller
@@ -280,17 +297,23 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         // reliable signal. Deleting the photo unconditionally here would
         // risk orphaning photoUrl on a reading that actually saved fine —
         // AGENTS.md: "Never block evidence... the historical record
-        // matters." Only clean up (and only then rethrow) once the doc is
-        // confirmed absent.
-        const wasWritten = (await ref.get().catch(() => null))?.exists ?? false;
-        if (!wasWritten) {
-          await photoFile.delete().catch((deleteError) => {
-            console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
-          });
+        // matters." Three-way outcome: confirmed written (fall through,
+        // report success), confirmed absent (clean up and rethrow), or the
+        // verification read itself failed — inconclusive, so it must be
+        // treated like "might exist": never delete, but still rethrow
+        // since success can't be claimed either.
+        const verification = await ref.get().then((doc) => doc.exists, () => undefined);
+        if (verification === true) {
+          // The write actually landed despite the client-side error — fall
+          // through and report success, same as a normal call.
+        } else {
+          if (verification === false) {
+            await photoFile.delete().catch((deleteError) => {
+              console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
+            });
+          }
           throw error;
         }
-        // The write actually landed despite the client-side error — fall
-        // through and report success, same as a normal call.
       }
       // Every poolstatus_log_reading call carries at least one measurement
       // (server.ts rejects a photo-only call), so — like handleSaveReading
