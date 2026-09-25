@@ -341,7 +341,13 @@ const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHi
 // converges — annotated per-tool below rather than shared.
 const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
-const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+// Bounded well under Vercel's ~4.5 MB serverless request-body cap, not
+// just an arbitrary "reasonable photo" ceiling: the photo travels as
+// base64 inside the MCP JSON-RPC request, which inflates it ~4/3, so an
+// 8 MB decoded photo would need a >10 MB request body and get rejected by
+// the platform before this check ever ran. 3 MB decoded -> ~4 MB encoded
+// leaves headroom for the rest of the JSON-RPC envelope.
+const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 
 // Buffer.from(str, 'base64') silently drops characters outside the
 // base64 alphabet instead of throwing — 'not-base64!!' decodes to
@@ -351,6 +357,26 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 function isValidBase64(value: string): boolean {
   return value.length > 0 && value.length % 4 === 0 && BASE64_PATTERN.test(value);
+}
+
+// A lightweight sanity check, not a full decode: confirms the declared
+// content_type isn't a bare label slapped on arbitrary bytes (e.g. text
+// mislabeled image/jpeg would otherwise satisfy the "photo required"
+// evidence gate with an unusable file) by checking each format's magic
+// bytes. Doesn't verify the image is well-formed beyond its header —
+// that would need an image-decoding dependency this project doesn't have
+// — but it does rule out "this obviously isn't that image format."
+function matchesImageSignature(data: Buffer, contentType: string): boolean {
+  switch (contentType) {
+    case 'image/jpeg':
+      return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    case 'image/png':
+      return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case 'image/webp':
+      return data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP';
+    default:
+      return false;
+  }
 }
 
 const PhotoEvidence = z.object({
@@ -788,6 +814,9 @@ Don't use when: no photo is available, or the operator is just describing what t
       }
       if (data.length > MAX_PHOTO_BYTES) {
         return { content: [{ type: 'text' as const, text: `The photo is too large (${(data.length / 1024 / 1024).toFixed(1)} MB, max ${MAX_PHOTO_BYTES / 1024 / 1024} MB).` }], isError: true };
+      }
+      if (!matchesImageSignature(data, photo.content_type)) {
+        return { content: [{ type: 'text' as const, text: `The decoded photo doesn't look like a valid ${photo.content_type} file.` }], isError: true };
       }
 
       const created = await source.createReading({

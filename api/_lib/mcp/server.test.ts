@@ -774,7 +774,10 @@ describe('MCP tools', () => {
   });
 });
 
-const samplePhoto = { data_base64: Buffer.from('fake-jpeg-bytes').toString('base64'), content_type: 'image/jpeg' as const };
+// Real JPEG magic bytes (FF D8 FF) followed by filler — matchesImageSignature
+// (server.ts) only checks the header, not that the rest is a well-formed
+// image, so this is enough to pass without needing an actual photo file.
+const samplePhoto = { data_base64: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0]).toString('base64'), content_type: 'image/jpeg' as const };
 
 describe('MCP write tools', () => {
   it('log_reading requires at least one measurement — a photo alone is not a completed test', async () => {
@@ -803,6 +806,20 @@ describe('MCP write tools', () => {
     });
     assert.equal(result.isError, true);
     assert.match((result.content as { type: string; text: string }[])[0].text, /not valid base64/i);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects valid base64 that is not actually the declared image type', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      // Well-formed base64, but plain text, not a JPEG — must not satisfy
+      // the photo-evidence requirement just because it decodes cleanly.
+      arguments: { photo: { data_base64: Buffer.from('just some text, not a photo').toString('base64'), content_type: 'image/jpeg' }, ph: 7.4 },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /doesn't look like a valid image\/jpeg/);
     await client.close();
     close();
   });

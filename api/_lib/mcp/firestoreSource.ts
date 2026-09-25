@@ -68,23 +68,38 @@ const DAYS_BY_TEST_FREQUENCY: Record<MaintenanceSchedule['testFrequency'], numbe
  * initial state) when no schedule doc exists yet, so logging a reading
  * before the operator has ever opened schedule settings still creates a
  * sensible one rather than leaving nextTestDate unset.
+ *
+ * No-ops if `testedAt` isn't strictly newer than the stored lastTestDate:
+ * poolstatus_log_reading's `timestamp` argument can backdate a reading
+ * (logging a photo taken earlier), and unconditionally overwriting would
+ * regress the schedule to look *more* overdue than it actually is when a
+ * more recent test — manual or MCP — already advanced it further. Read,
+ * compare, and write inside one transaction so two readings logged back
+ * to back can't race each other's read of the "current" lastTestDate.
+ *
+ * Caller treats failure here as best-effort, not fatal — see createReading.
  */
 async function advanceSchedule(db: Firestore, ownerUid: string, testedAt: Date): Promise<void> {
   const ref = db.collection('schedules').doc(ownerUid);
-  const existing = (await ref.get()).data();
-  const testFrequency: MaintenanceSchedule['testFrequency'] = existing?.testFrequency ?? 'weekly';
-  const nextTest = new Date(testedAt);
-  nextTest.setDate(nextTest.getDate() + DAYS_BY_TEST_FREQUENCY[testFrequency]);
-  await ref.set(
-    {
-      uid: ownerUid,
-      testFrequency,
-      remindersEnabled: Boolean(existing?.remindersEnabled),
-      lastTestDate: Timestamp.fromDate(testedAt),
-      nextTestDate: Timestamp.fromDate(nextTest),
-    },
-    { merge: true },
-  );
+  await db.runTransaction(async (tx) => {
+    const existing = (await tx.get(ref)).data();
+    const lastTestDate = toDate(existing?.lastTestDate);
+    if (lastTestDate && lastTestDate >= testedAt) return;
+    const testFrequency: MaintenanceSchedule['testFrequency'] = existing?.testFrequency ?? 'weekly';
+    const nextTest = new Date(testedAt);
+    nextTest.setDate(nextTest.getDate() + DAYS_BY_TEST_FREQUENCY[testFrequency]);
+    tx.set(
+      ref,
+      {
+        uid: ownerUid,
+        testFrequency,
+        remindersEnabled: Boolean(existing?.remindersEnabled),
+        lastTestDate: Timestamp.fromDate(testedAt),
+        nextTestDate: Timestamp.fromDate(nextTest),
+      },
+      { merge: true },
+    );
+  });
 }
 
 /**
@@ -239,7 +254,16 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       // the schedule the same way a manual save does; otherwise the
       // dashboard and poolstatus_get_schedule would keep reporting the
       // last *manual* test as due even right after a photo-backed one.
-      await advanceSchedule(db, ownerUid, timestamp);
+      // Best-effort: the reading (and its photo) are already durably
+      // written above, so a transient failure here must not reject the
+      // whole call — an MCP client that sees a tool-call failure may
+      // retry, which would create a duplicate reading and re-upload the
+      // photo for what the operator thinks is one submission.
+      try {
+        await advanceSchedule(db, ownerUid, timestamp);
+      } catch (error) {
+        console.error('poolstatus_log_reading: reading saved but schedule advance failed', error);
+      }
       return {
         id: ref.id,
         uid: ownerUid,
@@ -264,7 +288,11 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       // isAI: true to match GeminiAssistant's own task-creation flow — a
       // task an MCP conversation asked for is the same kind of
       // AI-suggested item, so poolstatus_list_tasks labels it the same way.
-      const record = { uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt: Timestamp.fromDate(createdAt) };
+      // id: ref.id for the same reason createReading stores it on readings
+      // — firestore.rules' isValidTask requires an `id` field on the
+      // document for a client update to pass, so a task missing it could
+      // never be completed/reopened from the dashboard afterward.
+      const record = { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt: Timestamp.fromDate(createdAt) };
       await ref.set(record);
       return { id: ref.id, uid: ownerUid, title, completed: false, priority, frequency, isAI: true, createdAt };
     },
