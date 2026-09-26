@@ -21,7 +21,7 @@ server.registerTool(
 
 ## The description is UX, not documentation
 
-An MCP client picks which tool to call — and how to call it — purely from `description`. A skimpy one causes wrong-tool or wrong-args calls with no way to correct it after the fact. Every tool in this server follows the same shape; match it:
+An MCP client picks which tool to call — and how to call it — purely from `description`. A skimpy one causes wrong-tool or wrong-args calls with no way to correct it after the fact. The 7 read tools all follow the same full shape — use it for any new read tool, and as the target to bring a write tool's description up to when you're touching one:
 
 ```
 <One or two sentences on what this returns and any non-obvious behavior.>
@@ -38,6 +38,8 @@ Don't use when: <what to use instead, if a nearby tool is often confused with th
 ```
 
 Write `Use when` examples as things a real person would actually ask, not paraphrases of the tool name — the client is matching intent, not keywords.
+
+**The 4 write tools don't actually follow this template today** — none of them has a `Returns:` section (so a client has no advertised contract for what a successful write actually gives back), and only `poolstatus_log_reading` has `Don't use when`. That's a real gap, not just an inconsistency to route around: a client calling `poolstatus_add_task` or `poolstatus_adjust_inventory` has no documented way to know the response shape without calling it and inspecting `structuredContent` first. If you're touching one of the write tools' descriptions for another reason, add its missing `Returns:` (and `Don't use when`, where a nearby tool could plausibly be confused for it) rather than leaving the gap as-is.
 
 ## response_format and the dual content/structuredContent return
 
