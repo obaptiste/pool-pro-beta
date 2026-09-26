@@ -65,9 +65,11 @@ The MCP spec defines `destructiveHint: false` as "only additive updates" — a h
 
 `idempotentHint: true` means calling the tool twice with the same args converges to the same state, not merely "doesn't error the second time" — an adjustment that *adds* an amount each call is never idempotent; a tool that *sets* a value can be.
 
-## Bounded pagination — never let a list tool read unboundedly
+## Bounded pagination for readings specifically — don't assume it's everywhere
 
-List-style tools cap `limit` at a `MAX_*_LIMIT` constant and return `{ has_more, next_before }`. The cursor (encoded via `cursor.ts`'s helpers) is built from a **compound key**: `(timestamp, id)`, not timestamp alone. Firestore rows can share a millisecond timestamp on rapid writes, so a timestamp-only cursor would skip or duplicate rows sitting on either side of that tie. If you add a new paginated list, order the underlying query and build the cursor off the same compound key — they have to agree, or paging silently drops or repeats rows.
+`poolstatus_list_readings` is the one tool that actually paginates: it caps `limit` at `MAX_LIST_LIMIT` and returns `{ has_more, next_before }`, with the cursor (via `cursor.ts`'s helpers) built from a **compound key** — `(timestamp, id)`, not timestamp alone. Firestore rows can share a millisecond timestamp on rapid writes, so a timestamp-only cursor would skip or duplicate rows sitting on either side of that tie. `poolstatus_list_tasks`, `poolstatus_list_inventory`, and `poolstatus_list_equipment` do **not** paginate today — they call unbounded `PoolDataSource` methods (no `limit`, no cursor) and return the whole collection every time, because tasks/inventory/equipment are naturally small (a checklist, a stock list, a piece count), unlike `readings`, which is genuinely unbounded (see CLAUDE.md's known-issue on that).
+
+If you're extending `list_readings`, order the underlying query and build the cursor off the same compound key `poolstatus_list_readings` uses — they have to agree, or paging silently drops or repeats rows. If you're adding pagination to one of the other three list tools (e.g. because a deployment's task list or inventory genuinely grows large), copy that same compound-key pattern rather than a timestamp- or id-only cursor — but don't assume the pagination shape already exists on those tools today; it doesn't.
 
 ## Bounded aggregation over an unbounded collection
 
