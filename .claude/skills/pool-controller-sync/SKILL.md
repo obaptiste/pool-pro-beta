@@ -9,7 +9,9 @@ This is the write side of the pipeline: `api/cron/sync-pool-controller.ts` (the 
 
 ## The abstraction exists so a second brand is additive, not a rewrite
 
-`PoolControllerSource` (`types.ts`) is the whole contract: `id` (a short string tag, e.g. `"hanna-cloud"`) and `getLatestReading(): Promise<PoolControllerReading | null>`. `sync.ts`'s `syncLatestReading()` knows nothing about Hanna, GraphQL, or Firestore — it's tested with an in-memory fake store and fake source. Adding a second controller brand (or an official Hanna API, should one ever ship) means writing a new class implementing `PoolControllerSource`, not touching `sync.ts` or the cron entry point. If you find yourself editing `sync.ts` to special-case a new brand, stop — that logic belongs in the new source implementation instead.
+`PoolControllerSource` (`types.ts`) is the whole contract: `id` (a short string tag, e.g. `"hanna-cloud"`) and `getLatestReading(): Promise<PoolControllerReading | null>`. `sync.ts`'s `syncLatestReading()` knows nothing about Hanna, GraphQL, or Firestore — it's tested with an in-memory fake store and fake source. Adding a second controller brand (or an official Hanna API, should one ever ship) means writing a new class implementing `PoolControllerSource` and **not** touching `sync.ts` to special-case it — that logic belongs entirely in the new source implementation.
+
+That said, `sync.ts` staying untouched doesn't mean nothing else needs to change: `api/cron/sync-pool-controller.ts` currently constructs the source directly (`new HannaCloudSource({ email, password, deviceId: ... })`, reading Hanna-specific env vars inline) — a new `PoolControllerSource` implementation is unreachable in production until something selects and configures it. Either extend the entry point to choose between sources (e.g. by an env var naming which brand is configured), or introduce a small source-factory function it calls instead of constructing `HannaCloudSource` directly — but the entry point (or that factory) does need to change; only `sync.ts` itself must stay source-agnostic.
 
 ## Never backfill a field the controller didn't report
 

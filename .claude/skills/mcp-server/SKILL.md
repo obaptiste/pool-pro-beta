@@ -41,7 +41,9 @@ Write `Use when` examples as things a real person would actually ask, not paraph
 
 ## response_format and the dual content/structuredContent return
 
-Every tool that returns data takes `response_format: 'markdown' | 'json'` (zod enum, default `'markdown'`) — markdown for a client rendering to a human, json for one that's going to parse the numbers. Return both from every tool via the shared `toolResult(structured, text)` helper in `server.ts`, which wraps them as `{ content: [{ type: 'text', text }], structuredContent: structured }`. Don't hand-roll this shape inline.
+Every read tool that returns a list or a single record — `get_latest_reading`, `list_readings`, `get_reading_trends`, `list_tasks`, `list_inventory`, `list_equipment` — takes `response_format: 'markdown' | 'json'` (zod enum, default `'markdown'`): markdown for a client rendering to a human, json for one that's going to parse the numbers. `get_schedule` and the four write tools skip it — they return one small, fixed-shape record where a markdown/json split adds an argument without adding value; don't add it there reflexively just because most tools have it.
+
+Return both a markdown summary and the raw structured data from every tool, regardless of whether it takes `response_format`, via the shared `toolResult(structured, text)` helper in `server.ts`, which wraps them as `{ content: [{ type: 'text', text }], structuredContent: structured }`. Don't hand-roll this shape inline.
 
 ## Tool annotations
 
@@ -78,7 +80,14 @@ List-style tools cap `limit` at a `MAX_*_LIMIT` constant and return `{ has_more,
 
 ## Reuse the app's own domain logic — never re-derive a threshold
 
-Status/warning logic (LSI classification, ORP/sanitisation bands, combined-chlorine warnings, "near the edge of range" messaging) comes from `src/lib/lsi.ts` and `src/lib/readingValidation.ts` — the same modules `Dashboard.tsx` and `GeminiAssistant.tsx` use. This project has hit the alternative failure mode more than once: a threshold hardcoded separately in two or three places quietly drifting apart (see CLAUDE.md's known-issues table, and a recent PR that had to dedupe three separately-hardcoded copies of the ORP 650/800 mV bands). Before writing any range/status/threshold logic in a new tool, check `src/lib/` first — the answer is almost always "import it," not "recompute it."
+LSI classification comes from `src/lib/lsi.ts`'s `calculateLSI()`; combined-chlorine warnings, near-edge "warning" messaging, and generic soft-validation come from `src/lib/readingValidation.ts`'s `getSoftWarning()`/`combinedChlorineOf()`/`getCombinedChlorineWarning()`. Import these rather than recomputing them — this project has hit the alternative failure mode more than once, a threshold hardcoded separately in two or three places quietly drifting apart (see CLAUDE.md's known-issues table).
+
+ORP/sanitisation specifically does **not** have one single shared classifier — know which one a call site actually needs before reusing either:
+
+- `src/lib/readings.ts`'s `classifyOrp()` implements AGENTS.md's hard 650/800 mV bands (below 650 critical, above 800 warning) and is what `Dashboard.tsx` and `WeeklyReport.tsx` use for the status badge and alerts.
+- This server's own `getSanitisationMvStatus()` (in `server.ts`) is a *different* classifier built on `readingValidation.ts`'s `getSoftWarning()`, which treats 750–850 mV as "elevated, usually acceptable" rather than a hard warning boundary — chosen deliberately to match History's warning badges, which use `getSoftWarning` directly.
+
+If you're adding a new tool or field that reports an ORP status, match whichever of these its output is meant to agree with (Dashboard-style vs. History-style) rather than introducing a third variant — and if you're not sure which, that's worth asking rather than guessing, since the two already disagree with each other in the 751–850 mV range and a third guess would only add to it.
 
 ## PoolDataSource: the seam that keeps this testable without Firestore
 
