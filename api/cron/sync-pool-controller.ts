@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin';
 import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters';
@@ -38,6 +39,15 @@ function bearerToken(req: VercelLikeRequest): string | undefined {
   return value?.startsWith('Bearer ') ? value.slice('Bearer '.length) : undefined;
 }
 
+// Compare digests rather than the raw strings so the comparison is
+// constant-time regardless of how the presented token's length differs
+// — matches api/_lib/mcp/handler.ts's tokenMatches() for the same reason.
+function secretMatches(presented: string, expected: string): boolean {
+  const a = createHash('sha256').update(presented).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
 type AuthResult = { authorized: true; ownerUid?: string } | { authorized: false };
 
 /**
@@ -65,7 +75,7 @@ async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
   if (!token) return { authorized: false };
 
   const secret = process.env.CRON_SECRET?.trim();
-  if (secret && token === secret) return { authorized: true };
+  if (secret && secretMatches(token, secret)) return { authorized: true };
 
   try {
     const app = getAdminApp();

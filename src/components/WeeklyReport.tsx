@@ -5,7 +5,7 @@ import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
 import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf } from '../lib/readingValidation';
 import { calculateLSI } from '../lib/lsi';
-import { getLatestReadingForDisplay, findRecentFieldValue } from '../lib/readings';
+import { getLatestReadingForDisplay, findRecentFieldValue, classifyOrp } from '../lib/readings';
 import SpokenReportControls from './SpokenReportControls';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -149,12 +149,13 @@ function isoWeekYear(d: Date): number {
 // metric below uses: AGENTS.md's documented bands are an acceptable zone of
 // 650-800 mV (not the 650-750 DEFAULT_RANGES target used for its RangeBand
 // display) with no separate "critical" high band — just a warning past
-// 800 mV. Mirrors Dashboard's getOrpStatus. Takes a range so both the
-// aggregated weekly min/max and a single reading (min === max) share one
-// implementation.
+// 800 mV. Delegates to lib/readings.ts's classifyOrp (shared with
+// Dashboard's getOrpStatus) so both stay on one set of thresholds. Takes a
+// range so both the aggregated weekly min/max and a single reading
+// (min === max) share one implementation.
 function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
-  if (min < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
-  if (max > 800) return 'warning';
+  if (classifyOrp(min) === 'critical') return 'critical';
+  if (classifyOrp(max) === 'warning') return 'warning';
   return 'good';
 }
 

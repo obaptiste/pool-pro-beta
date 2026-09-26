@@ -29,7 +29,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
-import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
+import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 import { useToast } from '../lib/toast';
@@ -201,13 +201,6 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     }
   }, [lsiInputsKey]);
 
-  // Reset dismissed alerts when a new reading is added
-  React.useEffect(() => {
-    if (latest?.id) {
-      setDismissedAlerts([]);
-    }
-  }, [latest?.id]);
-
   const getStatus = (value: number, min: number, max: number): Status => {
     if (value < min || value > max) return 'critical';
     const range = max - min;
@@ -221,15 +214,15 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // is the acceptable zone, above 800 mV warns high) and never call the
   // in-between 751-800 mV band critical the way getStatus's `value > max`
   // check would (DEFAULT_RANGES.sanitisationMv.max is 750, the target
-  // zone's upper edge, not a hard ceiling). Matches orp_low/orp_high's own
-  // severities below.
-  const getOrpStatus = (value: number): Status => {
-    if (value < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
-    if (value > 800) return 'warning';
-    return 'good';
-  };
+  // zone's upper edge, not a hard ceiling). Delegates to lib/readings.ts's
+  // classifyOrp so this, the orp_low/orp_high alerts below, and
+  // WeeklyReport's classifyOrpRange all share one set of thresholds.
+  const getOrpStatus = (value: number): Status => classifyOrp(value);
 
-  const allAlerts = latest ? [
+  // Every alert's own live condition, unfiltered by dismissal — feeds both
+  // allAlerts (for rendering) and the effect below that decides which
+  // dismissals are still valid.
+  const rawAlerts = latest ? [
     {
       id: 'cl_low',
       type: 'chlorine',
@@ -266,7 +259,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     {
       id: 'orp_low',
       type: 'sanitisation',
-      condition: recentOrp != null && recentOrp.value < 650,
+      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'critical',
       msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
@@ -274,7 +267,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     {
       id: 'orp_high',
       type: 'sanitisation',
-      condition: recentOrp != null && recentOrp.value > 800,
+      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'warning',
       msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
@@ -320,14 +313,45 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       severity: 'critical'
     },
     {
-      id: 'test_due',
+      // Unlike the sensor alerts above, test_due can stay continuously
+      // true across a schedule change: ReminderSettings.handleFrequencyChange
+      // derives the new nextTestDate from the existing lastTestDate, so a
+      // frequency change can produce a still-overdue date without the
+      // condition ever going false in between. Folding nextTestDate into
+      // the id gives each due-date its own dismissal identity, so a
+      // schedule change re-surfaces the warning even when "overdue" never
+      // toggled off — condition-based clearing (the effect below) still
+      // handles the normal case where logging a reading pushes it into
+      // the future.
+      id: schedule.nextTestDate ? `test_due:${new Date(schedule.nextTestDate).getTime()}` : 'test_due',
       type: 'schedule',
       condition: schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false,
       msg: 'Water test due — maintenance schedule.',
       action: 'Log a new reading to maintain water balance.',
       severity: 'warning'
     }
-  ].filter(a => a.condition && !dismissedAlerts.includes(a.id)) : [];
+  ] : [];
+
+  const allAlerts = rawAlerts.filter(a => a.condition && !dismissedAlerts.includes(a.id));
+
+  // Auto-clear a dismissal once its own alert's condition resolves (goes
+  // false) rather than resetting all dismissals on any composite-value
+  // change: that earlier approach either reset every dismissal on any
+  // 15-min auto-sync poll (keying on latest.id) or still reset all of
+  // them whenever any *one* tracked value changed, including unrelated
+  // fields or same-band jitter (e.g. ORP moving a few mV while still
+  // under the low threshold) — see the PR review this replaced. Keying
+  // per-alert on its own condition means a dismissal survives noise and
+  // unrelated changes, and only actually re-arms once that alert's
+  // condition has gone false and can genuinely recur.
+  const activeAlertIdsKey = rawAlerts.filter(a => a.condition).map(a => a.id).join('|');
+  React.useEffect(() => {
+    const activeIds = new Set(activeAlertIdsKey ? activeAlertIdsKey.split('|') : []);
+    setDismissedAlerts(prev => {
+      const next = prev.filter(id => activeIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [activeAlertIdsKey]);
 
   const dismissAlert = (id: string) => {
     setDismissedAlerts(prev => [...prev, id]);
@@ -359,19 +383,33 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // controller-only polls (~105 minutes) and empty out the chlorine/
   // alkalinity/pressure sparklines even when recent manual measurements
   // exist just beyond that window.
+  // Same "filter nulls before taking 7" behavior as before, but stops
+  // scanning as soon as 7 valid points are found instead of always
+  // mapping/filtering the whole (unbounded — see CLAUDE.md's "unbounded
+  // readings growth" known issue) readings array on every render.
   const getTrendData = (key: keyof Reading) => {
-    return readings
-      .map(r => r[key])
-      .filter((v): v is number => typeof v === 'number' && !isNaN(v))
-      .slice(0, 7)
-      .reverse();
+    const values: number[] = [];
+    for (const r of readings) {
+      const v = r[key];
+      if (typeof v === 'number' && !isNaN(v)) {
+        values.push(v);
+        if (values.length === 7) break;
+      }
+    }
+    return values.reverse();
   };
 
-  const combinedChlorineTrend = readings
-    .map(r => combinedChlorineOf(r.chlorine, r.totalChlorine))
-    .filter((v): v is number => v != null)
-    .slice(0, 7)
-    .reverse();
+  const combinedChlorineTrend = (() => {
+    const values: number[] = [];
+    for (const r of readings) {
+      const v = combinedChlorineOf(r.chlorine, r.totalChlorine);
+      if (v != null) {
+        values.push(v);
+        if (values.length === 7) break;
+      }
+    }
+    return values.reverse();
+  })();
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
