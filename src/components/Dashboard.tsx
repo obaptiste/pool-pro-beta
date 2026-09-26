@@ -313,7 +313,17 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       severity: 'critical'
     },
     {
-      id: 'test_due',
+      // Unlike the sensor alerts above, test_due can stay continuously
+      // true across a schedule change: ReminderSettings.handleFrequencyChange
+      // derives the new nextTestDate from the existing lastTestDate, so a
+      // frequency change can produce a still-overdue date without the
+      // condition ever going false in between. Folding nextTestDate into
+      // the id gives each due-date its own dismissal identity, so a
+      // schedule change re-surfaces the warning even when "overdue" never
+      // toggled off — condition-based clearing (the effect below) still
+      // handles the normal case where logging a reading pushes it into
+      // the future.
+      id: schedule.nextTestDate ? `test_due:${new Date(schedule.nextTestDate).getTime()}` : 'test_due',
       type: 'schedule',
       condition: schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false,
       msg: 'Water test due — maintenance schedule.',
