@@ -37,7 +37,16 @@ async function startServer() {
   const PORT = 3000;
 
   app.set("trust proxy", 1);
-  app.use(express.json());
+  // Scoped rather than a blanket app.use(express.json()): the MCP route
+  // carries poolstatus_log_reading's base64-encoded photo (up to
+  // MAX_PHOTO_BYTES decoded in server.ts, ~4/3 larger once base64-encoded
+  // plus the rest of the JSON-RPC envelope), which exceeds express.json()'s
+  // 100kb default long before a normal phone photo — that would 413 before
+  // the route's own, more informative size check ever ran. No JSON body
+  // parsing is registered for /api/cron/sync-pool-controller: it reads
+  // only the Authorization header, never req.body.
+  app.use("/api/ai/fallback", express.json());
+  app.use("/api/mcp", express.json({ limit: "6mb" }));
 
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes

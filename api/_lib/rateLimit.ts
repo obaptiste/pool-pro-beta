@@ -30,3 +30,16 @@ export function isRateLimited(key: string, limit: number, windowMs: number): boo
   bucket.count += 1;
   return bucket.count > limit;
 }
+
+/**
+ * Test-only: clears all bucket state. Every MCP test in a given file
+ * shares this module's one in-memory Map and the same 127.0.0.1 key, so a
+ * growing test suite would otherwise eventually trip the real per-IP
+ * limit on an unrelated later test — not something under that test's
+ * control, and not what the limiter exists to catch (scripted abuse from
+ * one caller in production, not a legitimate test file's cumulative call
+ * count over its lifetime).
+ */
+export function __resetRateLimitForTests(): void {
+  buckets.clear();
+}

@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { after, before, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Reading } from '../../../src/types';
+import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types';
 import { handleMcpRequest } from './handler';
-import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
-import type { ListReadingsOptions, PoolDataSource } from './types';
+import { __resetRateLimitForTests } from '../rateLimit';
+import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
+
+// Spread into every ad-hoc fixture below that only exercises read tools —
+// keeps each of those focused on the one thing it's testing rather than
+// repeating four stub methods it never calls.
+const unimplementedWrites = {
+  async createReading(): Promise<Reading> { throw new Error('createReading not used in this test'); },
+  async addTask(): Promise<MaintenanceTask> { throw new Error('addTask not used in this test'); },
+  async completeTask(): Promise<MaintenanceTask> { throw new Error('completeTask not used in this test'); },
+  async adjustInventory(): Promise<InventoryItem> { throw new Error('adjustInventory not used in this test'); },
+};
 
 const TOKEN = 'test-token-123';
 const DAY = 86_400_000;
@@ -72,7 +83,64 @@ const memorySource: PoolDataSource = {
   async getSchedule() {
     return { uid: 'owner', testFrequency: 'weekly', lastTestDate: new Date(now - 10 * DAY), nextTestDate: new Date(now - 3 * DAY), remindersEnabled: true };
   },
+  ...unimplementedWrites,
 };
+
+// A separate, per-test mutable source for the write tools — memorySource
+// above is shared by every read-tool test via the module-level httpServer
+// and asserted against for exact fixture contents, so mutating it here
+// would make those tests order-dependent. Ownership/ids mirror the
+// Firestore source closely enough to exercise the same branches (unknown
+// id -> NotFoundError, inventory clamped at 0) without needing Firestore.
+function createWritableMemorySource(initialTasks: MaintenanceTask[] = [], initialInventory: InventoryItem[] = []): PoolDataSource {
+  const tasks = [...initialTasks];
+  const inventory = [...initialInventory];
+  let nextId = 0;
+  return {
+    ...unimplementedWrites,
+    async listReadings() { return []; },
+    async listTasks() { return tasks; },
+    async listInventory() { return inventory; },
+    async listEquipment() { return []; },
+    async getSchedule() { return null; },
+    async createReading(input: CreateReadingInput): Promise<Reading> {
+      return {
+        id: `r${nextId++}`,
+        uid: 'owner',
+        timestamp: input.timestamp ?? new Date(now),
+        chlorine: input.chlorine ?? null,
+        totalChlorine: input.totalChlorine ?? null,
+        sanitisationMv: input.sanitisationMv ?? null,
+        ph: input.ph ?? null,
+        alkalinity: input.alkalinity ?? null,
+        temperature: input.temperature ?? null,
+        differentialPressure: input.differentialPressure ?? null,
+        calciumHardness: input.calciumHardness ?? null,
+        cyanuricAcid: input.cyanuricAcid ?? null,
+        notes: input.notes,
+        photoUrl: `https://example.test/photos/${input.photo.contentType.split('/')[1]}-${input.photo.data.length}`,
+      };
+    },
+    async addTask({ title, priority, frequency }: AddTaskInput): Promise<MaintenanceTask> {
+      const task: MaintenanceTask = { id: `t${nextId++}`, uid: 'owner', title, completed: false, priority, frequency, isAI: false, createdAt: new Date(now) };
+      tasks.push(task);
+      return task;
+    },
+    async completeTask(id: string): Promise<MaintenanceTask> {
+      const task = tasks.find((t) => t.id === id);
+      if (!task) throw new NotFoundError(`No task with id "${id}".`);
+      task.completed = true;
+      return task;
+    },
+    async adjustInventory({ id, delta, unit }: AdjustInventoryInput): Promise<InventoryItem> {
+      const item = inventory.find((i) => i.id === id);
+      if (!item) throw new NotFoundError(`No inventory item with id "${id}".`);
+      if (item.unit !== unit) throw new UnitMismatchError(`"${id}" is tracked in ${item.unit}, not ${unit}.`);
+      item.quantity = Math.max(0, item.quantity + delta);
+      return item;
+    },
+  };
+}
 
 let httpServer: Server;
 let baseUrl: string;
@@ -90,6 +158,13 @@ before(async () => {
 });
 
 after(() => new Promise<void>((resolve) => httpServer.close(() => resolve())));
+
+// All MCP requests in this file come from 127.0.0.1 and share the rate
+// limiter's one in-memory bucket for that key — without a reset, a test
+// late in this growing file could trip the real per-IP limit purely from
+// earlier tests' cumulative requests, not anything the failing test itself
+// did wrong.
+beforeEach(__resetRateLimitForTests);
 
 async function connect(token: string | undefined): Promise<Client> {
   const client = new Client({ name: 'test-client', version: '0.0.0' });
@@ -197,22 +272,25 @@ describe('MCP endpoint auth', () => {
 });
 
 describe('MCP tools', () => {
-  it('lists the seven read-only tools', async () => {
+  it('lists the seven read-only tools and four write tools', async () => {
     const client = await connect(TOKEN);
     const { tools } = await client.listTools();
-    assert.deepEqual(
-      tools.map((t) => t.name).sort(),
-      [
-        'poolstatus_get_latest_reading',
-        'poolstatus_get_reading_trends',
-        'poolstatus_get_schedule',
-        'poolstatus_list_equipment',
-        'poolstatus_list_inventory',
-        'poolstatus_list_readings',
-        'poolstatus_list_tasks',
-      ],
-    );
-    assert.ok(tools.every((t) => t.annotations?.readOnlyHint === true));
+    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
+    const write = ['poolstatus_add_task', 'poolstatus_adjust_inventory', 'poolstatus_complete_task', 'poolstatus_log_reading'];
+    assert.deepEqual(tools.map((t) => t.name).sort(), [...readOnly, ...write].sort());
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    for (const name of readOnly) assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, name);
+    for (const name of write) assert.equal(byName.get(name)?.annotations?.readOnlyHint, false, name);
+    // complete_task and adjust_inventory both overwrite existing state with
+    // no way to undo it (no "reopen task" / no unit-aware negation), so a
+    // host relying on annotations to gate confirmation must see both as
+    // destructive, not just adjust_inventory's negative-delta case.
+    // log_reading joins them too: its own document creation is additive,
+    // but every successful call also overwrites schedules/{ownerUid}'s
+    // existing lastTestDate/nextTestDate via advanceSchedule.
+    assert.equal(byName.get('poolstatus_complete_task')?.annotations?.destructiveHint, true);
+    assert.equal(byName.get('poolstatus_adjust_inventory')?.annotations?.destructiveHint, true);
+    assert.equal(byName.get('poolstatus_log_reading')?.annotations?.destructiveHint, true);
     await client.close();
   });
 
@@ -248,6 +326,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -272,6 +351,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -297,6 +377,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ reading: { id: string } | null }>(
@@ -318,6 +399,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(allNotes);
     const out = structured<{ reading: unknown }>(
@@ -344,6 +426,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -410,6 +493,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ readings: { id: string }[] }>(
@@ -474,6 +558,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const bigServer = createServer((req, res) => {
       handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => bigSource }).catch((error) => {
@@ -526,6 +611,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ readings_considered: number; truncated: boolean; metrics: { chlorine: { count: number } } }>(
@@ -554,6 +640,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(allNotes);
     const out = structured<{ readings_considered: number; truncated: boolean }>(
@@ -585,6 +672,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } });
@@ -617,6 +705,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ metrics: { combinedChlorine: { count: number; latest: number; average: number } } }>(
@@ -642,6 +731,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
+      ...unimplementedWrites,
     };
     const { client, close } = await connectToSource(notesOnlySource);
     const out = structured<{ readings_considered: number }>(
@@ -692,5 +782,203 @@ describe('MCP tools', () => {
     assert.equal(out.schedule.testFrequency, 'weekly');
     assert.equal(out.schedule.overdue, true);
     await client.close();
+  });
+});
+
+// Real JPEG magic bytes (FF D8 FF) followed by filler — matchesImageSignature
+// (server.ts) only checks the header, not that the rest is a well-formed
+// image, so this is enough to pass without needing an actual photo file.
+const samplePhoto = { data_base64: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0]).toString('base64'), content_type: 'image/jpeg' as const };
+
+describe('MCP write tools', () => {
+  it('log_reading requires at least one measurement — a photo alone is not a completed test', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /at least one measurement/i);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects a genuinely impossible value (negative concentration) without writing anything', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, chlorine: -5 } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /Free Chlorine cannot be negative/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading saves a negative ORP reading instead of blocking it — ORP is a signed potential, not a concentration', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, sanitisation_mv: -50 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { sanitisationMv: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.sanitisationMv, -50);
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too low (<650 mV).');
+    await client.close();
+    close();
+  });
+
+  it('log_reading saves a negative pH reading instead of blocking it — extreme acidity (e.g. an acid spill) is real, not impossible', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, ph: -0.2 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { ph: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.ph, -0.2);
+    assert.ok(out.reading.fieldWarnings.ph);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects malformed base64 without writing anything', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: { data_base64: 'not-valid-base64!!', content_type: 'image/jpeg' }, ph: 7.4 },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /not valid base64/i);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects valid base64 that is not actually the declared image type', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      // Well-formed base64, but plain text, not a JPEG — must not satisfy
+      // the photo-evidence requirement just because it decodes cleanly.
+      arguments: { photo: { data_base64: Buffer.from('just some text, not a photo').toString('base64'), content_type: 'image/jpeg' }, ph: 7.4 },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /doesn't look like a valid image\/jpeg/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading saves an extreme-but-conceivable value instead of blocking it (AGENTS.md: out-of-range must not prevent submission)', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    // Well past getHardValidationError's old pH<=14 ceiling — the manual
+    // form still blocks this, but the MCP tool must not: a value this far
+    // outside DEFAULT_RANGES still surfaces a warning via getSoftWarning.
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, ph: 20 } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { ph: number }; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.ph, 20);
+    assert.ok(out.reading.fieldWarnings.ph);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects notes over MAX_NOTES_LENGTH at the schema level, before any upload', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /<=4000 characters/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects an implausibly far-future timestamp without writing anything', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, timestamp: '2099-01-01T00:00:00Z' },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /implausibly far in the future/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading saves a value outside the normal range with a warning, same as the manual form', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_log_reading', arguments: { photo: samplePhoto, sanitisation_mv: 233, notes: 'from a photo of the meter' } });
+    assert.equal(result.isError, undefined);
+    const out = structured<{ reading: { measurements: { sanitisationMv: number }; photoUrl: string; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.measurements.sanitisationMv, 233);
+    assert.ok(out.reading.photoUrl);
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too low (<650 mV).');
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    assert.match(text, /Reading logged\./);
+    assert.match(text, /Photo evidence: /);
+    assert.match(text, /Sanitisation may be too low/);
+    await client.close();
+    close();
+  });
+
+  it('add_task defaults priority/frequency and does not mark the task isAI (so protocol execution can\'t silently delete it)', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({ name: 'poolstatus_add_task', arguments: { title: 'Backwash the filter' } });
+    const out = structured<{ task: { title: string; priority: string; frequency: string; isAI: boolean } }>(result);
+    assert.equal(out.task.title, 'Backwash the filter');
+    assert.equal(out.task.priority, 'medium');
+    assert.equal(out.task.frequency, 'once');
+    assert.equal(out.task.isAI, false);
+    await client.close();
+    close();
+  });
+
+  it('complete_task marks the task done and errors on an unknown id', async () => {
+    const source = createWritableMemorySource([
+      { id: 't1', uid: 'owner', title: 'Backwash filter', completed: false, priority: 'high', frequency: 'monthly', createdAt: new Date(now) },
+    ]);
+    const { client, close } = await connectToSource(source);
+    const done = structured<{ task: { completed: boolean } }>(
+      await client.callTool({ name: 'poolstatus_complete_task', arguments: { id: 't1' } }),
+    );
+    assert.equal(done.task.completed, true);
+
+    const missing = await client.callTool({ name: 'poolstatus_complete_task', arguments: { id: 'nope' } });
+    assert.equal(missing.isError, true);
+    assert.match((missing.content as { type: string; text: string }[])[0].text, /No task with id "nope"/);
+    await client.close();
+    close();
+  });
+
+  it('adjust_inventory adds and consumes stock, clamping at 0, and errors on an unknown id', async () => {
+    const source = createWritableMemorySource([], [
+      { id: 'i1', uid: 'owner', name: 'Soda Ash', quantity: 2, unit: 'kg', minThreshold: 1 },
+    ]);
+    const { client, close } = await connectToSource(source);
+    const added = structured<{ item: { quantity: number } }>(
+      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: 3, unit: 'kg' } }),
+    );
+    assert.equal(added.item.quantity, 5);
+
+    const consumed = structured<{ item: { quantity: number; low: boolean } }>(
+      await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: -100, unit: 'kg' } }),
+    );
+    assert.equal(consumed.item.quantity, 0);
+    assert.equal(consumed.item.low, true);
+
+    const missing = await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'nope', delta: 1, unit: 'kg' } });
+    assert.equal(missing.isError, true);
+    assert.match((missing.content as { type: string; text: string }[])[0].text, /No inventory item with id "nope"/);
+    await client.close();
+    close();
+  });
+
+  it('adjust_inventory rejects a unit that does not match the item\'s own unit, without applying the delta', async () => {
+    const source = createWritableMemorySource([], [
+      { id: 'i1', uid: 'owner', name: 'Muriatic Acid', quantity: 5, unit: 'L', minThreshold: 1 },
+    ]);
+    const { client, close } = await connectToSource(source);
+    // "2 gallons" against a litres-tracked item must not be silently
+    // treated as "2 L" — that would misrecord how much is actually left.
+    const result = await client.callTool({ name: 'poolstatus_adjust_inventory', arguments: { id: 'i1', delta: -2, unit: 'gallons' } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /tracked in L, not gallons/);
+
+    const unchanged = structured<{ items: { quantity: number }[] }>(
+      await client.callTool({ name: 'poolstatus_list_inventory', arguments: {} }),
+    );
+    assert.equal(unchanged.items[0].quantity, 5);
+    await client.close();
+    close();
   });
 });

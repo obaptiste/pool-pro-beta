@@ -72,6 +72,47 @@ export function getHardValidationError(field: NumericReadingField, value: number
   return '';
 }
 
+/**
+ * Rejects only genuinely impossible input — non-finite, or below the
+ * field's physical minimum (e.g. a negative concentration) — never an
+ * extreme-but-conceivably-real value. AGENTS.md is explicit: "out-of-range
+ * values must not prevent submission" and validation should catch
+ * "impossible input formats, not real-world abnormal readings." Unlike
+ * getHardValidationError above (used by the manual entry form, which also
+ * enforces a per-field plausibility ceiling to catch likely typos an
+ * operator can immediately notice and correct), this has no upper bound:
+ * a value this far outside DEFAULT_RANGES still gets a warning via
+ * getSoftWarning, it just isn't blocked from saving. Used by the MCP
+ * server's poolstatus_log_reading, where a value came from an AI's photo
+ * transcription rather than a human typing directly into a form.
+ *
+ * sanitisationMv (ORP) has no minimum at all, unlike every other field
+ * here: it's a signed electrode potential, not a concentration, so a
+ * negative reading is abnormal but physically real — and AGENTS.md calls
+ * out ORP specifically: "Never block saving low or high ORP values. These
+ * values are essential for incident reports."
+ *
+ * pH has no minimum here either: the pH scale itself goes negative in
+ * strongly acidic solutions (e.g. an acid-spill incident), so unlike a
+ * concentration or a count, a negative pH is abnormal-but-real rather than
+ * impossible — AGENTS.md's "out-of-range values must not prevent
+ * submission" applies. getHardValidationError (the manual entry form)
+ * intentionally keeps rejecting it there, since a human typing a negative
+ * pH is almost always a typo they can immediately notice and correct.
+ */
+export function getImpossibleValueError(field: NumericReadingField, value: number): string {
+  if (!Number.isFinite(value)) return 'Enter a valid number.';
+  if (field === 'sanitisationMv' || field === 'ph') return '';
+  const label = FIELD_LABEL[field];
+  const min = HARD_MIN_BY_FIELD[field];
+  if (typeof min === 'number' && value < min) {
+    return min === 0
+      ? `${label} cannot be negative.`
+      : `${label} must be at least ${min}.`;
+  }
+  return '';
+}
+
 // Combined chlorine (chloramines) = total − free. It isn't a stored field,
 // so it has no DEFAULT_RANGES entry: under 0.5 ppm is the usual commercial
 // target, and above 1 ppm is where bathers notice it (the "chlorine smell"

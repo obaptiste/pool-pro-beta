@@ -18,6 +18,14 @@ export interface Reading {
   cyanuricAcid: number | null;
   notes?: string;
   uid: string;
+  /**
+   * Storage download URL for a photo submitted as evidence for this
+   * reading. Only ever set by the MCP server's poolstatus_log_reading tool
+   * (see api/_lib/mcp/server.ts) — a conversation has no other way to
+   * prove a number wasn't just made up, so that tool requires a photo and
+   * this field's presence is what marks a reading as MCP-submitted.
+   */
+  photoUrl?: string;
   /** Set when this log was amended after creation; timestamp of the most recent edit. */
   editedAt?: Date;
   /**
