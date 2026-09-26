@@ -28,7 +28,7 @@ import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, 
 import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
-import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
+import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -153,12 +153,20 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     }
   }, [lsiInputsKey]);
 
-  // Reset dismissed alerts when a new reading is added
+  // Key on the values that actually feed the alerts below, not latest.id:
+  // every 15-min auto-sync poll (see sync.ts) creates a new reading
+  // document even when none of these values changed, which would silently
+  // un-dismiss an alert the operator just closed. Mirrors lsiInputsKey above.
+  const alertInputsKey = latest
+    ? [latest.chlorine, recentOrp?.value, latest.ph, latest.alkalinity, latest.differentialPressure].join('|')
+    : null;
+
+  // Reset dismissed alerts only when an alert-relevant value actually changes.
   React.useEffect(() => {
-    if (latest?.id) {
+    if (latest) {
       setDismissedAlerts([]);
     }
-  }, [latest?.id]);
+  }, [alertInputsKey]);
 
   const getStatus = (value: number, min: number, max: number): Status => {
     if (value < min || value > max) return 'critical';
@@ -173,13 +181,10 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // is the acceptable zone, above 800 mV warns high) and never call the
   // in-between 751-800 mV band critical the way getStatus's `value > max`
   // check would (DEFAULT_RANGES.sanitisationMv.max is 750, the target
-  // zone's upper edge, not a hard ceiling). Matches orp_low/orp_high's own
-  // severities below.
-  const getOrpStatus = (value: number): Status => {
-    if (value < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
-    if (value > 800) return 'warning';
-    return 'good';
-  };
+  // zone's upper edge, not a hard ceiling). Delegates to lib/readings.ts's
+  // classifyOrp so this, the orp_low/orp_high alerts below, and
+  // WeeklyReport's classifyOrpRange all share one set of thresholds.
+  const getOrpStatus = (value: number): Status => classifyOrp(value);
 
   const allAlerts = latest ? [
     {
@@ -218,7 +223,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     {
       id: 'orp_low',
       type: 'sanitisation',
-      condition: recentOrp != null && recentOrp.value < 650,
+      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'critical',
       msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
@@ -226,7 +231,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     {
       id: 'orp_high',
       type: 'sanitisation',
-      condition: recentOrp != null && recentOrp.value > 800,
+      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'warning',
       msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
@@ -311,19 +316,33 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // controller-only polls (~105 minutes) and empty out the chlorine/
   // alkalinity/pressure sparklines even when recent manual measurements
   // exist just beyond that window.
+  // Same "filter nulls before taking 7" behavior as before, but stops
+  // scanning as soon as 7 valid points are found instead of always
+  // mapping/filtering the whole (unbounded — see CLAUDE.md's "unbounded
+  // readings growth" known issue) readings array on every render.
   const getTrendData = (key: keyof Reading) => {
-    return readings
-      .map(r => r[key])
-      .filter((v): v is number => typeof v === 'number' && !isNaN(v))
-      .slice(0, 7)
-      .reverse();
+    const values: number[] = [];
+    for (const r of readings) {
+      const v = r[key];
+      if (typeof v === 'number' && !isNaN(v)) {
+        values.push(v);
+        if (values.length === 7) break;
+      }
+    }
+    return values.reverse();
   };
 
-  const combinedChlorineTrend = readings
-    .map(r => combinedChlorineOf(r.chlorine, r.totalChlorine))
-    .filter((v): v is number => v != null)
-    .slice(0, 7)
-    .reverse();
+  const combinedChlorineTrend = (() => {
+    const values: number[] = [];
+    for (const r of readings) {
+      const v = combinedChlorineOf(r.chlorine, r.totalChlorine);
+      if (v != null) {
+        values.push(v);
+        if (values.length === 7) break;
+      }
+    }
+    return values.reverse();
+  })();
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();

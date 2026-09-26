@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin';
 import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters';
 import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source';
@@ -27,12 +28,21 @@ interface VercelLikeResponse {
   json(body: unknown): void;
 }
 
+// Compare digests rather than the raw strings so the comparison is
+// constant-time regardless of how the presented value's length differs
+// — matches api/_lib/mcp/handler.ts's tokenMatches() for the same reason.
+function secretMatches(presented: string, expected: string): boolean {
+  const a = createHash('sha256').update(presented).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
 function isAuthorized(req: VercelLikeRequest): boolean {
   const secret = process.env.CRON_SECRET?.trim();
   if (!secret) return false;
   const header = req.headers?.authorization;
   const value = Array.isArray(header) ? header[0] : header;
-  return value === `Bearer ${secret}`;
+  return typeof value === 'string' && secretMatches(value, `Bearer ${secret}`);
 }
 
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {

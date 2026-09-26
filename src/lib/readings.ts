@@ -1,4 +1,4 @@
-import { Reading } from '../types';
+import { DEFAULT_RANGES, Reading, Status } from '../types';
 
 // Alkalinity and calcium hardness are normally tested at most monthly —
 // the app's own schedule.testFrequency options top out at 'monthly' — so a
@@ -97,6 +97,26 @@ export function getMostRecentOrp(readings: Reading[]): { value: number; at: Date
   const cutoff = new Date(latest.timestamp.getTime() - MAX_ORP_FALLBACK_AGE_MS);
   const found = readings.find((r) => r.sanitisationMv != null && r.timestamp.getTime() >= cutoff.getTime());
   return found ? { value: found.sanitisationMv as number, at: found.timestamp } : null;
+}
+
+// AGENTS.md's "ORP / sanitisation power" thresholds: below
+// DEFAULT_RANGES.sanitisationMv.min (650 mV) warns low, up to this value
+// is acceptable, above it warns high. DEFAULT_RANGES.sanitisationMv.max
+// (750) is the target zone's upper edge, not this hard warning ceiling —
+// kept as a separate constant for that reason.
+export const ORP_HIGH_WARNING_MV = 800;
+
+/**
+ * Single source of truth for classifying an ORP (sanitisationMv) reading,
+ * shared by Dashboard's status card/alerts and WeeklyReport's per-day/
+ * per-period classification — previously each reimplemented the 650/800
+ * bands with their own hardcoded literals, risking disagreement if either
+ * one was updated without the other.
+ */
+export function classifyOrp(value: number): Status {
+  if (value < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
+  if (value > ORP_HIGH_WARNING_MV) return 'warning';
+  return 'good';
 }
 
 /** Short relative-age label ("just now", "12m ago", "3h ago") for showing how old a fallback value (e.g. from getMostRecentOrp) actually is. */
