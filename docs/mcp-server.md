@@ -367,15 +367,14 @@ sequenceDiagram
         U->>St: delete the just-saved object
         U-->>T: rethrow
     end
-    U-->>T: { url, file }
+    U-->>T: url
     T->>Fs: readings.doc().set({..., photoUrl, id: ref.id})
     alt set() ack lost
         T->>Fs: retry the SAME set() — idempotent, so success is definitive proof
         alt retry succeeds
             Note over T,Fs: fall through as success — no guessing needed
         else retry also fails
-            T->>Fs: get() as a last resort — really absent, confirmed written, or inconclusive?
-            Note over T,Fs: confirmed absent → delete photo, rethrow.\nconfirmed written → fall through as success.\ninconclusive → rethrow WITHOUT deleting (never guess).
+            Note over T,Fs: leave the photo in place and rethrow — a read here would\nstill only be a snapshot, so no finite number of retry-then-\nverify rounds can prove absence; never delete on a guess.
         end
     end
     T->>Fs: advanceSchedule() — best-effort, never fails the call
@@ -402,22 +401,21 @@ the photo:
 - If the **Firestore write** first fails, retry it — `set()` is idempotent,
   so a successful retry is definitive proof the document now exists,
   regardless of what happened to the first attempt. No guessing required.
-- If **both attempts fail**, fall back to a verification read. If the
-  **write actually succeeded** but the client only *saw* a failure (a
-  rejected promise doesn't prove the server never got the write —
-  acknowledgements can be lost in transit, or a commit can still be in
-  flight when a client-side deadline lapses), deleting the photo would
-  break a reading that's genuinely, durably saved. Don't delete; report
-  success.
-- If the **Firestore write** genuinely never happened, the photo it would
-  have pointed to is now orphaned — delete it.
-- If it's **impossible to tell** which of the above happened (the
-  verification read itself failed), the only safe move is to do neither —
-  never guess, and never delete on a guess.
+- If **both attempts fail**, leave the photo in place and rethrow, rather
+  than trying to verify absence with a read. A rejected promise doesn't
+  prove the server never got the write (acknowledgements can be lost in
+  transit, or a commit can still be in flight when a client-side deadline
+  lapses), and a follow-up `get()` is only a point-in-time snapshot: the
+  *retry's own* commit could still land moments after such a read observed
+  the document absent. No finite number of retry-then-verify rounds can
+  ever produce a provably-safe "confirmed absent," so the code stops trying
+  to prove one at all — an occasional orphaned Storage object is a far
+  cheaper mistake than a reading whose evidence link silently breaks.
 - If the **Storage upload's own save() call** is the one whose ack was
   lost, deleting is *always* safe regardless of outcome, because nothing
   can possibly reference that Storage path yet (no URL has been returned to
-  any caller at that point).
+  any caller at that point) — this is the one case in this function where
+  an unconditional delete is actually correct, not just convenient.
 
 This is the kind of distinction that's easy to gloss over and expensive to
 get wrong — a version of this exact code was flagged for exactly the
@@ -507,6 +505,14 @@ explicitly rather than covered by an automated test today.
   client code — it quietly fails (logged to console, never surfaced as a
   failed delete). Fixing this needs ownership-scoped storage rules or a
   server-side delete path; deliberately deferred rather than rushed.
+- **A `poolstatus_log_reading` call that fails after the photo is already
+  uploaded can leave that photo orphaned in Storage.** As explained above,
+  the code deliberately stops trying to prove the Firestore write never
+  landed once a straightforward retry has also failed, rather than chase
+  an unbounded regress of point-in-time reads. The accepted cost is a rare
+  unreferenced Storage object on a genuine, repeated write failure — judged
+  cheaper than the alternative failure mode (deleting evidence for a
+  reading that actually saved). No cleanup job exists for this yet.
 - **No multi-tenancy.** One deployment, one owner, one bearer token shared
   by every client. Scoping to multiple pool owners would need per-client
   identity, not just a shared secret.

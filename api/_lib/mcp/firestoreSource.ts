@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { File } from '@google-cloud/storage';
 import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import { getDownloadURL } from 'firebase-admin/storage';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
@@ -34,16 +33,19 @@ const PHOTO_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
 };
 
 /**
- * Uploads a reading's evidence photo and returns both a stable,
- * unexpiring download URL (via the Admin SDK's own getDownloadURL()
- * helper — chosen over a signed URL because Google Cloud Storage caps V4
- * signed URLs at 7 days, which would silently break the link long after
- * the reading it evidences is still on record) and the Storage File
- * handle, so a caller whose later write fails can delete this upload
- * rather than leaving it orphaned. Access is gated by the download token
+ * Uploads a reading's evidence photo and returns a stable, unexpiring
+ * download URL (via the Admin SDK's own getDownloadURL() helper — chosen
+ * over a signed URL because Google Cloud Storage caps V4 signed URLs at 7
+ * days, which would silently break the link long after the reading it
+ * evidences is still on record). Access is gated by the download token
  * being unguessable, not by bucket-wide public ACLs.
+ *
+ * All cleanup on failure happens internally, using the local `file`
+ * handle — the caller (createReading) deliberately never deletes this
+ * upload itself even if its own later write fails; see the comment there
+ * for why.
  */
-async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: CreateReadingInput['photo']): Promise<{ url: string; file: File }> {
+async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: CreateReadingInput['photo']): Promise<string> {
   const extension = PHOTO_EXTENSION_BY_CONTENT_TYPE[photo.contentType] ?? 'bin';
   const path = `readingPhotos/${ownerUid}/${readingId}.${extension}`;
   const file = getStorageAdmin().file(path);
@@ -69,11 +71,10 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
   }
   // getDownloadURL() is a second, separate authenticated request after the
   // upload — if it fails, the object is already durably stored, so this
-  // function must clean up after itself rather than leaving the caller
-  // with no File handle to do it (createReading's own cleanup only covers
-  // failures after this function returns successfully).
+  // function must clean up after itself here rather than relying on any
+  // caller to do it.
   try {
-    return { url: await getDownloadURL(file), file };
+    return await getDownloadURL(file);
   } catch (error) {
     await file.delete().catch((deleteError) => {
       console.error('uploadReadingPhoto: getDownloadURL failed and photo cleanup also failed', deleteError);
@@ -265,7 +266,7 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       // reference is allocated before the write — same reason sync.ts
       // assigns an id up front (App.tsx's listener needs doc.id restored).
       const ref = db.collection('readings').doc();
-      const { url: photoUrl, file: photoFile } = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
+      const photoUrl = await uploadReadingPhoto(ownerUid, ref.id, input.photo);
       const record = {
         // App.tsx's readings listener spreads doc.data() without restoring
         // doc.id (see handleSaveReading and sync.ts) — a reading document
@@ -303,24 +304,19 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
         try {
           await ref.set(record);
         } catch (retryError) {
-          // Both attempts failed. Fall back to a best-effort read rather
-          // than assuming failure — same three-way reasoning as before:
-          // confirmed written (fall through, report success), confirmed
-          // absent (clean up and rethrow), or the read itself failed —
-          // inconclusive, so it must be treated like "might exist": never
-          // delete, but still rethrow since success can't be claimed
-          // either.
-          const verification = await ref.get().then((doc) => doc.exists, () => undefined);
-          if (verification !== true) {
-            if (verification === false) {
-              await photoFile.delete().catch((deleteError) => {
-                console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
-              });
-            }
-            throw retryError;
-          }
-          // Confirmed written despite two failed attempts — fall through
-          // and report success, same as a normal call.
+          // Both attempts failed. A get() here would still only be a
+          // point-in-time snapshot — the *retry's own* commit could still
+          // be in flight server-side when a follow-up read observes the
+          // document absent, so no finite number of retry-then-verify
+          // rounds ever produces a provably-safe "confirmed absent". Rather
+          // than chase that unbounded regress, stop trying to prove absence
+          // at all: leave the photo in place and don't delete it. An
+          // occasional orphaned Storage object is the accepted cost —
+          // AGENTS.md's overriding rule is that evidence must never be
+          // lost, and an unreferenced photo is a far cheaper mistake than a
+          // reading whose photoUrl silently stops resolving.
+          console.error('poolstatus_log_reading: reading write failed after retry; leaving photo in place rather than risk deleting one that landed', retryError);
+          throw retryError;
         }
       }
       // Every poolstatus_log_reading call carries at least one measurement
