@@ -44,6 +44,15 @@ npm install
 npm run dev
 ```
 
+## MCP server
+
+PoolStatus AI exposes its pool data to MCP-capable AI clients (Claude,
+ChatGPT) over a remote MCP endpoint — read tools for readings, trends,
+tasks, inventory, equipment, and schedule, plus write tools to log a new
+reading (photo required as evidence), add or complete tasks, and adjust
+chemical stock. See [`docs/mcp-server.md`](./docs/mcp-server.md) for the
+full write-up: why it exists, how it's built, and everything it can do.
+
 ## Coding agent instructions
 
 Custom coding-agent instructions live in [`AGENTS.md`](./AGENTS.md).

@@ -14,7 +14,8 @@ import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
 import WorkTracker from './components/WorkTracker';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
-import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, storage, signIn, logout, handleFirestoreError, OperationType } from './firebase';
+import { deleteObject, ref as storageRef } from 'firebase/storage';
 import { useToast } from './lib/toast';
 import { getLatestReadingForDisplay } from './lib/readings';
 import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValidation';
@@ -411,12 +412,27 @@ export default function App() {
   };
 
   const handleDeleteReading = async (id: string) => {
+    const photoUrl = readings.find(r => r.id === id)?.photoUrl;
     try {
       await deleteDoc(doc(db, 'readings', id));
       markSaved('Reading deleted');
     } catch (err) {
       toast.error('Could not delete reading');
       handleFirestoreError(err, OperationType.DELETE, `readings/${id}`);
+      return;
+    }
+    // Best-effort only: an MCP-logged reading's evidence photo lives in
+    // Storage, not Firestore, so deleting the doc above doesn't remove it.
+    // No storage.rules exist yet to actually allow this from the client,
+    // so today this quietly no-ops — but it costs nothing to attempt, and
+    // it starts working the moment ownership-scoped rules are added,
+    // without another deploy. Never lets a Storage failure block or
+    // surface as "could not delete reading" — the reading itself is
+    // already gone.
+    if (photoUrl) {
+      deleteObject(storageRef(storage, photoUrl)).catch((err) => {
+        console.error('Could not delete reading photo from Storage', err);
+      });
     }
   };
 

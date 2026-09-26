@@ -51,7 +51,7 @@ src/
   sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
   serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
 api/
-  mcp.ts                     Remote MCP endpoint — read-only pool data for MCP clients
+  mcp.ts                     Remote MCP endpoint — read + write pool data for MCP clients
   cron/sync-pool-controller.ts  Pulls pH/ORP/temp telemetry from a Hanna Cloud pool controller into `readings`
   _lib/
     firebaseAdmin.ts          Shared Admin SDK bootstrap (service account, owner-uid resolution, Firestore handle)
@@ -106,6 +106,80 @@ All documents carry a `uid` field matched to `request.auth.uid` in Firestore rul
 Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 - Shared implementation lives in `src/lib/lsi.ts:calculateLSI()`
 - Target: `−0.1` to `+0.1` (balanced); outside `±0.3` is critical
+
+### MCP server (`api/mcp.ts`, `api/_lib/mcp/`)
+> **Full write-up, with diagrams:** [`docs/mcp-server.md`](docs/mcp-server.md)
+> covers why this exists, the request lifecycle, the `PoolDataSource`
+> abstraction, every tool in detail, the photo-evidence upload's
+> failure-mode handling, and the AGENTS.md-driven validation model. The
+> summary below is the quick version.
+
+Remote MCP endpoint (Streamable HTTP, stateless) for MCP clients like Claude
+or ChatGPT — auth is one shared `MCP_BEARER_TOKEN`, checked in constant time
+in `handler.ts`. `server.ts` registers the tools against a `PoolDataSource`
+interface (`types.ts`) implemented by `firestoreSource.ts` (Admin SDK,
+bypasses `firestore.rules`, hard-pinned to `POOLSTATUS_OWNER_UID`); tests
+exercise the tools end-to-end against an in-memory fake (`server.test.ts`)
+so they don't need real Firestore credentials.
+
+Seven read tools (get/list readings, trends, tasks, inventory, equipment,
+schedule) plus four write tools:
+- `poolstatus_add_task` / `poolstatus_complete_task` — checklist items;
+  added tasks are stored `isAI: false` (an ordinary task), deliberately
+  *not* matching GeminiAssistant's own protocol-suggested tasks:
+  `handleExecuteProtocol` (App.tsx) deletes every uncompleted `isAI: true`
+  task each time a new AI protocol is executed, and a reminder an MCP
+  conversation was explicitly asked to add is a durable, user-requested
+  item, not a disposable suggestion that a later, unrelated protocol run
+  should be able to silently wipe out.
+- `poolstatus_adjust_inventory` — apply a signed delta to a chemical's
+  stock inside a Firestore transaction (concurrent/retried calls must not
+  read-modify-write past each other), clamped so it never goes below 0
+  (matching Inventory.tsx's own decrement button). Requires a `unit` that
+  must exactly match the item's own stored unit — no conversion is
+  attempted, so e.g. "2 gallons" against a litres-tracked item is rejected
+  rather than silently recorded as 2 of whatever unit the item tracks.
+- `poolstatus_log_reading` — logs a real `Reading` from numbers discussed
+  in a conversation. **Requires a photo** (`photo.data_base64` +
+  `content_type`) of the strip/meter/report the numbers came from: unlike a
+  manual test or a controller's own sensor, a conversation has no other way
+  to back a number with evidence, so the tool rejects a call with no photo
+  (`data_base64` is validated against the base64 alphabet before decoding
+  — `Buffer.from(str, 'base64')` silently drops invalid characters rather
+  than throwing, so decoding alone can't catch malformed input). Values are
+  checked against `getImpossibleValueError` (`readingValidation.ts`) —
+  non-finite or below a field's physical minimum only (ORP/`sanitisationMv`
+  and `ph` have no minimum at all: ORP is a signed electrode potential, not
+  a concentration, and AGENTS.md calls out never blocking a low/high ORP
+  reading specifically — "essential for incident reports"; pH can likewise
+  go negative in a genuine acid-spill incident, so it's abnormal-but-real
+  rather than impossible) — and rejected if so;
+  **AGENTS.md is explicit that out-of-range values must not block
+  submission**, so unlike the manual entry form's `getHardValidationError`
+  (which also enforces a per-field plausibility ceiling to catch likely
+  typos an operator can immediately notice), an extreme-but-conceivable
+  value here still saves, with a warning surfaced in the response via
+  `getSoftWarning`. Like `handleSaveReading` in App.tsx, a successful call
+  also advances `schedules/{ownerUid}` (`lastTestDate`/`nextTestDate` per
+  the current test cadence) — otherwise the dashboard would keep reporting
+  the last *manual* test as the most recent one. The photo is uploaded to
+  Firebase Storage (`firebaseAdmin.ts`'s `getStorageAdmin()`) under
+  `readingPhotos/{ownerUid}/{readingId}.{ext}`, and the reading document
+  stores both its own `id` (App.tsx's readings listener doesn't restore
+  `doc.id`, same reason `sync.ts` assigns one) and a `photoUrl` (an
+  unexpiring Firebase download-token URL, via the Admin SDK's
+  `getDownloadURL()` — a signed URL was rejected for this since GCS caps
+  V4 signed URLs at 7 days). `Reading.photoUrl`'s presence is itself the
+  marker that a reading was MCP-submitted; every read tool that returns a
+  reading surfaces it.
+  **Known limitation**: deleting a reading (`handleDeleteReading` in
+  App.tsx) best-effort-deletes its evidence photo from Storage too, but no
+  `storage.rules` exist yet to actually authorize that from the client —
+  today it quietly no-ops (logged to console, never blocks or surfaces as
+  a failed reading delete), leaving the photo and its unexpiring URL
+  orphaned. Fixing it for real needs ownership-scoped storage rules (or a
+  server-side delete path); accepted for now rather than a rushed partial
+  fix, same reasoning as the unbounded `readings` growth limitation below.
 
 ### Pool controller telemetry (Hanna Cloud)
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool

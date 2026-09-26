@@ -7,13 +7,14 @@ import {
   combinedChlorineOf,
   getCombinedChlorineStatus,
   getCombinedChlorineWarning,
+  getImpossibleValueError,
   getSoftWarning,
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
 } from '../../../src/lib/readingValidation';
-import { DEFAULT_RANGES, type EquipmentItem, type Reading, type Status } from '../../../src/types';
+import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types';
 import { decodeReadingCursor, encodeReadingCursor } from './cursor';
-import type { PoolDataSource, ReadingCursor } from './types';
+import { NotFoundError, UnitMismatchError, type PoolDataSource, type ReadingCursor } from './types';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';
@@ -256,6 +257,7 @@ function serializeReading(reading: Reading) {
       cyanuricAcid: reading.cyanuricAcid,
     },
     notes: reading.notes ?? null,
+    photoUrl: reading.photoUrl ?? null,
     derived: {
       lsi,
       lsiStatus: lsi == null ? null : lsiStatus(lsi),
@@ -315,6 +317,7 @@ function readingToMarkdown(reading: SerializedReading): string {
   }
   if (derived.combinedChlorineWarning) lines.push(`- ⚠ ${derived.combinedChlorineWarning}`);
   if (reading.notes) lines.push(`- Notes: ${reading.notes}`);
+  if (reading.photoUrl) lines.push(`- Photo evidence: ${reading.photoUrl}`);
   return lines.join('\n');
 }
 
@@ -331,6 +334,88 @@ function toolResult(structured: Record<string, unknown>, text: string) {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+// destructiveHint: true, unlike WRITE_CREATE. Shared by two tools for two
+// different reasons: adjust_inventory's negative delta consumes (overwrites,
+// not just adds to) existing stock; log_reading's own document creation is
+// purely additive, but every successful call also overwrites schedules/
+// {ownerUid}'s existing lastTestDate/nextTestDate via advanceSchedule — a
+// host that uses annotations to decide whether a tool call needs explicit
+// confirmation must not treat either as purely additive the way
+// WRITE_CREATE's tasks are.
+const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+// complete_task's *result* converges on a second call with the same id
+// (idempotentHint: true), but unlike WRITE_CREATE it overwrites existing
+// state rather than only adding to it, and PoolDataSource exposes no way
+// to reopen a task — so, like WRITE_DESTRUCTIVE, a host must not treat it
+// as safe to apply without confirmation just because it's additive.
+const WRITE_COMPLETE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false };
+
+// Bounded well under Vercel's ~4.5 MB serverless request-body cap, not
+// just an arbitrary "reasonable photo" ceiling: the photo travels as
+// base64 inside the MCP JSON-RPC request, which inflates it ~4/3, so an
+// 8 MB decoded photo would need a >10 MB request body and get rejected by
+// the platform before this check ever ran. 3 MB decoded -> ~4 MB encoded
+// leaves headroom for the rest of the JSON-RPC envelope.
+const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
+
+// Same constant and reasoning as hannaCloud/source.ts's parseHannaTimestamp:
+// an implausibly-far-future timestamp (garbled input, or a model guessing
+// at "now") would otherwise become the newest reading and sort ahead of
+// every real one — advancing the testing schedule and burying subsequent
+// legitimate readings behind it — potentially for a long time, since
+// nothing else in this app corrects a wrong-but-plausible-looking future
+// date. Not a guess at "now", just a sanity ceiling.
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+// notes is free text from a conversation (sometimes an AI transcription),
+// and without a bound it could push the resulting Firestore document over
+// Firestore's own 1 MiB document limit — which would then deterministically
+// fail createReading's write on *every* attempt, including its retry, well
+// after the evidence photo has already been uploaded and (per the
+// never-delete-on-ambiguous-failure policy above) left in place. Enforced
+// in the tool's own inputSchema (z.string().max(...)) so the MCP SDK
+// rejects an oversized note before the handler — and any upload — ever
+// runs. Generous for genuine field notes, far below the point where
+// document size becomes a real concern.
+export const MAX_NOTES_LENGTH = 4000;
+
+// Buffer.from(str, 'base64') silently drops characters outside the
+// base64 alphabet instead of throwing — 'not-base64!!' decodes to
+// nonempty garbage bytes rather than raising an error — so it can't be
+// relied on to reject malformed input on its own. Checked before
+// decoding, not after.
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+function isValidBase64(value: string): boolean {
+  return value.length > 0 && value.length % 4 === 0 && BASE64_PATTERN.test(value);
+}
+
+// A lightweight sanity check, not a full decode: confirms the declared
+// content_type isn't a bare label slapped on arbitrary bytes (e.g. text
+// mislabeled image/jpeg would otherwise satisfy the "photo required"
+// evidence gate with an unusable file) by checking each format's magic
+// bytes. Doesn't verify the image is well-formed beyond its header —
+// that would need an image-decoding dependency this project doesn't have
+// — but it does rule out "this obviously isn't that image format."
+function matchesImageSignature(data: Buffer, contentType: string): boolean {
+  switch (contentType) {
+    case 'image/jpeg':
+      return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    case 'image/png':
+      return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case 'image/webp':
+      return data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP';
+    default:
+      return false;
+  }
+}
+
+const PhotoEvidence = z.object({
+  data_base64: z.string().describe('Raw base64-encoded photo bytes — no "data:" URL prefix, just the payload.'),
+  content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']).describe('The photo\'s MIME type.'),
+}).describe('A photo of the test strip/meter/report this reading is transcribed from — required, since a number typed into a conversation has no other evidence trail.');
+
+const NumericFieldInput = z.number().optional();
 
 export function createPoolStatusMcpServer(source: PoolDataSource): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
@@ -694,6 +779,176 @@ Use when: "When is the next test due?", "Am I behind on testing?"`,
         `Next test: ${output.schedule.nextTestDate ?? 'not scheduled'}${overdue ? ' — OVERDUE' : ''}.`,
       ].join(' ');
       return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_log_reading',
+    {
+      title: 'Log a pool reading (photo required)',
+      description: `Log a new water-chemistry reading from numbers discussed in this conversation. Requires a photo of the test strip, meter, or report the numbers came from — this tool has no other way to back a number typed into a conversation with evidence, unlike a manual test or a controller's own sensor. A reading logged this way is marked with that photo's URL, visible to poolstatus_get_latest_reading/list_readings/get_reading_trends the same as any other.
+
+Args:
+  - photo: { data_base64, content_type } (required)
+  - chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid (all optional numbers, but at least one is required — a photo alone isn't a completed test)
+  - notes (optional string, max ${MAX_NOTES_LENGTH} characters)
+  - timestamp (ISO date-time, optional, defaults to now)
+
+Abnormal-but-possible values (e.g. very high or low ORP, unusual alkalinity) are never rejected and always save — they're exactly the kind of incident evidence this tool exists to capture — but come back with a warning, same as the manual entry form's non-blocking validation. Only a genuinely impossible value (non-finite, or below the field's physical minimum, e.g. a negative concentration) is rejected.
+
+Use when: "Log this reading: pH 7.4, chlorine 2.1, here's a photo of the strip."
+Don't use when: no photo is available, or the operator is just describing what they observed without a photo (offer poolstatus_add_task for a follow-up reminder instead).`,
+      inputSchema: {
+        photo: PhotoEvidence,
+        chlorine: NumericFieldInput,
+        total_chlorine: NumericFieldInput,
+        sanitisation_mv: NumericFieldInput,
+        ph: NumericFieldInput,
+        alkalinity: NumericFieldInput,
+        temperature: NumericFieldInput,
+        differential_pressure: NumericFieldInput,
+        calcium_hardness: NumericFieldInput,
+        cyanuric_acid: NumericFieldInput,
+        notes: z.string().max(MAX_NOTES_LENGTH).optional(),
+        timestamp: IsoDate.optional(),
+      },
+      annotations: WRITE_DESTRUCTIVE,
+    },
+    async ({ photo, chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid, notes, timestamp }) => {
+      const fields: Partial<Record<NumericReadingField, number>> = {
+        ...(chlorine != null ? { chlorine } : {}),
+        ...(total_chlorine != null ? { totalChlorine: total_chlorine } : {}),
+        ...(sanitisation_mv != null ? { sanitisationMv: sanitisation_mv } : {}),
+        ...(ph != null ? { ph } : {}),
+        ...(alkalinity != null ? { alkalinity } : {}),
+        ...(temperature != null ? { temperature } : {}),
+        ...(differential_pressure != null ? { differentialPressure: differential_pressure } : {}),
+        ...(calcium_hardness != null ? { calciumHardness: calcium_hardness } : {}),
+        ...(cyanuric_acid != null ? { cyanuricAcid: cyanuric_acid } : {}),
+      };
+      if (Object.keys(fields).length === 0) {
+        return { content: [{ type: 'text' as const, text: 'At least one measurement is required — a photo alone isn\'t a completed test.' }], isError: true };
+      }
+      const impossibleErrors = Object.entries(fields)
+        .map(([field, value]) => getImpossibleValueError(field as NumericReadingField, value))
+        .filter(Boolean);
+      if (impossibleErrors.length > 0) {
+        return { content: [{ type: 'text' as const, text: impossibleErrors.join(' ') }], isError: true };
+      }
+      const readingTimestamp = parseDate(timestamp) ?? new Date();
+      if (readingTimestamp.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+        return { content: [{ type: 'text' as const, text: `timestamp is implausibly far in the future: ${readingTimestamp.toISOString()}` }], isError: true };
+      }
+      if (!isValidBase64(photo.data_base64)) {
+        return { content: [{ type: 'text' as const, text: 'photo.data_base64 is not valid base64.' }], isError: true };
+      }
+      const data = Buffer.from(photo.data_base64, 'base64');
+      if (data.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'The decoded photo is empty.' }], isError: true };
+      }
+      if (data.length > MAX_PHOTO_BYTES) {
+        return { content: [{ type: 'text' as const, text: `The photo is too large (${(data.length / 1024 / 1024).toFixed(1)} MB, max ${MAX_PHOTO_BYTES / 1024 / 1024} MB).` }], isError: true };
+      }
+      if (!matchesImageSignature(data, photo.content_type)) {
+        return { content: [{ type: 'text' as const, text: `The decoded photo doesn't look like a valid ${photo.content_type} file.` }], isError: true };
+      }
+
+      const created = await source.createReading({
+        timestamp: readingTimestamp,
+        notes,
+        photo: { data, contentType: photo.content_type },
+        ...fields,
+      });
+      const serialized = serializeReading(created);
+      const warnings = Object.entries(fields)
+        .map(([field, value]) => getSoftWarning(field as NumericReadingField, value)?.message)
+        .filter((message): message is string => Boolean(message));
+      const text = [
+        'Reading logged.',
+        '',
+        readingToMarkdown(serialized),
+        ...(warnings.length > 0 ? ['', ...warnings.map((w) => `- ⚠ ${w}`)] : []),
+      ].join('\n');
+      return toolResult({ reading: serialized }, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_add_task',
+    {
+      title: 'Add a maintenance task',
+      description: `Add an item to the maintenance checklist — e.g. a follow-up or reminder that came up in this conversation. Stored as an ordinary (non-AI-suggested) task, unlike the in-app AI assistant's own protocol suggestions: those get cleared out automatically the next time a protocol runs, which would silently delete a reminder this tool was asked to add.
+
+Args:
+  - title (required, max 100 chars)
+  - priority ('low' | 'medium' | 'high' | 'critical', default 'medium')
+  - frequency ('daily' | 'weekly' | 'monthly' | 'once', default 'once')
+
+Use when: "Remind me to backwash the filter Friday", "Add a task to reorder soda ash."`,
+      inputSchema: {
+        title: z.string().min(1).max(100),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+        frequency: z.enum(['daily', 'weekly', 'monthly', 'once']).default('once'),
+      },
+      annotations: WRITE_CREATE,
+    },
+    async ({ title, priority, frequency }: { title: string; priority: Priority; frequency: TaskFrequency }) => {
+      const task = await source.addTask({ title, priority, frequency });
+      const output = { task: { ...task, createdAt: task.createdAt.toISOString() } };
+      return toolResult(output, `Task added: "${task.title}" — ${task.priority} priority, ${task.frequency}.`);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_complete_task',
+    {
+      title: 'Complete a maintenance task',
+      description: `Mark a checklist item completed by id (see poolstatus_list_tasks for ids).
+
+Args:
+  - id (required)
+
+Use when: "Mark 'backwash filter' as done."`,
+      inputSchema: { id: z.string().min(1) },
+      annotations: WRITE_COMPLETE,
+    },
+    async ({ id }) => {
+      try {
+        const task = await source.completeTask(id);
+        return toolResult({ task: { ...task, createdAt: task.createdAt.toISOString() } }, `Marked "${task.title}" completed.`);
+      } catch (error) {
+        if (error instanceof NotFoundError) return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_adjust_inventory',
+    {
+      title: 'Adjust chemical inventory',
+      description: `Add or consume stock of a chemical inventory item by id (see poolstatus_list_inventory for ids and their units). The resulting quantity never goes below 0, however large a consuming delta is requested.
+
+Args:
+  - id (required)
+  - delta (required — positive to add stock, negative to consume it)
+  - unit (required — must exactly match the item's own unit from poolstatus_list_inventory, e.g. "L" or "kg"; no conversion is attempted, so convert the amount yourself before calling if the operator gave a different unit — this prevents e.g. "2 gallons" silently being recorded as 2 of whatever unit the item actually tracks)
+
+Use when: "We used 2 L of muriatic acid today" (call with delta: -2, unit: "L" if that's the item's unit), "Log that a new drum of chlorine granules came in (+25 kg)" (delta: 25, unit: "kg" if that matches).`,
+      inputSchema: { id: z.string().min(1), delta: z.number(), unit: z.string().min(1) },
+      annotations: WRITE_DESTRUCTIVE,
+    },
+    async ({ id, delta, unit }) => {
+      try {
+        const item = await source.adjustInventory({ id, delta, unit });
+        const low = item.quantity <= item.minThreshold;
+        return toolResult({ item: { ...item, low } }, `${item.name}: ${item.quantity} ${item.unit} in stock${low ? ' ⚠ LOW' : ''}.`);
+      } catch (error) {
+        if (error instanceof NotFoundError || error instanceof UnitMismatchError) {
+          return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+        }
+        throw error;
+      }
     },
   );
 

@@ -1,10 +1,15 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, getDoc, getDocFromServer, Timestamp } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+// Only used to best-effort delete an MCP-logged reading's evidence photo
+// (see handleDeleteReading in App.tsx) when the reading itself is deleted
+// — no other client code touches Storage.
+export const storage = getStorage(app);
 export const db = initializeFirestore(
   app,
   {
