@@ -201,24 +201,6 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     }
   }, [lsiInputsKey]);
 
-  // Key on the values that actually feed the alerts below, not latest.id:
-  // every 15-min auto-sync poll (see sync.ts) creates a new reading
-  // document even when none of these values changed, which would silently
-  // un-dismiss an alert the operator just closed. Mirrors lsiInputsKey above.
-  // Includes schedule.nextTestDate too: test_due depends on it rather than
-  // on any reading field, so a dismissed test_due must also clear when the
-  // reminder schedule advances, not just when chemistry values change.
-  const alertInputsKey = latest
-    ? [latest.chlorine, recentOrp?.value, latest.ph, latest.alkalinity, latest.differentialPressure, schedule.nextTestDate?.getTime()].join('|')
-    : null;
-
-  // Reset dismissed alerts only when an alert-relevant value actually changes.
-  React.useEffect(() => {
-    if (latest) {
-      setDismissedAlerts([]);
-    }
-  }, [alertInputsKey]);
-
   const getStatus = (value: number, min: number, max: number): Status => {
     if (value < min || value > max) return 'critical';
     const range = max - min;
@@ -237,7 +219,10 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // WeeklyReport's classifyOrpRange all share one set of thresholds.
   const getOrpStatus = (value: number): Status => classifyOrp(value);
 
-  const allAlerts = latest ? [
+  // Every alert's own live condition, unfiltered by dismissal — feeds both
+  // allAlerts (for rendering) and the effect below that decides which
+  // dismissals are still valid.
+  const rawAlerts = latest ? [
     {
       id: 'cl_low',
       type: 'chlorine',
@@ -335,7 +320,28 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       action: 'Log a new reading to maintain water balance.',
       severity: 'warning'
     }
-  ].filter(a => a.condition && !dismissedAlerts.includes(a.id)) : [];
+  ] : [];
+
+  const allAlerts = rawAlerts.filter(a => a.condition && !dismissedAlerts.includes(a.id));
+
+  // Auto-clear a dismissal once its own alert's condition resolves (goes
+  // false) rather than resetting all dismissals on any composite-value
+  // change: that earlier approach either reset every dismissal on any
+  // 15-min auto-sync poll (keying on latest.id) or still reset all of
+  // them whenever any *one* tracked value changed, including unrelated
+  // fields or same-band jitter (e.g. ORP moving a few mV while still
+  // under the low threshold) — see the PR review this replaced. Keying
+  // per-alert on its own condition means a dismissal survives noise and
+  // unrelated changes, and only actually re-arms once that alert's
+  // condition has gone false and can genuinely recur.
+  const activeAlertIdsKey = rawAlerts.filter(a => a.condition).map(a => a.id).join('|');
+  React.useEffect(() => {
+    const activeIds = new Set(activeAlertIdsKey ? activeAlertIdsKey.split('|') : []);
+    setDismissedAlerts(prev => {
+      const next = prev.filter(id => activeIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [activeAlertIdsKey]);
 
   const dismissAlert = (id: string) => {
     setDismissedAlerts(prev => [...prev, id]);
