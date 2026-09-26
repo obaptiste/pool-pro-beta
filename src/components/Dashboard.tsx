@@ -205,8 +205,11 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   // every 15-min auto-sync poll (see sync.ts) creates a new reading
   // document even when none of these values changed, which would silently
   // un-dismiss an alert the operator just closed. Mirrors lsiInputsKey above.
+  // Includes schedule.nextTestDate too: test_due depends on it rather than
+  // on any reading field, so a dismissed test_due must also clear when the
+  // reminder schedule advances, not just when chemistry values change.
   const alertInputsKey = latest
-    ? [latest.chlorine, recentOrp?.value, latest.ph, latest.alkalinity, latest.differentialPressure].join('|')
+    ? [latest.chlorine, recentOrp?.value, latest.ph, latest.alkalinity, latest.differentialPressure, schedule.nextTestDate?.getTime()].join('|')
     : null;
 
   // Reset dismissed alerts only when an alert-relevant value actually changes.
