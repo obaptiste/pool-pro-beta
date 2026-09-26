@@ -335,11 +335,14 @@ function toolResult(structured: Record<string, unknown>, text: string) {
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE_CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
-// destructiveHint: true, unlike WRITE_CREATE — a negative delta consumes
-// (overwrites, not just adds to) existing stock, so a host that uses
-// annotations to decide whether a tool call needs explicit confirmation
-// must not treat this as purely additive the way WRITE_CREATE's readings/
-// tasks are.
+// destructiveHint: true, unlike WRITE_CREATE. Shared by two tools for two
+// different reasons: adjust_inventory's negative delta consumes (overwrites,
+// not just adds to) existing stock; log_reading's own document creation is
+// purely additive, but every successful call also overwrites schedules/
+// {ownerUid}'s existing lastTestDate/nextTestDate via advanceSchedule — a
+// host that uses annotations to decide whether a tool call needs explicit
+// confirmation must not treat either as purely additive the way
+// WRITE_CREATE's tasks are.
 const WRITE_DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 // complete_task's *result* converges on a second call with the same id
 // (idempotentHint: true), but unlike WRITE_CREATE it overwrites existing
@@ -364,6 +367,18 @@ const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 // nothing else in this app corrects a wrong-but-plausible-looking future
 // date. Not a guess at "now", just a sanity ceiling.
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+// notes is free text from a conversation (sometimes an AI transcription),
+// and without a bound it could push the resulting Firestore document over
+// Firestore's own 1 MiB document limit — which would then deterministically
+// fail createReading's write on *every* attempt, including its retry, well
+// after the evidence photo has already been uploaded and (per the
+// never-delete-on-ambiguous-failure policy above) left in place. Enforced
+// in the tool's own inputSchema (z.string().max(...)) so the MCP SDK
+// rejects an oversized note before the handler — and any upload — ever
+// runs. Generous for genuine field notes, far below the point where
+// document size becomes a real concern.
+export const MAX_NOTES_LENGTH = 4000;
 
 // Buffer.from(str, 'base64') silently drops characters outside the
 // base64 alphabet instead of throwing — 'not-base64!!' decodes to
@@ -776,7 +791,7 @@ Use when: "When is the next test due?", "Am I behind on testing?"`,
 Args:
   - photo: { data_base64, content_type } (required)
   - chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid (all optional numbers, but at least one is required — a photo alone isn't a completed test)
-  - notes (optional string)
+  - notes (optional string, max ${MAX_NOTES_LENGTH} characters)
   - timestamp (ISO date-time, optional, defaults to now)
 
 Abnormal-but-possible values (e.g. very high or low ORP, unusual alkalinity) are never rejected and always save — they're exactly the kind of incident evidence this tool exists to capture — but come back with a warning, same as the manual entry form's non-blocking validation. Only a genuinely impossible value (non-finite, or below the field's physical minimum, e.g. a negative concentration) is rejected.
@@ -794,10 +809,10 @@ Don't use when: no photo is available, or the operator is just describing what t
         differential_pressure: NumericFieldInput,
         calcium_hardness: NumericFieldInput,
         cyanuric_acid: NumericFieldInput,
-        notes: z.string().optional(),
+        notes: z.string().max(MAX_NOTES_LENGTH).optional(),
         timestamp: IsoDate.optional(),
       },
-      annotations: WRITE_CREATE,
+      annotations: WRITE_DESTRUCTIVE,
     },
     async ({ photo, chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid, notes, timestamp }) => {
       const fields: Partial<Record<NumericReadingField, number>> = {
@@ -824,7 +839,6 @@ Don't use when: no photo is available, or the operator is just describing what t
       if (readingTimestamp.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
         return { content: [{ type: 'text' as const, text: `timestamp is implausibly far in the future: ${readingTimestamp.toISOString()}` }], isError: true };
       }
-
       if (!isValidBase64(photo.data_base64)) {
         return { content: [{ type: 'text' as const, text: 'photo.data_base64 is not valid base64.' }], isError: true };
       }

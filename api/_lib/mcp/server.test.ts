@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types';
 import { handleMcpRequest } from './handler';
 import { __resetRateLimitForTests } from '../rateLimit';
-import { LATEST_READING_SEARCH_LIMIT, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
+import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
 import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
 
 // Spread into every ad-hoc fixture below that only exercises read tools —
@@ -285,8 +285,12 @@ describe('MCP tools', () => {
     // no way to undo it (no "reopen task" / no unit-aware negation), so a
     // host relying on annotations to gate confirmation must see both as
     // destructive, not just adjust_inventory's negative-delta case.
+    // log_reading joins them too: its own document creation is additive,
+    // but every successful call also overwrites schedules/{ownerUid}'s
+    // existing lastTestDate/nextTestDate via advanceSchedule.
     assert.equal(byName.get('poolstatus_complete_task')?.annotations?.destructiveHint, true);
     assert.equal(byName.get('poolstatus_adjust_inventory')?.annotations?.destructiveHint, true);
+    assert.equal(byName.get('poolstatus_log_reading')?.annotations?.destructiveHint, true);
     await client.close();
   });
 
@@ -863,6 +867,18 @@ describe('MCP write tools', () => {
     const out = structured<{ reading: { measurements: { ph: number }; fieldWarnings: Record<string, string> } }>(result);
     assert.equal(out.reading.measurements.ph, 20);
     assert.ok(out.reading.fieldWarnings.ph);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects notes over MAX_NOTES_LENGTH at the schema level, before any upload', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /<=4000 characters/);
     await client.close();
     close();
   });
