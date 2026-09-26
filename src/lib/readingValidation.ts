@@ -154,8 +154,8 @@ export function getSoftWarning(field: NumericReadingField, value: number): SoftV
   if (!Number.isFinite(value)) return null;
   if (field === 'sanitisationMv') {
     if (value < 650) return { field, level: 'warning', message: 'Sanitisation may be too low (<650 mV).' };
-    if (value > 850) return { field, level: 'warning', message: 'Sanitisation may be too high (>850 mV).' };
-    if (value >= 750) return { field, level: 'elevated', message: 'High ORP (750–850 mV), usually acceptable depending on context.' };
+    if (value > 800) return { field, level: 'warning', message: 'Sanitisation may be too high (>800 mV) — verify before swimming or adding more chlorine.' };
+    if (value >= 750) return { field, level: 'elevated', message: 'High ORP (750–800 mV), usually acceptable depending on context.' };
     return null;
   }
 

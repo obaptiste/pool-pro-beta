@@ -307,12 +307,12 @@ describe('MCP tools', () => {
     assert.equal(out.reading.fieldStatus.sanitisationMv, 'warning'); // 800 mV is the "elevated, usually acceptable" band, not critical
     assert.equal(
       (out.reading as unknown as { fieldWarnings: Record<string, string> }).fieldWarnings.sanitisationMv,
-      'High ORP (750–850 mV), usually acceptable depending on context.',
+      'High ORP (750–800 mV), usually acceptable depending on context.',
     );
     const text = (result.content as { type: string; text: string }[])[0].text;
     assert.match(text, /Combined chlorine: 2\.0 ppm \(critical\)/);
     assert.match(text, /smells of chloramine/);
-    assert.match(text, /ORP \/ sanitisation: 800 mV \(warning\) — High ORP \(750–850 mV\), usually acceptable depending on context\./);
+    assert.match(text, /ORP \/ sanitisation: 800 mV \(warning\) — High ORP \(750–800 mV\), usually acceptable depending on context\./);
     await client.close();
   });
 
@@ -891,6 +891,18 @@ describe('MCP write tools', () => {
     });
     assert.equal(result.isError, true);
     assert.match((result.content as { type: string; text: string }[])[0].text, /implausibly far in the future/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects a timestamp with no timezone offset, at the schema level, before any upload', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, timestamp: '2026-09-01T08:00:00' },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /explicit timezone offset/);
     await client.close();
     close();
   });

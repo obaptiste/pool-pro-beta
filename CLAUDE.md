@@ -140,13 +140,25 @@ schedule) plus four write tools:
   attempted, so e.g. "2 gallons" against a litres-tracked item is rejected
   rather than silently recorded as 2 of whatever unit the item tracks.
 - `poolstatus_log_reading` — logs a real `Reading` from numbers discussed
-  in a conversation. **Requires a photo** (`photo.data_base64` +
-  `content_type`) of the strip/meter/report the numbers came from: unlike a
-  manual test or a controller's own sensor, a conversation has no other way
-  to back a number with evidence, so the tool rejects a call with no photo
-  (`data_base64` is validated against the base64 alphabet before decoding
-  — `Buffer.from(str, 'base64')` silently drops invalid characters rather
-  than throwing, so decoding alone can't catch malformed input). Values are
+  in a conversation. Annotated `WRITE_DESTRUCTIVE` (it overwrites
+  `schedules/{ownerUid}`, not just adds a document — see below). **Requires
+  a photo** (`photo.data_base64` + `content_type`) of the strip/meter/report
+  the numbers came from: unlike a manual test or a controller's own sensor,
+  a conversation has no other way to back a number with evidence, so the
+  tool rejects a call with no photo (`data_base64` is validated against the
+  base64 alphabet before decoding — `Buffer.from(str, 'base64')` silently
+  drops invalid characters rather than throwing, so decoding alone can't
+  catch malformed input). `notes` is capped at `MAX_NOTES_LENGTH` (4000
+  characters) in the tool's own Zod schema — enforced before any upload
+  runs, since an unbounded note could otherwise push the Firestore write
+  past its 1 MiB document limit only *after* the photo already landed. An
+  optional `timestamp` must be a complete ISO-8601 date-time with an
+  explicit timezone offset (e.g. `2026-09-01T08:00:00Z`) — a bare date or an
+  offset-less time is rejected, since `new Date(value)` would otherwise
+  parse it in the server's local timezone, an environment-dependent
+  ambiguity for a persisted write (read-side `since`/`until` filters stay
+  permissive about this, since a filter window edge isn't a durability
+  claim the way a stored reading's timestamp is). Values are
   checked against `getImpossibleValueError` (`readingValidation.ts`) —
   non-finite or below a field's physical minimum only (ORP/`sanitisationMv`
   and `ph` have no minimum at all: ORP is a signed electrode potential, not
