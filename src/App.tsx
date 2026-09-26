@@ -468,6 +468,35 @@ export default function App() {
     }
   };
 
+  // Manual "sync now" trigger for the Hanna Cloud pool controller telemetry
+  // job (see CLAUDE.md's "Pool controller telemetry" section) — the same
+  // endpoint the scheduled cron/GitHub Actions triggers hit, but
+  // authenticated with this signed-in user's own Firebase ID token instead
+  // of CRON_SECRET, which must stay server-side only. Returns the sync
+  // result so the caller (Dashboard's status light) can reflect it, and
+  // throws on failure rather than swallowing it — the caller decides how to
+  // show that.
+  const handleSyncPoolController = async (): Promise<{ written: boolean; outcome?: string }> => {
+    if (!user) throw new Error('Not signed in');
+    const idToken = await user.getIdToken();
+    const response = await fetch('/api/cron/sync-pool-controller', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body?.error || `Sync failed (${response.status})`);
+    }
+    if (body.written) {
+      toast.success('Synced latest reading from pool controller');
+    } else if (body.outcome === 'no-reading-available') {
+      toast.info('Pool controller has no new reading to sync');
+    } else {
+      toast.info('Already up to date');
+    }
+    return body;
+  };
+
   const handleAddTask = async (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => {
     if (!user) return;
     try {
@@ -803,6 +832,7 @@ export default function App() {
           onPrint={() => window.print()}
           toggleTask={toggleTask}
           onAddTask={handleAddTask}
+          onSyncPoolController={handleSyncPoolController}
         />
       </main>
 

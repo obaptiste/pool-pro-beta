@@ -154,11 +154,16 @@ low ORP from an auto-synced reading doesn't pass through silently.
   `PoolControllerSource` interface, and `sync.ts`'s source-agnostic dedupe
   logic, mean a second controller brand — or an official Hanna API, should
   one ever ship — is a new implementation of that interface, not a rewrite.
-- **Trigger.** One bearer-token-protected endpoint
-  (`CRON_SECRET`), driven by both Vercel Cron (`vercel.json`; once/day on
-  the Hobby plan) and `.github/workflows/sync-pool-controller.yml` (every
-  15 min, the real cadence until the project is on a paid Vercel plan —
-  then tighten `vercel.json`'s schedule and delete the workflow).
+- **Trigger.** One endpoint (`api/cron/sync-pool-controller.ts`), driven
+  three ways: Vercel Cron (`vercel.json`; once/day on the Hobby plan) and
+  `.github/workflows/sync-pool-controller.yml` (every 15 min, the real
+  cadence until the project is on a paid Vercel plan — then tighten
+  `vercel.json`'s schedule and delete the workflow) both authenticate with
+  `CRON_SECRET`; the dashboard's manual "sync now" button (the small status
+  light on the "Status" wordmark — `Dashboard.tsx`'s `handleSyncClick`)
+  instead sends the signed-in owner's own Firebase ID token, verified
+  server-side against Firebase Auth and checked against `resolveOwnerUid`
+  — `CRON_SECRET` itself never reaches client code.
 - **Credentials are real account credentials**, not an API key —
   `HANNA_CLOUD_EMAIL`/`HANNA_CLOUD_PASSWORD` must stay server-side only,
   unlike the client-bundled `GEMINI_API_KEY` pattern above.
