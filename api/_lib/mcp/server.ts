@@ -796,6 +796,8 @@ Args:
 
 Abnormal-but-possible values (e.g. very high or low ORP, unusual alkalinity) are never rejected and always save — they're exactly the kind of incident evidence this tool exists to capture — but come back with a warning, same as the manual entry form's non-blocking validation. Only a genuinely impossible value (non-finite, or below the field's physical minimum, e.g. a negative concentration) is rejected.
 
+Returns: { reading: {...same shape as poolstatus_get_latest_reading's reading...} }. Unlike that tool, reading is never null here (a successful call just created it), and editedAt/previousValues are always null (a freshly logged reading has no prior version to compare against). photoUrl is always populated, since a photo is required to call this tool at all.
+
 Use when: "Log this reading: pH 7.4, chlorine 2.1, here's a photo of the strip."
 Don't use when: no photo is available, or the operator is just describing what they observed without a photo (offer poolstatus_add_task for a follow-up reminder instead).`,
       inputSchema: {
@@ -884,7 +886,10 @@ Args:
   - priority ('low' | 'medium' | 'high' | 'critical', default 'medium')
   - frequency ('daily' | 'weekly' | 'monthly' | 'once', default 'once')
 
-Use when: "Remind me to backwash the filter Friday", "Add a task to reorder soda ash."`,
+Returns: { task: { id, title, completed, priority, frequency, isAI, createdAt } }. completed is always false for a newly added task, isAI is always false (this tool never creates AI-suggested tasks — see above), and createdAt is an ISO date-time string.
+
+Use when: "Remind me to backwash the filter Friday", "Add a task to reorder soda ash."
+Don't use when: the operator is reporting an actual measurement with evidence, not asking for a reminder — use poolstatus_log_reading instead.`,
       inputSchema: {
         title: z.string().min(1).max(100),
         priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
@@ -908,7 +913,10 @@ Use when: "Remind me to backwash the filter Friday", "Add a task to reorder soda
 Args:
   - id (required)
 
-Use when: "Mark 'backwash filter' as done."`,
+Returns: { task: {...same shape as poolstatus_add_task's task...} }, with completed now true.
+
+Use when: "Mark 'backwash filter' as done."
+Don't use when: you want to remove a task entirely rather than mark it done — no delete tool exists yet; a completed task stays visible via poolstatus_list_tasks with status: 'completed' or 'all'.`,
       inputSchema: { id: z.string().min(1) },
       annotations: WRITE_COMPLETE,
     },
@@ -934,7 +942,10 @@ Args:
   - delta (required — positive to add stock, negative to consume it)
   - unit (required — must exactly match the item's own unit from poolstatus_list_inventory, e.g. "L" or "kg"; no conversion is attempted, so convert the amount yourself before calling if the operator gave a different unit — this prevents e.g. "2 gallons" silently being recorded as 2 of whatever unit the item actually tracks)
 
-Use when: "We used 2 L of muriatic acid today" (call with delta: -2, unit: "L" if that's the item's unit), "Log that a new drum of chlorine granules came in (+25 kg)" (delta: 25, unit: "kg" if that matches).`,
+Returns: { item: { id, name, quantity, unit, minThreshold, low } }. low is true when the resulting quantity is at or below minThreshold — the same threshold poolstatus_list_inventory's low_only filter and Inventory.tsx's reorder badge use.
+
+Use when: "We used 2 L of muriatic acid today" (call with delta: -2, unit: "L" if that's the item's unit), "Log that a new drum of chlorine granules came in (+25 kg)" (delta: 25, unit: "kg" if that matches).
+Don't use when: the operator wants a reminder to reorder rather than a record of actual stock consumed or received — that's poolstatus_add_task, not an inventory adjustment.`,
       inputSchema: { id: z.string().min(1), delta: z.number(), unit: z.string().min(1) },
       annotations: WRITE_DESTRUCTIVE,
     },
