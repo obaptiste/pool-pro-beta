@@ -43,7 +43,9 @@ Write `Use when` examples as things a real person would actually ask, not paraph
 
 Every read tool that returns a list or a single record — `get_latest_reading`, `list_readings`, `get_reading_trends`, `list_tasks`, `list_inventory`, `list_equipment` — takes `response_format: 'markdown' | 'json'` (zod enum, default `'markdown'`): markdown for a client rendering to a human, json for one that's going to parse the numbers. `get_schedule` and the four write tools skip it — they return one small, fixed-shape record where a markdown/json split adds an argument without adding value; don't add it there reflexively just because most tools have it.
 
-Return both a markdown summary and the raw structured data from every tool, regardless of whether it takes `response_format`, via the shared `toolResult(structured, text)` helper in `server.ts`, which wraps them as `{ content: [{ type: 'text', text }], structuredContent: structured }`. Don't hand-roll this shape inline.
+For a **successful** result, return both a markdown summary and the raw structured data via the shared `toolResult(structured, text)` helper in `server.ts`, which wraps them as `{ content: [{ type: 'text', text }], structuredContent: structured }`. Don't hand-roll this shape inline.
+
+`toolResult()` is only for success. Every validation/not-found failure in this server (there are 10 of them — invalid pagination cursor, no measurement provided, an impossible value, a bad timestamp, an invalid/oversized/corrupt photo, a missing task/inventory id, a unit mismatch) returns `{ content: [{ type: 'text', text: message }], isError: true }` directly instead — no `structuredContent`, and critically, `isError: true`, which is what tells an MCP client the call failed rather than succeeded with this text as the answer. Never route an error path through `toolResult()`; it has no way to carry `isError` and a client would read the failure as a normal result.
 
 ## Tool annotations
 
