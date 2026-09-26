@@ -108,6 +108,12 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 - Target: `−0.1` to `+0.1` (balanced); outside `±0.3` is critical
 
 ### MCP server (`api/mcp.ts`, `api/_lib/mcp/`)
+> **Full write-up, with diagrams:** [`docs/mcp-server.md`](docs/mcp-server.md)
+> covers why this exists, the request lifecycle, the `PoolDataSource`
+> abstraction, every tool in detail, the photo-evidence upload's
+> failure-mode handling, and the AGENTS.md-driven validation model. The
+> summary below is the quick version.
+
 Remote MCP endpoint (Streamable HTTP, stateless) for MCP clients like Claude
 or ChatGPT — auth is one shared `MCP_BEARER_TOKEN`, checked in constant time
 in `handler.ts`. `server.ts` registers the tools against a `PoolDataSource`
