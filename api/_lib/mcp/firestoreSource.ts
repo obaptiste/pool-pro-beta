@@ -58,14 +58,13 @@ async function uploadReadingPhoto(ownerUid: string, readingId: string, photo: Cr
     // it. Unlike the cleanup below (and createReading's own cleanup),
     // nothing could possibly reference this path yet: this function hasn't
     // returned a URL to any caller, so there's no live evidence link to
-    // protect — only a chance of leaving an unreferenced, token-accessible
-    // blob behind. Always safe to delete it if it's actually there.
-    const [exists] = await file.exists().catch(() => [false]);
-    if (exists) {
-      await file.delete().catch((deleteError) => {
-        console.error('uploadReadingPhoto: save() ack lost but upload landed; cleanup also failed', deleteError);
-      });
-    }
+    // protect. That makes an unconditional delete attempt always safe here
+    // (deleting a nonexistent object just rejects, caught below like any
+    // other cleanup failure) — no need to probe existence first, which
+    // would only add its own inconclusive-result case to get wrong.
+    await file.delete().catch((deleteError) => {
+      console.error('uploadReadingPhoto: save() ack lost; cleanup attempt failed (or object never landed)', deleteError);
+    });
     throw error;
   }
   // getDownloadURL() is a second, separate authenticated request after the
