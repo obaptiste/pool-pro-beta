@@ -370,8 +370,13 @@ sequenceDiagram
     U-->>T: { url, file }
     T->>Fs: readings.doc().set({..., photoUrl, id: ref.id})
     alt set() ack lost
-        T->>Fs: get() to check — really absent, confirmed written, or inconclusive?
-        Note over T,Fs: confirmed absent → delete photo, rethrow.\nconfirmed written → fall through as success.\ninconclusive → rethrow WITHOUT deleting (never guess).
+        T->>Fs: retry the SAME set() — idempotent, so success is definitive proof
+        alt retry succeeds
+            Note over T,Fs: fall through as success — no guessing needed
+        else retry also fails
+            T->>Fs: get() as a last resort — really absent, confirmed written, or inconclusive?
+            Note over T,Fs: confirmed absent → delete photo, rethrow.\nconfirmed written → fall through as success.\ninconclusive → rethrow WITHOUT deleting (never guess).
+        end
     end
     T->>Fs: advanceSchedule() — best-effort, never fails the call
     T-->>C: reading + any soft warnings (e.g. "ORP may be too low")
@@ -394,13 +399,18 @@ several distinct ways a call can fail *after* partial work has already
 landed, and each one has a different correct answer for whether to clean up
 the photo:
 
+- If the **Firestore write** first fails, retry it — `set()` is idempotent,
+  so a successful retry is definitive proof the document now exists,
+  regardless of what happened to the first attempt. No guessing required.
+- If **both attempts fail**, fall back to a verification read. If the
+  **write actually succeeded** but the client only *saw* a failure (a
+  rejected promise doesn't prove the server never got the write —
+  acknowledgements can be lost in transit, or a commit can still be in
+  flight when a client-side deadline lapses), deleting the photo would
+  break a reading that's genuinely, durably saved. Don't delete; report
+  success.
 - If the **Firestore write** genuinely never happened, the photo it would
   have pointed to is now orphaned — delete it.
-- If the **Firestore write actually succeeded** but the client only *saw* a
-  failure (a rejected promise doesn't prove the server never got the
-  write — `set()` is idempotent, and acknowledgements can be lost in
-  transit), deleting the photo would break a reading that's genuinely,
-  durably saved. Don't delete; report success.
 - If it's **impossible to tell** which of the above happened (the
   verification read itself failed), the only safe move is to do neither —
   never guess, and never delete on a guess.

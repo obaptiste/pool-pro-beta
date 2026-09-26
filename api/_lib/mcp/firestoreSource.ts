@@ -291,27 +291,36 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
       } catch (error) {
         // A rejected set() doesn't guarantee the write never reached
         // Firestore — the client can lose the acknowledgement (network
-        // blip, timeout) after the server already committed it, and set()
-        // is idempotent, so the document really being there is the only
-        // reliable signal. Deleting the photo unconditionally here would
-        // risk orphaning photoUrl on a reading that actually saved fine —
-        // AGENTS.md: "Never block evidence... the historical record
-        // matters." Three-way outcome: confirmed written (fall through,
-        // report success), confirmed absent (clean up and rethrow), or the
-        // verification read itself failed — inconclusive, so it must be
-        // treated like "might exist": never delete, but still rethrow
-        // since success can't be claimed either.
-        const verification = await ref.get().then((doc) => doc.exists, () => undefined);
-        if (verification === true) {
-          // The write actually landed despite the client-side error — fall
-          // through and report success, same as a normal call.
-        } else {
-          if (verification === false) {
-            await photoFile.delete().catch((deleteError) => {
-              console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
-            });
+        // blip, deadline lapse) after the server already committed it, or
+        // even after it. set() is idempotent, so retrying it outright is
+        // always safe and — if it succeeds — is definitive proof the
+        // document now exists with this data, unlike a verification read:
+        // a single get() is only a snapshot, and a commit still in flight
+        // when the client's deadline lapsed could still land moments after
+        // a "confirmed absent" read, which would make deleting the photo
+        // premature. AGENTS.md: "Never block evidence... the historical
+        // record matters."
+        try {
+          await ref.set(record);
+        } catch (retryError) {
+          // Both attempts failed. Fall back to a best-effort read rather
+          // than assuming failure — same three-way reasoning as before:
+          // confirmed written (fall through, report success), confirmed
+          // absent (clean up and rethrow), or the read itself failed —
+          // inconclusive, so it must be treated like "might exist": never
+          // delete, but still rethrow since success can't be claimed
+          // either.
+          const verification = await ref.get().then((doc) => doc.exists, () => undefined);
+          if (verification !== true) {
+            if (verification === false) {
+              await photoFile.delete().catch((deleteError) => {
+                console.error('poolstatus_log_reading: reading write failed and photo cleanup also failed', deleteError);
+              });
+            }
+            throw retryError;
           }
-          throw error;
+          // Confirmed written despite two failed attempts — fall through
+          // and report success, same as a normal call.
         }
       }
       // Every poolstatus_log_reading call carries at least one measurement
