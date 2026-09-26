@@ -21,7 +21,8 @@ import {
   Sparkles,
   Bell,
   Calendar,
-  ChevronDown
+  ChevronDown,
+  RotateCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
@@ -31,6 +32,7 @@ import { callAiWithFallback } from '../lib/ai';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
+import { useToast } from '../lib/toast';
 
 // Per AGENTS.md's pool chemistry safety rules: keep dosing guidance
 // conservative, never state a specific amount without volume/concentration
@@ -57,9 +59,10 @@ interface Props {
   onPrint: () => void;
   toggleTask: (id: string) => void;
   onAddTask: (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => void;
+  onSyncPoolController: () => Promise<{ written: boolean; outcome?: string }>;
 }
 
-export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask }: Props) {
+export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask, onSyncPoolController }: Props) {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
   const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [isAddingTask, setIsAddingTask] = React.useState(false);
@@ -85,6 +88,51 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // Small status light on the "Status" wordmark, doubling as a manual
+  // "sync now" button for the Hanna Cloud pool controller telemetry job
+  // (see CLAUDE.md's "Pool controller telemetry" section) — rather than
+  // waiting for the next scheduled poll. syncLight reflects the outcome
+  // briefly, then fades back to idle so it never looks like a permanent
+  // status (the ORP staleness caption above already covers "is the data
+  // actually current").
+  const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
+  const toast = useToast();
+  // Tracks the pending "fade back to idle" timer so a second sync started
+  // during that 3s window can cancel it: otherwise the first sync's timer
+  // could fire while the second request is still in flight, resetting the
+  // light to idle (re-enabling the button, since handleSyncClick's guard
+  // reads syncLight) and hiding that a sync is still actually running.
+  const syncResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (syncResetTimer.current) clearTimeout(syncResetTimer.current);
+  }, []);
+  const handleSyncClick = async () => {
+    if (syncLight === 'syncing') return;
+    if (syncResetTimer.current) {
+      clearTimeout(syncResetTimer.current);
+      syncResetTimer.current = null;
+    }
+    setSyncLight('syncing');
+    try {
+      const result = await onSyncPoolController();
+      setSyncLight(result.written ? 'success' : 'neutral');
+    } catch (e) {
+      console.error('Manual pool controller sync failed:', e);
+      setSyncLight('error');
+      // The dot alone is aria-hidden and fades after a few seconds — on
+      // its own that's no feedback for a screen reader, and easy to miss
+      // even for a sighted user glancing away. toast's error variant is
+      // role="alert"/aria-live="assertive" (see lib/toast.tsx).
+      toast.error(e instanceof Error ? e.message : 'Pool controller sync failed');
+    } finally {
+      syncResetTimer.current = setTimeout(() => {
+        setSyncLight('idle');
+        syncResetTimer.current = null;
+      }, 3000);
+    }
+  };
+
   // Backfills alkalinity/calciumHardness (LSI's slow-changing inputs) from
   // history when the latest reading is a controller-only poll that
   // doesn't report them — see getLatestReadingForDisplay's docstring for
@@ -338,8 +386,36 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       {/* Header Section */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="wordmark text-2xl text-white">
+          <h1 className="wordmark text-2xl text-white flex items-center">
             Pool<span className="text-accent">Status</span>
+            {/* A dot overlaid on the wordmark text (the original design) is
+                invisible at idle and only ~text-height on a touch screen --
+                easy for a poolside operator to never discover or to miss
+                with wet fingers. This is a separate, always-visible icon
+                with a real touch target (44px via padding, independent of
+                the icon's own small visual size) right after the wordmark,
+                colored/animated by syncLight so the affordance itself
+                explains what it does without depending on a hover tooltip. */}
+            <button
+              type="button"
+              onClick={handleSyncClick}
+              disabled={syncLight === 'syncing'}
+              aria-label="Sync latest reading from the pool controller now"
+              title="Sync latest reading from the pool controller now"
+              className="no-print inline-flex items-center justify-center w-11 h-11 -m-3.5 ml-0.5 rounded-full bg-transparent border-0 hover:bg-white/5 active:bg-white/10 transition-colors disabled:cursor-wait"
+            >
+              <RotateCw
+                size={15}
+                aria-hidden="true"
+                className={`transition-colors duration-300 ${
+                  syncLight === 'syncing' ? 'text-accent animate-spin' :
+                  syncLight === 'success' ? 'text-success' :
+                  syncLight === 'error'   ? 'text-critical' :
+                  syncLight === 'neutral' ? 'text-warning' :
+                  'text-ink-dim'
+                }`}
+              />
+            </button>
           </h1>
           <p className="text-[10px] font-mono text-ink-dim uppercase tracking-[0.2em]">
             Last reading: {latest ? latest.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data'}
