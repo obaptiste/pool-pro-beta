@@ -48,26 +48,58 @@ const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{
 // Date.parse silently normalizes calendar-invalid dates (2026-02-30 becomes
 // March 2) instead of rejecting them, which would make a since/until filter
 // query a window the caller never asked for. Validate the calendar and time
-// components explicitly rather than relying on parseability alone.
+// components explicitly rather than relying on parseability alone. Shared by
+// isValidIsoDate (read-side filters) and isValidPreciseTimestamp (the write
+// side, below) so the leap-year/days-in-month logic isn't duplicated.
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false;
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day >= 1 && day <= daysInMonth;
+}
+
+function isValidClockTime(hh?: string, mm?: string, ss?: string): boolean {
+  if (hh == null) return true;
+  if (Number(hh) > 23 || Number(mm) > 59) return false;
+  if (ss != null && Number(ss) > 59) return false;
+  return true;
+}
+
 function isValidIsoDate(value: string): boolean {
   const match = ISO_DATE_PATTERN.exec(value);
   if (!match) return false;
   const [, y, m, d, hh, mm, ss] = match;
-  const year = Number(y);
-  const month = Number(m);
-  const day = Number(d);
-  if (month < 1 || month > 12) return false;
-  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  if (day < 1 || day > daysInMonth) return false;
-  if (hh != null) {
-    if (Number(hh) > 23 || Number(mm) > 59 || (ss != null && Number(ss) > 59)) return false;
-  }
+  if (!isValidCalendarDate(Number(y), Number(m), Number(d))) return false;
+  if (!isValidClockTime(hh, mm, ss)) return false;
   return !Number.isNaN(Date.parse(value));
 }
 
 const IsoDate = z.string()
   .refine(isValidIsoDate, 'Must be a valid ISO-8601 date or date-time, e.g. 2026-09-01 or 2026-09-01T08:00:00Z');
+
+// Unlike IsoDate above (used for since/until read-side filters, where a bare
+// date or an offset-less time is an acceptable approximation of a window
+// edge), a *persisted* reading's timestamp is a claim about the exact
+// instant it was measured. An offset-less date-time would be parsed by
+// `new Date(value)` in whatever timezone the server process happens to be
+// running in — environment-dependent, and able to misorder readings or feed
+// a wrong "most recent" value into advanceSchedule. Require a complete
+// date-time with an explicit timezone offset (including bare "Z").
+const ISO_DATETIME_OFFSET_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+function isValidPreciseTimestamp(value: string): boolean {
+  const match = ISO_DATETIME_OFFSET_PATTERN.exec(value);
+  if (!match) return false;
+  const [, y, m, d, hh, mm, ss] = match;
+  if (!isValidCalendarDate(Number(y), Number(m), Number(d))) return false;
+  if (!isValidClockTime(hh, mm, ss)) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
+const PreciseTimestamp = z.string().refine(
+  isValidPreciseTimestamp,
+  'Must be a complete ISO-8601 date-time with an explicit timezone offset, e.g. 2026-09-01T08:00:00Z — a bare date or an offset-less time is ambiguous for a persisted reading.',
+);
 
 const parseDate = (value?: string): Date | undefined => (value == null ? undefined : new Date(value));
 
@@ -154,7 +186,7 @@ async function fetchTrendRows(source: PoolDataSource, since: Date, until: Date):
 
 // ORP/sanitisation doesn't use the generic range banding above: the app's
 // own classifier (getSoftWarning, used by History's warning badges) treats
-// 750–850 mV as "elevated, usually acceptable" rather than out-of-range —
+// 750–800 mV as "elevated, usually acceptable" rather than out-of-range —
 // DEFAULT_RANGES.sanitisationMv's 750 max is a *target* ceiling, not a
 // hard limit, so running it through getRangeStatus would call anything
 // above 750 "critical" and contradict what the rest of the app tells the
@@ -163,8 +195,8 @@ async function fetchTrendRows(source: PoolDataSource, since: Date, until: Date):
 function getSanitisationMvStatus(value: number): Status {
   const warning = getSoftWarning('sanitisationMv', value);
   if (!warning) return 'good';
-  // 'elevated' (750–850 mV) is the "usually acceptable" band; the plain
-  // 'warning' level here only fires outside 650–850, which is a real
+  // 'elevated' (750–800 mV) is the "usually acceptable" band; the plain
+  // 'warning' level here only fires outside 650–800, which is a real
   // actionable extreme.
   return warning.level === 'elevated' ? 'warning' : 'critical';
 }
@@ -792,7 +824,7 @@ Args:
   - photo: { data_base64, content_type } (required)
   - chlorine, total_chlorine, sanitisation_mv, ph, alkalinity, temperature, differential_pressure, calcium_hardness, cyanuric_acid (all optional numbers, but at least one is required — a photo alone isn't a completed test)
   - notes (optional string, max ${MAX_NOTES_LENGTH} characters)
-  - timestamp (ISO date-time, optional, defaults to now)
+  - timestamp (ISO date-time with an explicit timezone offset, e.g. 2026-09-01T08:00:00Z; optional, defaults to now — a bare date or an offset-less time is rejected as ambiguous)
 
 Abnormal-but-possible values (e.g. very high or low ORP, unusual alkalinity) are never rejected and always save — they're exactly the kind of incident evidence this tool exists to capture — but come back with a warning, same as the manual entry form's non-blocking validation. Only a genuinely impossible value (non-finite, or below the field's physical minimum, e.g. a negative concentration) is rejected.
 
@@ -810,7 +842,7 @@ Don't use when: no photo is available, or the operator is just describing what t
         calcium_hardness: NumericFieldInput,
         cyanuric_acid: NumericFieldInput,
         notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-        timestamp: IsoDate.optional(),
+        timestamp: PreciseTimestamp.optional(),
       },
       annotations: WRITE_DESTRUCTIVE,
     },

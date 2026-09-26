@@ -286,7 +286,7 @@ before running.
 | `poolstatus_add_task` | Adds a checklist item | `WRITE_CREATE` (additive, not destructive) |
 | `poolstatus_complete_task` | Marks a task done by id | `WRITE_COMPLETE` (destructive + idempotent) |
 | `poolstatus_adjust_inventory` | Applies a signed delta to stock | `WRITE_DESTRUCTIVE` |
-| `poolstatus_log_reading` | Logs a real reading, **photo required** | `WRITE_CREATE` |
+| `poolstatus_log_reading` | Logs a real reading, **photo required** | `WRITE_DESTRUCTIVE` |
 
 Why the annotations differ is itself worth explaining, since it's the kind
 of detail that's easy to get wrong and easy to skip past:
@@ -300,6 +300,15 @@ of detail that's easy to get wrong and easy to skip past:
   is for.
 - **`poolstatus_adjust_inventory`** can consume stock (`delta < 0`), which
   is also an overwrite of existing state, not an addition.
+- **`poolstatus_log_reading`** also advances `schedules/{ownerUid}`
+  (`lastTestDate`/`nextTestDate`), overwriting that document's existing
+  values rather than just adding a new one — the same reasoning as
+  `adjust_inventory`, just against a different collection.
+
+`poolstatus_log_reading`'s `notes` field is capped at `MAX_NOTES_LENGTH`
+(4000 characters), enforced in the tool's own Zod schema so an oversized
+note is rejected before any photo upload happens — see "Deep dive" below
+for why that ordering matters.
 
 Two more design decisions specific to the write tools:
 
@@ -345,7 +354,8 @@ sequenceDiagram
     participant St as Firebase Storage
     participant Fs as Firestore
 
-    C->>T: chlorine, ph, photo{data_base64, content_type}, …
+    C->>T: chlorine, ph, photo{data_base64, content_type}, timestamp?, …
+    Note over C,T: MCP SDK schema validation runs first: notes ≤ MAX_NOTES_LENGTH,\ntimestamp (if given) must carry an explicit UTC/offset marker —\na bare date or offset-less time is rejected here, before the\nhandler (and any upload) ever runs.
     T->>V: at least one measurement present?
     V-->>T: reject if not — "a photo alone isn't a completed test"
     T->>V: getImpossibleValueError per field
