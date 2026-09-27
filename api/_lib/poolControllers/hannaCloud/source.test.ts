@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { HannaCloudError } from './client';
-import { HannaCloudSource } from './source';
+import { HannaCloudError } from './client.js';
+import { HannaCloudSource } from './source.js';
 
 let calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 let responses: Array<{ status: number; body: unknown }> = [];

@@ -1,7 +1,7 @@
-import { isValidCalendarDateTime } from '../../isoDate';
-import type { PoolControllerReading, PoolControllerSource } from '../types';
-import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client';
-import { getImpossibleValueError, type NumericReadingField } from '../../../../src/lib/readingValidation';
+import { isValidCalendarDateTime } from '../../isoDate.js';
+import type { PoolControllerReading, PoolControllerSource } from '../types.js';
+import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client.js';
+import { getImpossibleValueError, type NumericReadingField } from '../../../../src/lib/readingValidation.js';
 
 // Only a real number or a non-blank numeric string counts as a measurement.
 // `Number(value)` alone isn't enough: JS coerces '', '   ', false, and [] to

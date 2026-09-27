@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { syncLatestReading, type PoolControllerSyncStore } from './sync';
-import type { PoolControllerReading, PoolControllerSource } from './types';
-import type { Reading } from '../../../src/types';
+import { syncLatestReading, type PoolControllerSyncStore } from './sync.js';
+import type { PoolControllerReading, PoolControllerSource } from './types.js';
+import type { Reading } from '../../../src/types.js';
 
 class FakeSource implements PoolControllerSource {
   readonly id = 'fake-source';

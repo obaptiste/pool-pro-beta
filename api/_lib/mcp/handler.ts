@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isRateLimited } from '../rateLimit';
-import { createPoolStatusMcpServer } from './server';
-import type { PoolDataSource } from './types';
+import { isRateLimited } from '../rateLimit.js';
+import { createPoolStatusMcpServer } from './server.js';
+import type { PoolDataSource } from './types.js';
 
 // Per-IP ceiling on MCP requests. One ChatGPT conversation makes a handful
 // of tool calls a minute; this only bites on scripted abuse.

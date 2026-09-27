@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleMcpRequest } from './_lib/mcp/handler';
-import { createFirestoreSource } from './_lib/mcp/firestoreSource';
+import { handleMcpRequest } from './_lib/mcp/handler.js';
+import { createFirestoreSource } from './_lib/mcp/firestoreSource.js';
 
 // Remote MCP endpoint (Streamable HTTP, stateless) exposing read-only
 // PoolStatus data to MCP clients such as ChatGPT or Claude. See

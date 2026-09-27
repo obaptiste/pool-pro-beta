@@ -3,11 +3,11 @@ import { createServer, type Server } from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types';
-import { handleMcpRequest } from './handler';
-import { __resetRateLimitForTests } from '../rateLimit';
-import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server';
-import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
+import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types.js';
+import { handleMcpRequest } from './handler.js';
+import { __resetRateLimitForTests } from '../rateLimit.js';
+import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server.js';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types.js';
 
 // Spread into every ad-hoc fixture below that only exercises read tools —
 // keeps each of those focused on the one thing it's testing rather than

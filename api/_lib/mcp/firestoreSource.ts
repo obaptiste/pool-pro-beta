@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import { getDownloadURL } from 'firebase-admin/storage';
-import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin';
-import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation';
-import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types';
-import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types';
+import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin.js';
+import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation.js';
+import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types.js';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types.js';
 
 export const McpConfigError = FirebaseAdminConfigError;
 
