@@ -53,5 +53,10 @@
     "workbox-recipes": "^7.4.1",
     "workbox-routing": "^7.4.1",
     "workbox-window": "^7.4.1"
+  },
+  "overrides": {
+    "jwks-rsa": {
+      "jose": "^5.10.0"
+    }
   }
 }
