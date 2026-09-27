@@ -511,6 +511,32 @@ describe('MCP tools', () => {
     await client.close();
   });
 
+  it('list_readings returns parseable JSON text for an empty page when response_format is json, not fixed prose', async () => {
+    // The empty-result early return used to ignore response_format entirely
+    // and always send back English prose in content[0].text, even though
+    // structuredContent was already correctly shaped ({ count: 0, readings:
+    // [], has_more: false, next_before: null }). A client that requests
+    // 'json' and parses content[0].text would get a JSON parse error
+    // specifically on empty results — this locks in the fix.
+    const emptySource: PoolDataSource = {
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      ...unimplementedWrites,
+    };
+    const { client, close } = await connectToSource(emptySource);
+    const result = await client.callTool({ name: 'poolstatus_list_readings', arguments: { response_format: 'json' } });
+    const out = structured<{ count: number; readings: unknown[]; has_more: boolean; next_before: string | null }>(result);
+    assert.equal(out.count, 0);
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    const parsed = JSON.parse(text);
+    assert.deepEqual(parsed, out);
+    await client.close();
+    close();
+  });
+
   it('list_readings rejects a calendar-invalid date', async () => {
     // Date.parse would silently roll 2026-02-30 forward to March 2 instead
     // of rejecting it, querying a window the caller never asked for.
