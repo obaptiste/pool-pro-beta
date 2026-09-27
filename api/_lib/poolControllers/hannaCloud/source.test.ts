@@ -57,6 +57,51 @@ test('a blank or non-numeric parameter value maps to null rather than a fabricat
   assert.equal(reading?.temperature, null);
 });
 
+test('rejects a physically-impossible sentinel value per field, mapping it to null rather than persisting it', async () => {
+  responses = [
+    LOGIN_OK,
+    // ph: -50 and sanitisationMv: -999 are hardware error sentinels, not
+    // real abnormal readings -- both fall below getHardValidationError's
+    // minimum for their field. temp: -999 is likewise below the physical
+    // minimum for a pool. airTemp is unrelated and untouched by this bound.
+    lastReading([{ name: 'ph', value: -50 }, { name: 'orp', value: -999 }, { name: 'temp', value: -999 }], '2026-09-19T12:00:00.000Z'),
+  ];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+
+  // Every field rejected as impossible -> the reading as a whole is
+  // "nothing", same as if every field had been blank or non-numeric.
+  assert.equal(reading, null);
+});
+
+test('rejects an upper-bound sentinel too, not just a negative one', async () => {
+  responses = [
+    LOGIN_OK,
+    lastReading([{ name: 'ph', value: 20 }, { name: 'orp', value: 9999 }, { name: 'temp', value: 7.4 }], '2026-09-19T12:00:00.000Z'),
+  ];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+
+  assert.equal(reading?.ph, null);
+  assert.equal(reading?.sanitisationMv, null);
+  // temp is a real (if oddly low for a pool) reading, well within bounds --
+  // present so the overall reading isn't "nothing" despite the two rejections.
+  assert.equal(reading?.temperature, 7.4);
+});
+
+test('leaves a genuinely abnormal-but-possible reading untouched', async () => {
+  responses = [
+    LOGIN_OK,
+    // ORP at 30 mV -- a real algae-bloom-range reading per AGENTS.md's own
+    // example, not a sentinel -- must still pass through.
+    lastReading([{ name: 'ph', value: 7.4 }, { name: 'orp', value: 30 }, { name: 'temp', value: 28.1 }], '2026-09-19T12:00:00.000Z'),
+  ];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+
+  assert.equal(reading?.sanitisationMv, 30);
+});
+
 test('returns null (not an all-null reading) when every measurement is blank, non-numeric, or missing', async () => {
   responses = [
     LOGIN_OK,
