@@ -27,7 +27,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
 import TrendCharts from './TrendCharts';
-import { calculateLSI } from '../lib/lsi';
+import { calculateLSI, getLsiStatus, getLsiDisplayLabel } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
 import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
@@ -156,12 +156,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at, now);
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
-
-  const getLsiStatus = (score: number): Status => {
-    if (score < -0.3 || score > 0.3) return 'critical';
-    if (score < -0.1 || score > 0.1) return 'warning';
-    return 'good';
-  };
+  const lsiCardStatus: Status | null = lsiScore == null ? null : getLsiStatus(lsiScore);
 
   const fmtField = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
 
@@ -586,9 +581,9 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
             {/* Status Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className={`card anim-scan border col-span-2 flex flex-col justify-between p-4 ${
-                lsiScore == null ? 'text-ink-dim border-border-dim bg-surface' :
-                lsiScore < -0.3 ? 'text-red-400 border-red-500/30 bg-red-500/5' :
-                lsiScore > 0.3 ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
+                lsiCardStatus == null ? 'text-ink-dim border-border-dim bg-surface' :
+                lsiCardStatus === 'critical' ? 'text-red-400 border-red-500/30 bg-red-500/5' :
+                lsiCardStatus === 'warning' ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
                 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
               }`}>
                 <div className="flex items-center justify-between">
@@ -598,7 +593,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                 <div className="flex items-baseline gap-2">
                   <span className="text-4xl font-bold font-mono">{lsiScore ?? '—'}</span>
                   <span className="text-[10px] uppercase tracking-widest opacity-70">
-                    {lsiScore == null ? 'Insufficient data' : lsiScore < -0.3 ? 'Corrosive' : lsiScore > 0.3 ? 'Scale Forming' : 'Balanced'}
+                    {lsiScore == null ? 'Insufficient data' : getLsiDisplayLabel(lsiScore)}
                   </span>
                 </div>
                 <p className="text-[9px] mt-2 italic opacity-80 line-clamp-2">

@@ -361,6 +361,31 @@ describe('MCP tools', () => {
     close();
   });
 
+  it('get_latest_reading labels a "warning"-status LSI as drifting, not balanced', async () => {
+    // ph 7.4 + TF(28)=0.7 + CF(250)=2.1 + AF(100)=2.2 - 12.1 = 0.3 --
+    // getLsiStatus already calls that 'warning' (0.1 < |lsi| <= 0.3); the
+    // label used to have no middle tier at all, so it would say "balanced"
+    // right next to a 'warning' status, contradicting it.
+    const source: PoolDataSource = {
+      async listReadings() { return [reading('drifting-lsi', 0, { ph: 7.4, alkalinity: 100, temperature: 28, calciumHardness: 250 })]; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      ...unimplementedWrites,
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    const out = structured<{ reading: { derived: { lsi: number; lsiStatus: string; lsiLabel: string } } }>(result);
+    assert.equal(out.reading.derived.lsi, 0.3);
+    assert.equal(out.reading.derived.lsiStatus, 'warning');
+    assert.equal(out.reading.derived.lsiLabel, 'drifting');
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    assert.match(text, /LSI: 0\.3 \(drifting\)/);
+    await client.close();
+    close();
+  });
+
   it('get_latest_reading explains a near-edge warning that getSoftWarning has no message for', async () => {
     // chlorine 1.0 is inside the 1-3 range but within getRangeStatus's 10%
     // edge buffer -> 'warning', yet getSoftWarning only fires for values

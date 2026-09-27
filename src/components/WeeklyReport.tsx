@@ -4,7 +4,7 @@ import { X, Printer, FileText } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
 import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
-import { calculateLSI } from '../lib/lsi';
+import { calculateLSI, getLsiDisplayLabel } from '../lib/lsi';
 import { getLatestReadingForDisplay, findRecentFieldValue, classifyOrp } from '../lib/readings';
 import SpokenReportControls from './SpokenReportControls';
 
@@ -442,7 +442,7 @@ function LsiGauge({ value, size = 220, theme = 'dark' }: { value: number | null;
   const ny = cy + (r - 2) * Math.sin(angle * Math.PI / 180);
   const status = Math.abs(v) > 0.3 ? 'critical' : Math.abs(v) > 0.1 ? 'watch' : 'good';
   const accent = status === 'good' ? '#10B981' : status === 'watch' ? '#F59E0B' : '#EF4444';
-  const lsiLabel = v < -0.3 ? 'Corrosive' : v > 0.3 ? 'Scale Forming' : Math.abs(v) > 0.1 ? 'Drifting' : 'Balanced';
+  const lsiLabel = getLsiDisplayLabel(v);
 
   return (
     <svg width={size} height={size * 0.85} viewBox={`0 0 ${size} ${size * 0.85}`}>
