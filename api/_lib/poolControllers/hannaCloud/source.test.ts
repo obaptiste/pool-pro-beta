@@ -57,36 +57,53 @@ test('a blank or non-numeric parameter value maps to null rather than a fabricat
   assert.equal(reading?.temperature, null);
 });
 
-test('rejects a physically-impossible sentinel value per field, mapping it to null rather than persisting it', async () => {
+test('rejects a physically-impossible temperature sentinel, mapping it to null rather than persisting it', async () => {
   responses = [
     LOGIN_OK,
-    // ph: -50 and sanitisationMv: -999 are hardware error sentinels, not
-    // real abnormal readings -- both fall below getHardValidationError's
-    // minimum for their field. temp: -999 is likewise below the physical
-    // minimum for a pool. airTemp is unrelated and untouched by this bound.
-    lastReading([{ name: 'ph', value: -50 }, { name: 'orp', value: -999 }, { name: 'temp', value: -999 }], '2026-09-19T12:00:00.000Z'),
+    // temp: -999 is a hardware error sentinel, well below a pool's physical
+    // minimum -- getImpossibleValueError's min bound catches it.
+    lastReading([{ name: 'ph', value: 7.4 }, { name: 'orp', value: 650 }, { name: 'temp', value: -999 }], '2026-09-19T12:00:00.000Z'),
   ];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
   const reading = await source.getLatestReading();
 
-  // Every field rejected as impossible -> the reading as a whole is
-  // "nothing", same as if every field had been blank or non-numeric.
-  assert.equal(reading, null);
+  assert.equal(reading?.ph, 7.4);
+  assert.equal(reading?.sanitisationMv, 650);
+  assert.equal(reading?.temperature, null);
 });
 
-test('rejects an upper-bound sentinel too, not just a negative one', async () => {
+test('never rejects ph or ORP, even at a sentinel-looking extreme, since AGENTS.md says neither may ever be blocked', async () => {
   responses = [
     LOGIN_OK,
-    lastReading([{ name: 'ph', value: 20 }, { name: 'orp', value: 9999 }, { name: 'temp', value: 7.4 }], '2026-09-19T12:00:00.000Z'),
+    // ph: -50 and orp: -999 look like hardware sentinels, but ORP is a
+    // signed electrode potential and pH can go genuinely negative in an
+    // acid-spill incident -- AGENTS.md is explicit that these two fields
+    // must never be rejected, sentinel or not, so getImpossibleValueError
+    // skips them entirely and both must pass through untouched.
+    lastReading([{ name: 'ph', value: -50 }, { name: 'orp', value: -999 }, { name: 'temp', value: 28.1 }], '2026-09-19T12:00:00.000Z'),
   ];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
   const reading = await source.getLatestReading();
 
-  assert.equal(reading?.ph, null);
-  assert.equal(reading?.sanitisationMv, null);
-  // temp is a real (if oddly low for a pool) reading, well within bounds --
-  // present so the overall reading isn't "nothing" despite the two rejections.
-  assert.equal(reading?.temperature, 7.4);
+  assert.equal(reading?.ph, -50);
+  assert.equal(reading?.sanitisationMv, -999);
+  assert.equal(reading?.temperature, 28.1);
+});
+
+test('does not catch an upper-bound sentinel on any field, matching the MCP write path\'s accepted gap', async () => {
+  responses = [
+    LOGIN_OK,
+    // getImpossibleValueError never checks a maximum for any field, so an
+    // upper-bound sentinel passes through the same as it would on the MCP
+    // write path -- an accepted, documented gap, not a regression here.
+    lastReading([{ name: 'ph', value: 20 }, { name: 'orp', value: 9999 }, { name: 'temp', value: 500 }], '2026-09-19T12:00:00.000Z'),
+  ];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+
+  assert.equal(reading?.ph, 20);
+  assert.equal(reading?.sanitisationMv, 9999);
+  assert.equal(reading?.temperature, 500);
 });
 
 test('leaves a genuinely abnormal-but-possible reading untouched', async () => {

@@ -1,6 +1,6 @@
 import type { PoolControllerReading, PoolControllerSource } from '../types';
 import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client';
-import { getHardValidationError, type NumericReadingField } from '../../../../src/lib/readingValidation';
+import { getImpossibleValueError, type NumericReadingField } from '../../../../src/lib/readingValidation';
 
 // Only a real number or a non-blank numeric string counts as a measurement.
 // `Number(value)` alone isn't enough: JS coerces '', '   ', false, and [] to
@@ -20,17 +20,23 @@ function findParameterNumber(parameters: HannaReadingParameter[], name: string):
 }
 
 // Rejects a finite-but-physically-impossible value the same way as an
-// unparseable one -- a hardware error sentinel (e.g. temperature: -999,
-// ph: -50) should never reach Firestore as a real Reading. Deliberately
-// uses getHardValidationError (min AND max, every field) rather than
-// getImpossibleValueError: that function skips ph/sanitisationMv entirely,
-// by design, because AGENTS.md says never to block ORP or pH on the
-// MCP write path where a human has attached photo evidence for an
-// abnormal-but-real value. Nothing backs an unattended controller poll the
-// same way, so a sentinel there needs to be caught, not preserved.
+// unparseable one -- a hardware error sentinel (e.g. temperature: -999)
+// should never reach Firestore as a real Reading. Deliberately uses
+// getImpossibleValueError, not getHardValidationError: the latter's min/max
+// bounds are the manual entry form's typo-catching plausibility ceiling,
+// and would reject a genuine extreme ORP or pH incident value.
+// AGENTS.md's "never block low or high ORP" / "do not reject high pH, low
+// ORP... or other abnormal but possible readings" is a project-wide
+// validation posture, not one scoped to a particular write path -- the
+// same reason getImpossibleValueError already skips ph/sanitisationMv
+// entirely for the MCP write path applies just as much to unattended
+// controller telemetry. That leaves an accepted gap: a sentinel on
+// ph/sanitisationMv, or an upper-bound sentinel on any field (no field here
+// has a maximum in getImpossibleValueError), passes through untouched --
+// the same tradeoff the MCP write path already makes.
 function plausible(field: NumericReadingField, value: number | null): number | null {
   if (value == null) return null;
-  return getHardValidationError(field, value) === '' ? value : null;
+  return getImpossibleValueError(field, value) === '' ? value : null;
 }
 
 // Small allowance for clock skew between the controller/Hanna Cloud and this
