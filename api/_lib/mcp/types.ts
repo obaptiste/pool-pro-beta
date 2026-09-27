@@ -1,4 +1,4 @@
-import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Priority, Reading, TaskFrequency } from '../../../src/types';
+import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Priority, Reading, TaskFrequency } from '../../../src/types.js';
 
 /** Thrown by completeTask/adjustInventory when `id` doesn't name an item the owner has. */
 export class NotFoundError extends Error {}

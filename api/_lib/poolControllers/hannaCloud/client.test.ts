@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { HannaAuthenticationError, HannaCloudClient } from './client';
+import { HannaAuthenticationError, HannaCloudClient } from './client.js';
 
 type Call = { url: string; body: Record<string, unknown>; headers: Record<string, string> };
 

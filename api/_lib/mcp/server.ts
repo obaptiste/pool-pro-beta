@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { isValidCalendarDateTime } from '../isoDate';
-import { calculateLSI } from '../../../src/lib/lsi';
-import { classifyOrp } from '../../../src/lib/readings';
+import { isValidCalendarDateTime } from '../isoDate.js';
+import { calculateLSI } from '../../../src/lib/lsi.js';
+import { classifyOrp } from '../../../src/lib/readings.js';
 import {
   COMBINED_CHLORINE_MAX,
   COMBINED_CHLORINE_OK_MAX,
@@ -13,10 +13,10 @@ import {
   getSoftWarning,
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
-} from '../../../src/lib/readingValidation';
-import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types';
-import { decodeReadingCursor, encodeReadingCursor } from './cursor';
-import { NotFoundError, UnitMismatchError, type PoolDataSource, type ReadingCursor } from './types';
+} from '../../../src/lib/readingValidation.js';
+import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types.js';
+import { decodeReadingCursor, encodeReadingCursor } from './cursor.js';
+import { NotFoundError, UnitMismatchError, type PoolDataSource, type ReadingCursor } from './types.js';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';

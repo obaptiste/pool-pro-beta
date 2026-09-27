@@ -1,5 +1,5 @@
-import type { Reading } from '../../../src/types';
-import type { PoolControllerSource } from './types';
+import type { Reading } from '../../../src/types.js';
+import type { PoolControllerSource } from './types.js';
 
 /**
  * Persists a controller reading, atomically skipping the write if

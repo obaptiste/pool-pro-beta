@@ -1,5 +1,5 @@
-import { runAiFallback } from "../_lib/aiFallback";
-import { isRateLimited } from "../_lib/rateLimit";
+import { runAiFallback } from "../_lib/aiFallback.js";
+import { isRateLimited } from "../_lib/rateLimit.js";
 
 // Vercel's default Serverless Function execution deadline (10s on Hobby)
 // is shorter than the two provider legs run sequentially: each is bounded

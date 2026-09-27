@@ -3,7 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import type { Bucket } from '@google-cloud/storage';
-import firebaseConfig from '../../firebase-applet-config.json';
+import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 
 export class FirebaseAdminConfigError extends Error {}
 

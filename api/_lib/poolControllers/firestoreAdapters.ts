@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
-import type { Reading } from '../../../src/types';
-import type { PoolControllerSyncStore } from './sync';
+import type { Reading } from '../../../src/types.js';
+import type { PoolControllerSyncStore } from './sync.js';
 
 // Sync state lives in its own collection rather than being inferred from
 // the readings collection (e.g. "the newest reading with this notes tag")
