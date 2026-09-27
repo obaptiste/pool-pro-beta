@@ -1,3 +1,4 @@
+import { isValidCalendarDateTime } from '../../isoDate';
 import type { PoolControllerReading, PoolControllerSource } from '../types';
 import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client';
 
@@ -27,19 +28,46 @@ function findParameterNumber(parameters: HannaReadingParameter[], name: string):
 // "not-newer-than-last-sync" result instead of an error anyone would notice.
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
+// A measurement timestamp has to pin an unambiguous instant, not just parse
+// as *some* date -- unlike server.ts's isValidIsoDate (built for MCP query
+// *bounds*, where a bare date or an offset-less date-time is a reasonable
+// boundary), sync.ts dedupes readings by this exact value, so an offset-less
+// string would parse as the server's local time zone rather than UTC and
+// could silently shift the watermark by hours. This requires the full
+// date-time (not just a date) plus a mandatory Z/±HH:MM offset, on top of
+// the same calendar-validity check isValidIsoDate uses (isValidCalendarDateTime).
+const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+// Date.parse (and therefore `new Date(str)`) silently normalizes
+// calendar-invalid strings (2026-02-30 becomes March 2) and happily accepts
+// non-ISO, locale-dependent formats (09/26/2026) instead of rejecting them --
+// either would become sync.ts's permanent dedupe watermark, so parseability
+// alone isn't enough here (see parseHannaTimestamp below).
+function isValidHannaTimestampString(value: string): boolean {
+  const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
+  if (!match) return false;
+  const [, y, m, d, hh, mm, ss] = match;
+  if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(value));
+}
+
 /**
  * Hanna Cloud's device-log timestamp shape isn't documented anywhere
- * public, so this accepts either an ISO string or a Unix epoch in
- * seconds or milliseconds. Deliberately throws rather than falling back
- * to "now" on anything else: sync.ts dedupes by this timestamp, so a
- * guessed value would make every poll look "newer" and spam a reading
- * into Firestore on each run.
+ * public, so this accepts either a strict ISO-8601 date-time string (full
+ * calendar validity, mandatory time-of-day and UTC offset -- see
+ * isValidHannaTimestampString) or a Unix epoch in seconds or milliseconds.
+ * Deliberately throws rather than falling back to "now" -- or accepting a
+ * calendar-invalid or non-ISO string `new Date()` would silently normalize
+ * or misparse -- on anything else: sync.ts dedupes by this timestamp, so a
+ * wrong-but-plausible value would make every subsequent legitimate reading
+ * look "not newer" and get silently skipped, potentially for months.
  */
 function parseHannaTimestamp(dt: unknown): Date {
   let parsed: Date | null = null;
   if (typeof dt === 'string') {
-    const d = new Date(dt);
-    if (!Number.isNaN(d.getTime())) parsed = d;
+    if (isValidHannaTimestampString(dt)) parsed = new Date(dt);
   } else if (typeof dt === 'number' && Number.isFinite(dt)) {
     // Sub-second-precision epochs (seconds) are ~10 digits today; ms epochs are ~13.
     const ms = dt < 1e12 ? dt * 1000 : dt;

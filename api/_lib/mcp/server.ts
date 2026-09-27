@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { isValidCalendarDateTime } from '../isoDate';
 import { calculateLSI } from '../../../src/lib/lsi';
 import {
   COMBINED_CHLORINE_MAX,
@@ -48,20 +49,14 @@ const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{
 // Date.parse silently normalizes calendar-invalid dates (2026-02-30 becomes
 // March 2) instead of rejecting them, which would make a since/until filter
 // query a window the caller never asked for. Validate the calendar and time
-// components explicitly rather than relying on parseability alone.
+// components explicitly (isValidCalendarDateTime, shared with the Hanna Cloud
+// sync's timestamp validation) rather than relying on parseability alone.
 function isValidIsoDate(value: string): boolean {
   const match = ISO_DATE_PATTERN.exec(value);
   if (!match) return false;
   const [, y, m, d, hh, mm, ss] = match;
-  const year = Number(y);
-  const month = Number(m);
-  const day = Number(d);
-  if (month < 1 || month > 12) return false;
-  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  if (day < 1 || day > daysInMonth) return false;
-  if (hh != null) {
-    if (Number(hh) > 23 || Number(mm) > 59 || (ss != null && Number(ss) > 59)) return false;
+  if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), hh != null ? Number(hh) : undefined, mm != null ? Number(mm) : undefined, ss != null ? Number(ss) : undefined)) {
+    return false;
   }
   return !Number.isNaN(Date.parse(value));
 }
