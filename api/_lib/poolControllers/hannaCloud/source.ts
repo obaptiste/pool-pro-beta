@@ -1,6 +1,7 @@
 import { isValidCalendarDateTime } from '../../isoDate';
 import type { PoolControllerReading, PoolControllerSource } from '../types';
 import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client';
+import { getImpossibleValueError, type NumericReadingField } from '../../../../src/lib/readingValidation';
 
 // Only a real number or a non-blank numeric string counts as a measurement.
 // `Number(value)` alone isn't enough: JS coerces '', '   ', false, and [] to
@@ -17,6 +18,26 @@ function findParameterNumber(parameters: HannaReadingParameter[], name: string):
     return Number.isFinite(num) ? num : null;
   }
   return null;
+}
+
+// Rejects a finite-but-physically-impossible value the same way as an
+// unparseable one -- a hardware error sentinel (e.g. temperature: -999)
+// should never reach Firestore as a real Reading. Deliberately uses
+// getImpossibleValueError, not getHardValidationError: the latter's min/max
+// bounds are the manual entry form's typo-catching plausibility ceiling,
+// and would reject a genuine extreme ORP or pH incident value.
+// AGENTS.md's "never block low or high ORP" / "do not reject high pH, low
+// ORP... or other abnormal but possible readings" is a project-wide
+// validation posture, not one scoped to a particular write path -- the
+// same reason getImpossibleValueError already skips ph/sanitisationMv
+// entirely for the MCP write path applies just as much to unattended
+// controller telemetry. That leaves an accepted gap: a sentinel on
+// ph/sanitisationMv, or an upper-bound sentinel on any field (no field here
+// has a maximum in getImpossibleValueError), passes through untouched --
+// the same tradeoff the MCP write path already makes.
+function plausible(field: NumericReadingField, value: number | null): number | null {
+  if (value == null) return null;
+  return getImpossibleValueError(field, value) === '' ? value : null;
 }
 
 // Small allowance for clock skew between the controller/Hanna Cloud and this
@@ -147,9 +168,9 @@ export class HannaCloudSource implements PoolControllerSource {
     const deviceId = await this.resolveDeviceId();
     const reading = await this.client.getLastDeviceReading(deviceId);
 
-    const ph = findParameterNumber(reading.parameters, 'ph');
-    const sanitisationMv = findParameterNumber(reading.parameters, 'orp');
-    const temperature = findParameterNumber(reading.parameters, 'temp');
+    const ph = plausible('ph', findParameterNumber(reading.parameters, 'ph'));
+    const sanitisationMv = plausible('sanitisationMv', findParameterNumber(reading.parameters, 'orp'));
+    const temperature = plausible('temperature', findParameterNumber(reading.parameters, 'temp'));
 
     // A snapshot with no usable measurement at all isn't a partial reading,
     // it's nothing -- returning it would write an all-null Reading (hiding
