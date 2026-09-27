@@ -449,7 +449,12 @@ Don't use when: you need history or averages (use poolstatus_list_readings or po
       const latest = candidates.find(hasMeasurement) ?? null;
       const reading = latest ? serializeReading(latest) : null;
       const output = { reading, targets: DEFAULT_RANGES };
-      if (!reading) return toolResult(output, 'No readings have been logged yet.');
+      if (!reading) {
+        return toolResult(
+          output,
+          response_format === 'json' ? JSON.stringify(output, null, 2) : 'No readings have been logged yet.',
+        );
+      }
       const text = response_format === 'json' ? JSON.stringify(output, null, 2) : readingToMarkdown(reading);
       return toolResult(output, text);
     },
@@ -504,7 +509,12 @@ Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
         has_more: hasMore,
         next_before: hasMore && lastRow ? encodeReadingCursor({ timestamp: lastRow.timestamp, id: lastRow.id }) : null,
       };
-      if (page.length === 0) return toolResult(output, 'No readings found for that window.');
+      if (page.length === 0) {
+        return toolResult(
+          output,
+          response_format === 'json' ? JSON.stringify(output, null, 2) : 'No readings found for that window.',
+        );
+      }
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [
@@ -609,12 +619,14 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
       if (rows.length === 0) {
         return toolResult(
           output,
-          truncated
-            // Scanning stopped at the fetch ceiling before finding a single
-            // measurement or confirming the window holds none — distinct
-            // from the window genuinely having nothing in it.
-            ? `Scanned up to ${MAX_TREND_FETCH_ROWS} logged rows in the last ${days} day${days === 1 ? '' : 's'} without finding a measurement (mostly notes?) — narrow 'days' or use poolstatus_list_readings.`
-            : `No readings in the last ${days} day${days === 1 ? '' : 's'}.`,
+          response_format === 'json'
+            ? JSON.stringify(output, null, 2)
+            : truncated
+              // Scanning stopped at the fetch ceiling before finding a single
+              // measurement or confirming the window holds none — distinct
+              // from the window genuinely having nothing in it.
+              ? `Scanned up to ${MAX_TREND_FETCH_ROWS} logged rows in the last ${days} day${days === 1 ? '' : 's'} without finding a measurement (mostly notes?) — narrow 'days' or use poolstatus_list_readings.`
+              : `No readings in the last ${days} day${days === 1 ? '' : 's'}.`,
         );
       }
       const text = response_format === 'json'
@@ -667,7 +679,14 @@ Use when: "What's still to do this week?", "Which critical tasks are open?"`,
         .filter((task) => !frequency || task.frequency === frequency)
         .map((task) => ({ ...task, uid: undefined, createdAt: task.createdAt.toISOString() }));
       const output = { count: tasks.length, tasks };
-      if (tasks.length === 0) return toolResult(output, `No ${status === 'all' ? '' : status + ' '}tasks${frequency ? ` with frequency ${frequency}` : ''}.`);
+      if (tasks.length === 0) {
+        return toolResult(
+          output,
+          response_format === 'json'
+            ? JSON.stringify(output, null, 2)
+            : `No ${status === 'all' ? '' : status + ' '}tasks${frequency ? ` with frequency ${frequency}` : ''}.`,
+        );
+      }
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [`## ${tasks.length} ${status === 'all' ? '' : status + ' '}task${tasks.length === 1 ? '' : 's'}`, '',
@@ -696,7 +715,14 @@ Use when: "What do I need to reorder?", "How much soda ash is left?"`,
       const all = (await source.listInventory()).map((item) => ({ ...item, uid: undefined, low: item.quantity <= item.minThreshold }));
       const items = low_only ? all.filter((item) => item.low) : all;
       const output = { count: items.length, low_count: all.filter((item) => item.low).length, items };
-      if (items.length === 0) return toolResult(output, low_only ? 'Nothing needs reordering.' : 'No inventory items recorded.');
+      if (items.length === 0) {
+        return toolResult(
+          output,
+          response_format === 'json'
+            ? JSON.stringify(output, null, 2)
+            : low_only ? 'Nothing needs reordering.' : 'No inventory items recorded.',
+        );
+      }
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [`## Inventory (${output.low_count} low)`, '',
@@ -737,7 +763,14 @@ Use when: "Is the sand filter due a service?", "What maintenance is overdue?"`,
       });
       const items = due_only ? all.filter((item) => item.serviceDue) : all;
       const output = { count: items.length, due_count: all.filter((item) => item.serviceDue).length, items };
-      if (items.length === 0) return toolResult(output, due_only ? 'No equipment is due for service.' : 'No equipment recorded.');
+      if (items.length === 0) {
+        return toolResult(
+          output,
+          response_format === 'json'
+            ? JSON.stringify(output, null, 2)
+            : due_only ? 'No equipment is due for service.' : 'No equipment recorded.',
+        );
+      }
       const text = response_format === 'json'
         ? JSON.stringify(output, null, 2)
         : [`## Equipment (${output.due_count} due for service)`, '',
