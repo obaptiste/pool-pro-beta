@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { isValidCalendarDateTime } from '../isoDate';
 import { calculateLSI } from '../../../src/lib/lsi';
+import { classifyOrp } from '../../../src/lib/readings';
 import {
   COMBINED_CHLORINE_MAX,
   COMBINED_CHLORINE_OK_MAX,
@@ -147,21 +148,16 @@ async function fetchTrendRows(source: PoolDataSource, since: Date, until: Date):
   };
 }
 
-// ORP/sanitisation doesn't use the generic range banding above: the app's
-// own classifier (getSoftWarning, used by History's warning badges) treats
-// 750–850 mV as "elevated, usually acceptable" rather than out-of-range —
-// DEFAULT_RANGES.sanitisationMv's 750 max is a *target* ceiling, not a
-// hard limit, so running it through getRangeStatus would call anything
-// above 750 "critical" and contradict what the rest of the app tells the
-// same user about the same reading. Reuse that classifier instead of
-// re-deriving separate thresholds here.
+// ORP/sanitisation doesn't use the generic range banding above:
+// DEFAULT_RANGES.sanitisationMv's 750 max is a *target* ceiling, not a hard
+// limit, so running it through getRangeStatus would call anything above 750
+// "critical". classifyOrp (src/lib/readings.ts) is the single source of
+// truth for this -- also used by Dashboard's status card/alerts and
+// WeeklyReport -- so this server's fieldStatus stays consistent with what
+// the rest of the app tells the same user about the same reading, rather
+// than re-deriving the same 650/750/850 mV bands a second time here.
 function getSanitisationMvStatus(value: number): Status {
-  const warning = getSoftWarning('sanitisationMv', value);
-  if (!warning) return 'good';
-  // 'elevated' (750–850 mV) is the "usually acceptable" band; the plain
-  // 'warning' level here only fires outside 650–850, which is a real
-  // actionable extreme.
-  return warning.level === 'elevated' ? 'warning' : 'critical';
+  return classifyOrp(value);
 }
 
 const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : Math.abs(lsi) > 0.1 ? 'warning' : 'good');

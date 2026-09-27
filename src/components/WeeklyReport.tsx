@@ -146,16 +146,24 @@ function isoWeekYear(d: Date): number {
 }
 
 // ORP doesn't fit the generic min/max-with-a-buffer classifier every other
-// metric below uses: AGENTS.md's documented bands are an acceptable zone of
-// 650-800 mV (not the 650-750 DEFAULT_RANGES target used for its RangeBand
-// display) with no separate "critical" high band — just a warning past
-// 800 mV. Delegates to lib/readings.ts's classifyOrp (shared with
-// Dashboard's getOrpStatus) so both stay on one set of thresholds. Takes a
-// range so both the aggregated weekly min/max and a single reading
-// (min === max) share one implementation.
+// metric below uses: it has its own three-tier band (650/750/850 mV, see
+// classifyOrp's own doc comment) rather than a single critical ceiling.
+// Delegates to lib/readings.ts's classifyOrp (shared with Dashboard's
+// getOrpStatus and the MCP server's fieldStatus) so all three stay on one
+// set of thresholds. Takes a range so both the aggregated weekly min/max
+// and a single reading (min === max) share one implementation.
+//
+// Checks min and max independently against both severity tiers, rather than
+// assuming "low" only ever comes from min and "high" only ever comes from
+// max: classifyOrp's critical tier now fires on either end (a sub-650 mV
+// low or a >850 mV high are both critical), so a range whose max alone
+// spikes above 850 mV needs to escalate too, not just one whose min drops
+// below 650 mV.
 function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
-  if (classifyOrp(min) === 'critical') return 'critical';
-  if (classifyOrp(max) === 'warning') return 'warning';
+  const minStatus = classifyOrp(min);
+  const maxStatus = classifyOrp(max);
+  if (minStatus === 'critical' || maxStatus === 'critical') return 'critical';
+  if (minStatus === 'warning' || maxStatus === 'warning') return 'warning';
   return 'good';
 }
 

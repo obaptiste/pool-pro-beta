@@ -339,6 +339,28 @@ describe('MCP tools', () => {
     close();
   });
 
+  it('get_latest_reading escalates a dangerously high ORP reading to critical, not just warning', async () => {
+    // 800 mV (tested elsewhere) sits in the 750-850 mV "elevated, usually
+    // acceptable" band and stays 'warning'; above 850 mV is a real
+    // actionable extreme, matching classifyOrp/Dashboard's own high-side
+    // critical tier (src/lib/readings.ts) rather than the softer band.
+    const source: PoolDataSource = {
+      async listReadings() { return [reading('high-orp', 0, { sanitisationMv: 900 })]; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      ...unimplementedWrites,
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    const out = structured<{ reading: { fieldStatus: Record<string, string>; fieldWarnings: Record<string, string> } }>(result);
+    assert.equal(out.reading.fieldStatus.sanitisationMv, 'critical');
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too high (>850 mV).');
+    await client.close();
+    close();
+  });
+
   it('get_latest_reading explains a near-edge warning that getSoftWarning has no message for', async () => {
     // chlorine 1.0 is inside the 1-3 range but within getRangeStatus's 10%
     // edge buffer -> 'warning', yet getSoftWarning only fires for values

@@ -150,12 +150,19 @@ export function getCombinedChlorineWarning(free: number | null | undefined, tota
   return null;
 }
 
+// The one ORP threshold that isn't already DEFAULT_RANGES.sanitisationMv's
+// min (650) or max (750) -- exported so callers needing the same "truly
+// high, not just elevated" boundary (e.g. Dashboard's orp_high alert) don't
+// re-derive it as a separate literal.
+export const ORP_HIGH_WARNING_MV = 850;
+
 export function getSoftWarning(field: NumericReadingField, value: number): SoftValidationWarning | null {
   if (!Number.isFinite(value)) return null;
   if (field === 'sanitisationMv') {
-    if (value < 650) return { field, level: 'warning', message: 'Sanitisation may be too low (<650 mV).' };
-    if (value > 850) return { field, level: 'warning', message: 'Sanitisation may be too high (>850 mV).' };
-    if (value >= 750) return { field, level: 'elevated', message: 'High ORP (750–850 mV), usually acceptable depending on context.' };
+    const { min, max } = DEFAULT_RANGES.sanitisationMv;
+    if (value < min) return { field, level: 'warning', message: `Sanitisation may be too low (<${min} mV).` };
+    if (value > ORP_HIGH_WARNING_MV) return { field, level: 'warning', message: `Sanitisation may be too high (>${ORP_HIGH_WARNING_MV} mV).` };
+    if (value >= max) return { field, level: 'elevated', message: `High ORP (${max}–${ORP_HIGH_WARNING_MV} mV), usually acceptable depending on context.` };
     return null;
   }
 
