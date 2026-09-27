@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
+import { HannaCloudError } from './client';
 import { HannaCloudSource } from './source';
 
 let calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -148,6 +149,23 @@ test('rejects when the device timestamp is unparseable, rather than guessing "no
   responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], { garbage: true })];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
   await assert.rejects(() => source.getLatestReading());
+});
+
+test('rejects a calendar-invalid ISO-looking timestamp instead of silently normalizing it', async () => {
+  // new Date('2026-02-30') silently normalizes to March 2nd rather than
+  // throwing -- exactly the "wrong-but-plausible" value that would become a
+  // bad permanent dedupe watermark in sync.ts.
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], '2026-02-30T12:00:00Z')];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  await assert.rejects(() => source.getLatestReading(), HannaCloudError);
+});
+
+test('rejects a non-ISO but JS-parseable timestamp string instead of accepting a locale-dependent format', async () => {
+  // Hanna's API isn't documented to only ever send ISO-8601, so this must
+  // not rely on new Date()'s permissive, locale-dependent parsing.
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], '09/26/2026')];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  await assert.rejects(() => source.getLatestReading(), HannaCloudError);
 });
 
 test('accepts a numeric epoch-seconds timestamp', async () => {
