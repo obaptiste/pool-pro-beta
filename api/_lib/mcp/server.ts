@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { isValidCalendarDateTime } from '../isoDate';
-import { calculateLSI } from '../../../src/lib/lsi';
+import { calculateLSI, getLsiStatus, getLsiLabel } from '../../../src/lib/lsi';
 import { classifyOrp } from '../../../src/lib/readings';
 import {
   COMBINED_CHLORINE_MAX,
@@ -160,9 +160,6 @@ function getSanitisationMvStatus(value: number): Status {
   return classifyOrp(value);
 }
 
-const lsiStatus = (lsi: number): Status => (Math.abs(lsi) > 0.3 ? 'critical' : Math.abs(lsi) > 0.1 ? 'warning' : 'good');
-const lsiLabel = (lsi: number): string => (lsi < -0.3 ? 'corrosive' : lsi > 0.3 ? 'scale-forming' : 'balanced');
-
 // getSoftWarning only returns a message for a value truly outside its
 // range — getRangeStatus's 'warning' band (within 10% of an edge, but
 // still inside the range) has no message of its own. Without this, a
@@ -196,7 +193,7 @@ function combinedChlorineMessage(combined: number): string | null {
 function getMetricWarning(key: string, latest: number, status: Status | null): string | null {
   if (!status || status === 'good') return null;
   if (key === 'combinedChlorine') return combinedChlorineMessage(latest);
-  if (key === 'lsi') return `LSI is ${lsiLabel(latest)} (target within ±0.3).`;
+  if (key === 'lsi') return `LSI is ${getLsiLabel(latest)} (target within ±0.3).`;
   const field = key as NumericReadingField;
   return getSoftWarning(field, latest)?.message ?? nearEdgeMessage(field);
 }
@@ -251,8 +248,8 @@ function serializeReading(reading: Reading) {
     photoUrl: reading.photoUrl ?? null,
     derived: {
       lsi,
-      lsiStatus: lsi == null ? null : lsiStatus(lsi),
-      lsiLabel: lsi == null ? null : lsiLabel(lsi),
+      lsiStatus: lsi == null ? null : getLsiStatus(lsi),
+      lsiLabel: lsi == null ? null : getLsiLabel(lsi),
       combinedChlorine: combined,
       combinedChlorineStatus: combined == null ? null : getCombinedChlorineStatus(combined),
       combinedChlorineWarning: combinedWarning?.message ?? null,
@@ -589,7 +586,7 @@ Use when: "How has pH trended this month?", "Is combined chlorine creeping up?"`
           const direction = Math.abs(delta) <= span * 0.02 ? 'flat' : delta > 0 ? 'rising' : 'falling';
           const status: Status | null =
             key === 'combinedChlorine' ? getCombinedChlorineStatus(latest)
-            : key === 'lsi' ? lsiStatus(latest)
+            : key === 'lsi' ? getLsiStatus(latest)
             : key === 'sanitisationMv' ? getSanitisationMvStatus(latest)
             : target ? getRangeStatus(latest, target.min, target.max) : null;
           const round = (n: number) => Math.round(n * 100) / 100;
