@@ -151,10 +151,23 @@ export function getCombinedChlorineWarning(free: number | null | undefined, tota
 }
 
 // The one ORP threshold that isn't already DEFAULT_RANGES.sanitisationMv's
-// min (650) or max (750) -- exported so callers needing the same "truly
-// high, not just elevated" boundary (e.g. Dashboard's orp_high alert) don't
-// re-derive it as a separate literal.
+// min (650) or max (750) -- exported so callers needing this getSoftWarning
+// "truly high, not just elevated" boundary (e.g. classifyOrp's status
+// badge) don't re-derive it as a separate literal.
 export const ORP_HIGH_WARNING_MV = 850;
+
+// AGENTS.md's own literal instruction: "Above 800 mV: warn that
+// sanitisation may be high; verify before swimming or adding more
+// chlorine." That's a lower, stricter line than ORP_HIGH_WARNING_MV above
+// -- getSoftWarning's 750-850 mV "elevated, usually acceptable" band is this
+// module's own interpretive gap-filling for a range AGENTS.md leaves silent,
+// but AGENTS.md's explicit verify-before-swimming instruction still applies
+// to the whole 800+ mV range, not just its top end. Dashboard's orp_high
+// alert and WeeklyReport's weekly ORP-high advisory both key off this
+// constant rather than ORP_HIGH_WARNING_MV, so the loud "verify before
+// swimming" action banner each surfaces stays anchored to AGENTS.md's own
+// number.
+export const ORP_ACTION_ALERT_MV = 800;
 
 export function getSoftWarning(field: NumericReadingField, value: number): SoftValidationWarning | null {
   if (!Number.isFinite(value)) return null;

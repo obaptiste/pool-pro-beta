@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Printer, FileText } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
-import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf } from '../lib/readingValidation';
+import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
 import { calculateLSI } from '../lib/lsi';
 import { getLatestReadingForDisplay, findRecentFieldValue, classifyOrp } from '../lib/readings';
 import SpokenReportControls from './SpokenReportControls';
@@ -322,9 +322,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       msg: `ORP fell to ${orpM.min} mV (below ${DEFAULT_RANGES.sanitisationMv.min} mV) — disinfection may have been inadequate.`,
       action: 'Test free chlorine and confirm circulation/filtration was running at the time — ORP is not a direct chlorine ppm value.' });
   }
-  if (orpM && orpM.max > 800) {
+  if (orpM && orpM.max > ORP_ACTION_ALERT_MV) {
     advisories.push({ tier: 'warning', title: 'Sanitisation (ORP) trended high', time: 'This week',
-      msg: `ORP reached ${orpM.max} mV (above 800 mV) — verify before swimming or adding more chlorine.`,
+      msg: `ORP reached ${orpM.max} mV (above ${ORP_ACTION_ALERT_MV} mV) — verify before swimming or adding more chlorine.`,
       action: 'Retest and confirm dosing hadn\'t over-shot before any further additions.' });
   }
   if (pressM && pressM.max > DEFAULT_RANGES.differentialPressure.max) {
