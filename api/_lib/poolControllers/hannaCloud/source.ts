@@ -53,6 +53,21 @@ function isValidHannaTimestampString(value: string): boolean {
   return !Number.isNaN(Date.parse(value));
 }
 
+// Round, generous lower bound -- this integration (and this app) couldn't
+// plausibly have been running before this many years ago, so anything
+// older is a sentinel/error value, not a real reading. Without this, a
+// sentinel like `dt: 0` (or any small/negative number some hardware sends
+// for an error state) parses to 1970-01-01 and passes every other check.
+// On a fresh sync with no prior watermark or readings, that epoch reading
+// would become readings[0] -- briefly the dashboard's entire "current
+// status" -- until a real reading arrives; on an established deployment it
+// still permanently pollutes readings/ with an impossible data point that
+// History/WeeklyReport would eventually surface. Generous on purpose: this
+// only needs to catch obviously-wrong sentinels, not legitimately old
+// readings, which shouldn't happen with live telemetry anyway.
+const MAX_PAST_YEARS = 10;
+const MIN_PLAUSIBLE_MS = Date.now() - MAX_PAST_YEARS * 365 * 24 * 60 * 60 * 1000;
+
 /**
  * Hanna Cloud's device-log timestamp shape isn't documented anywhere
  * public, so this accepts either a strict ISO-8601 date-time string (full
@@ -78,6 +93,9 @@ function parseHannaTimestamp(dt: unknown): Date {
   }
   if (parsed.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
     throw new HannaCloudError(`Hanna Cloud reading timestamp is implausibly far in the future: ${parsed.toISOString()}`);
+  }
+  if (parsed.getTime() < MIN_PLAUSIBLE_MS) {
+    throw new HannaCloudError(`Hanna Cloud reading timestamp is implausibly far in the past: ${parsed.toISOString()}`);
   }
   return parsed;
 }

@@ -121,6 +121,18 @@ test('rejects an implausibly far-future timestamp rather than adopting it as the
   await assert.rejects(() => source.getLatestReading());
 });
 
+test('rejects a zero epoch timestamp rather than silently producing an epoch-1970 Date', async () => {
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], 0)];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  await assert.rejects(() => source.getLatestReading(), /implausibly far in the past/);
+});
+
+test('rejects a small negative epoch timestamp', async () => {
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], -100)];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  await assert.rejects(() => source.getLatestReading(), /implausibly far in the past/);
+});
+
 test('tolerates a small clock-skew window rather than rejecting every future timestamp', async () => {
   const oneMinuteFromNow = new Date(Date.now() + 60_000).toISOString();
   responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], oneMinuteFromNow)];
