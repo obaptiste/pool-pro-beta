@@ -1,5 +1,5 @@
-import { Reading, Status } from '../types';
-import { getSoftWarning } from './readingValidation';
+import { Reading, Status } from '../types.js';
+import { getSoftWarning } from './readingValidation.js';
 
 // Alkalinity and calcium hardness are normally tested at most monthly —
 // the app's own schedule.testFrequency options top out at 'monthly' — so a

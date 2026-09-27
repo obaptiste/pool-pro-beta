@@ -1,4 +1,4 @@
-import type { ReadingCursor } from './types';
+import type { ReadingCursor } from './types.js';
 
 /**
  * Opaque pagination cursor for poolstatus_list_readings, encoding the

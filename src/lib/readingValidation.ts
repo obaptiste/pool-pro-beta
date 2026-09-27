@@ -1,4 +1,4 @@
-import { DEFAULT_RANGES, Reading, Status } from '../types';
+import { DEFAULT_RANGES, Reading, Status } from '../types.js';
 
 export type SoftValidationLevel = 'warning' | 'elevated';
 

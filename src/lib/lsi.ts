@@ -1,4 +1,4 @@
-import { Reading, Status } from '../types';
+import { Reading, Status } from '../types.js';
 
 export function calculateLSI(reading: Reading): number | null {
   // LSI requires pH, temperature, calcium hardness, and alkalinity. If any are

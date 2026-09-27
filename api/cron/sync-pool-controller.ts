@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
-import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin';
-import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters';
-import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source';
-import { syncLatestReading } from '../_lib/poolControllers/sync';
+import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin.js';
+import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters.js';
+import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source.js';
+import { syncLatestReading } from '../_lib/poolControllers/sync.js';
 
 // Pulls the latest telemetry (pH, ORP, temperature) from a Hanna Cloud
 // pool controller and, if it's new, logs it as a Reading — see the
