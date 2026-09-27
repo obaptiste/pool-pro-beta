@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale } from './readings';
+import { getLatestReadingForDisplay, isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from './readings';
 import { Reading } from '../types';
 
 function reading(overrides: Partial<Reading>): Reading {
@@ -156,6 +156,21 @@ test('formatAge labels sub-minute gaps as "just now" and otherwise in minutes/ho
   assert.equal(formatAge(now, now), 'just now');
   assert.equal(formatAge(new Date(now.getTime() - 20 * 60 * 1000), now), '20m ago');
   assert.equal(formatAge(new Date(now.getTime() - 3 * 60 * 60 * 1000), now), '3h ago');
+});
+
+test('classifyOrp matches getSoftWarning\'s three-tier band, not a simpler two-tier split', () => {
+  // The bug this closes: classifyOrp used to hardcode a simpler 650/800 mV
+  // split, disagreeing with getSoftWarning's already-tested 650/750/850 mV
+  // bands used by History's badges and the MCP server's fieldStatus -- the
+  // same reading could show "good" on the Dashboard while History/MCP
+  // called it a warning, or "warning" while History/MCP called it critical.
+  assert.equal(classifyOrp(649), 'critical'); // below 650: too low
+  assert.equal(classifyOrp(650), 'good'); // 650-750: acceptable working zone
+  assert.equal(classifyOrp(700), 'good');
+  assert.equal(classifyOrp(750), 'warning'); // 750-850: "elevated, usually acceptable" -- not 'good' the way the old 650/800 split treated it
+  assert.equal(classifyOrp(800), 'warning');
+  assert.equal(classifyOrp(850), 'warning');
+  assert.equal(classifyOrp(851), 'critical'); // above 850: a real actionable extreme -- not merely 'warning' the way the old split treated it
 });
 
 test('isOrpStale is judged against wall-clock now, not against whether a value came from a fallback', () => {

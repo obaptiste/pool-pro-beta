@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Printer, FileText } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import { Reading, InventoryItem, DEFAULT_RANGES } from '../types';
-import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf } from '../lib/readingValidation';
+import { COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
 import { calculateLSI } from '../lib/lsi';
 import { getLatestReadingForDisplay, findRecentFieldValue, classifyOrp } from '../lib/readings';
 import SpokenReportControls from './SpokenReportControls';
@@ -146,16 +146,24 @@ function isoWeekYear(d: Date): number {
 }
 
 // ORP doesn't fit the generic min/max-with-a-buffer classifier every other
-// metric below uses: AGENTS.md's documented bands are an acceptable zone of
-// 650-800 mV (not the 650-750 DEFAULT_RANGES target used for its RangeBand
-// display) with no separate "critical" high band — just a warning past
-// 800 mV. Delegates to lib/readings.ts's classifyOrp (shared with
-// Dashboard's getOrpStatus) so both stay on one set of thresholds. Takes a
-// range so both the aggregated weekly min/max and a single reading
-// (min === max) share one implementation.
+// metric below uses: it has its own three-tier band (650/750/850 mV, see
+// classifyOrp's own doc comment) rather than a single critical ceiling.
+// Delegates to lib/readings.ts's classifyOrp (shared with Dashboard's
+// getOrpStatus and the MCP server's fieldStatus) so all three stay on one
+// set of thresholds. Takes a range so both the aggregated weekly min/max
+// and a single reading (min === max) share one implementation.
+//
+// Checks min and max independently against both severity tiers, rather than
+// assuming "low" only ever comes from min and "high" only ever comes from
+// max: classifyOrp's critical tier now fires on either end (a sub-650 mV
+// low or a >850 mV high are both critical), so a range whose max alone
+// spikes above 850 mV needs to escalate too, not just one whose min drops
+// below 650 mV.
 function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
-  if (classifyOrp(min) === 'critical') return 'critical';
-  if (classifyOrp(max) === 'warning') return 'warning';
+  const minStatus = classifyOrp(min);
+  const maxStatus = classifyOrp(max);
+  if (minStatus === 'critical' || maxStatus === 'critical') return 'critical';
+  if (minStatus === 'warning' || maxStatus === 'warning') return 'warning';
   return 'good';
 }
 
@@ -314,9 +322,9 @@ function deriveReportData(readings: Reading[], inventory: InventoryItem[], user:
       msg: `ORP fell to ${orpM.min} mV (below ${DEFAULT_RANGES.sanitisationMv.min} mV) — disinfection may have been inadequate.`,
       action: 'Test free chlorine and confirm circulation/filtration was running at the time — ORP is not a direct chlorine ppm value.' });
   }
-  if (orpM && orpM.max > 800) {
+  if (orpM && orpM.max > ORP_ACTION_ALERT_MV) {
     advisories.push({ tier: 'warning', title: 'Sanitisation (ORP) trended high', time: 'This week',
-      msg: `ORP reached ${orpM.max} mV (above 800 mV) — verify before swimming or adding more chlorine.`,
+      msg: `ORP reached ${orpM.max} mV (above ${ORP_ACTION_ALERT_MV} mV) — verify before swimming or adding more chlorine.`,
       action: 'Retest and confirm dosing hadn\'t over-shot before any further additions.' });
   }
   if (pressM && pressM.max > DEFAULT_RANGES.differentialPressure.max) {

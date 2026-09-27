@@ -1,4 +1,5 @@
-import { DEFAULT_RANGES, Reading, Status } from '../types';
+import { Reading, Status } from '../types';
+import { getSoftWarning } from './readingValidation';
 
 // Alkalinity and calcium hardness are normally tested at most monthly —
 // the app's own schedule.testFrequency options top out at 'monthly' — so a
@@ -99,24 +100,27 @@ export function getMostRecentOrp(readings: Reading[]): { value: number; at: Date
   return found ? { value: found.sanitisationMv as number, at: found.timestamp } : null;
 }
 
-// AGENTS.md's "ORP / sanitisation power" thresholds: below
-// DEFAULT_RANGES.sanitisationMv.min (650 mV) warns low, up to this value
-// is acceptable, above it warns high. DEFAULT_RANGES.sanitisationMv.max
-// (750) is the target zone's upper edge, not this hard warning ceiling —
-// kept as a separate constant for that reason.
-export const ORP_HIGH_WARNING_MV = 800;
-
 /**
  * Single source of truth for classifying an ORP (sanitisationMv) reading,
- * shared by Dashboard's status card/alerts and WeeklyReport's per-day/
- * per-period classification — previously each reimplemented the 650/800
- * bands with their own hardcoded literals, risking disagreement if either
- * one was updated without the other.
+ * shared by Dashboard's status card/alerts, WeeklyReport's per-day/
+ * per-period classification, and (via the MCP server's getSanitisationMvStatus)
+ * the MCP server's fieldStatus and History's warning badges.
+ *
+ * Delegates to getSoftWarning (readingValidation.ts) rather than its own
+ * bands: this used to hardcode a simpler 650/800 mV split, while
+ * getSoftWarning -- already the source of History's badge text and the MCP
+ * server's fieldStatus -- used a three-tier 650/750/850 split (a 750-850 mV
+ * "elevated, usually acceptable" band distinct from a true >850 mV warning).
+ * The same ORP reading could therefore show as "good" on the Dashboard while
+ * History/MCP called it a warning, or "warning" on the Dashboard while
+ * History/MCP escalated it to critical. getSoftWarning's bands win here
+ * since its exact wording is already user-visible and locked in by existing
+ * tests, so changing bands there would mean rewriting shown text.
  */
 export function classifyOrp(value: number): Status {
-  if (value < DEFAULT_RANGES.sanitisationMv.min) return 'critical';
-  if (value > ORP_HIGH_WARNING_MV) return 'warning';
-  return 'good';
+  const warning = getSoftWarning('sanitisationMv', value);
+  if (!warning) return 'good';
+  return warning.level === 'elevated' ? 'warning' : 'critical';
 }
 
 /** Short relative-age label ("just now", "12m ago", "3h ago") for showing how old a fallback value (e.g. from getMostRecentOrp) actually is. */

@@ -30,7 +30,7 @@ import TrendCharts from './TrendCharts';
 import { calculateLSI } from '../lib/lsi';
 import { callAiWithFallback } from '../lib/ai';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
-import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus } from '../lib/readingValidation';
+import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 import { useToast } from '../lib/toast';
 
@@ -209,13 +209,10 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     return 'good';
   };
 
-  // ORP doesn't fit the generic min/max classifier above: AGENTS.md's
-  // documented thresholds are asymmetric (below 650 mV warns low, 650-800 mV
-  // is the acceptable zone, above 800 mV warns high) and never call the
-  // in-between 751-800 mV band critical the way getStatus's `value > max`
-  // check would (DEFAULT_RANGES.sanitisationMv.max is 750, the target
-  // zone's upper edge, not a hard ceiling). Delegates to lib/readings.ts's
-  // classifyOrp so this, the orp_low/orp_high alerts below, and
+  // ORP doesn't fit the generic min/max classifier above: it has its own
+  // three-tier band (650/750/850 mV, see classifyOrp's own doc comment)
+  // rather than a single critical ceiling. Delegates to lib/readings.ts's
+  // classifyOrp so this status badge, the MCP server's fieldStatus, and
   // WeeklyReport's classifyOrpRange all share one set of thresholds.
   const getOrpStatus = (value: number): Status => classifyOrp(value);
 
@@ -256,10 +253,20 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     // let a genuinely recent, still-relevant warning vanish the moment
     // that happens. When recentOrp falls back to an earlier reading, its
     // age is appended so it's never presented as this instant's value.
+    // orp_low/orp_high check the raw value against named boundaries rather
+    // than branching on getOrpStatus's coarse Status: since classifyOrp now
+    // has a genuine high-side critical tier (>850 mV, not just >750),
+    // 'critical' alone no longer means "low" -- these two alerts need their
+    // own direction. orp_high deliberately keys off ORP_ACTION_ALERT_MV
+    // (800 mV, AGENTS.md's own literal "verify before swimming" line), not
+    // classifyOrp's ORP_HIGH_WARNING_MV (850 mV, the status badge's stricter
+    // ceiling) -- those are two different thresholds for two different
+    // purposes, and collapsing them into one previously made this alert
+    // silently stop firing for 801-850 mV, a real regression a review caught.
     {
       id: 'orp_low',
       type: 'sanitisation',
-      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'critical',
+      condition: recentOrp != null && recentOrp.value < DEFAULT_RANGES.sanitisationMv.min,
       msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
       severity: 'critical'
@@ -267,7 +274,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     {
       id: 'orp_high',
       type: 'sanitisation',
-      condition: recentOrp != null && getOrpStatus(recentOrp.value) === 'warning',
+      condition: recentOrp != null && recentOrp.value > ORP_ACTION_ALERT_MV,
       msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
       severity: 'warning'
