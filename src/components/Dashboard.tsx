@@ -271,6 +271,17 @@ export default function Dashboard({
       action: 'Backwash filter or clean cartridges immediately.',
       severity: 'critical',
     },
+    // The pressure card was removed from this screen, so a low reading (air
+    // leak, blocked skimmer, or pump cavitation, per the assistant's pool
+    // guidance) needs its own alert. Below the minimum is critical, matching
+    // the old card's out-of-range status.
+    {
+      id: 'dp_low',
+      condition: latest.differentialPressure != null && latest.differentialPressure < DEFAULT_RANGES.differentialPressure.min,
+      msg: 'Filter pressure low — check for an air leak, blocked skimmer, or pump cavitation.',
+      action: 'Check the skimmer basket, pump suction and fittings for air before anything else. Low pressure is not normal.',
+      severity: 'critical',
+    },
     {
       // Folding nextTestDate into the id gives each due-date its own
       // dismissal identity, so a schedule change re-surfaces the warning

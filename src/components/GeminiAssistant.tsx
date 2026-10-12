@@ -19,7 +19,8 @@ interface Props {
   protocol: AiProtocol | null;
   protocolState: ProtocolState;
   onRequestProtocol: () => void;
-  onExecuteProtocol: () => Promise<void> | void;
+  /** Resolves true only when the checklist was saved. */
+  onExecuteProtocol: () => Promise<boolean>;
   onAddToReport?: (entry: { timestamp: string; summary: string }) => void;
   /** Hide the floating button (e.g. while a full-screen form is open). */
   hidden?: boolean;
@@ -100,7 +101,8 @@ export default function GeminiAssistant({ latestReading, history, mode, onModeCh
 
   const executeProtocol = async () => {
     if (!protocol) return;
-    await onExecuteProtocol();
+    const saved = await onExecuteProtocol();
+    if (!saved) return; // the save failed; the app already showed an error
     setProtocolStaged(true);
     setTimeout(() => {
       setProtocolStaged(false);

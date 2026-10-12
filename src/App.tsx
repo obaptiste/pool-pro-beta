@@ -531,10 +531,13 @@ export default function App() {
     }
   };
 
-  const handleExecuteCurrentProtocol = async () => {
-    if (!protocol || protocol.checklist.length === 0) return;
+  // Resolves true only when the checklist was saved, so the assistant shows
+  // its "staged" confirmation only for a real save.
+  const handleExecuteCurrentProtocol = async (): Promise<boolean> => {
+    if (!protocol || protocol.checklist.length === 0) return false;
     const saved = await handleExecuteProtocol(protocolToTasks(protocol));
     if (saved) setProtocolState('executed');
+    return saved;
   };
 
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {
