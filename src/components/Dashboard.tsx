@@ -170,6 +170,7 @@ export default function Dashboard({
         latest.chlorine, latest.totalChlorine, latest.cyanuricAcid, latest.differentialPressure,
         recentOrp?.value ?? null, orpIsStale,
         promptNotes,
+        inventory.map((item) => [item.name, item.concentrationPct ?? null]),
       ])
     : null;
   React.useEffect(() => {

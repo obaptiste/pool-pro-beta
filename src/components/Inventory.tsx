@@ -108,6 +108,24 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     />
                   </div>
                   <div className="space-y-1">
+                    <label htmlFor="inventory-strength" className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Strength (%, optional)</label>
+                    <input
+                      id="inventory-strength"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.1"
+                      value={newItem.concentrationPct ?? ''}
+                      onChange={e => setNewItem(prev => {
+                        // Omit the key when empty: Firestore rejects undefined values.
+                        const { concentrationPct: _unused, ...rest } = prev;
+                        return e.target.value === '' ? rest : { ...rest, concentrationPct: Number(e.target.value) };
+                      })}
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      placeholder="e.g. 10 for 10% liquid chlorine"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Min Threshold</label>
                     <input 
                       type="number"
@@ -133,7 +151,10 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     {item.quantity <= item.minThreshold ? <AlertTriangle size={20} /> : <Package size={20} />}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">{item.name}</h3>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">
+                      {item.name}
+                      {item.concentrationPct != null && <span className="ml-2 font-mono text-[10px] text-accent normal-case tracking-normal">{item.concentrationPct}%</span>}
+                    </h3>
                     <p className="text-[10px] text-ink-dim uppercase tracking-widest">
                       {item.quantity} {item.unit} in stock
                     </p>

@@ -20,3 +20,33 @@ export function isProtocolConfirmReady(input: ProtocolConfirmInput): boolean {
     input.products.trim().length >= MIN_PRODUCT_DESCRIPTION_LENGTH
   );
 }
+
+/** The part of an inventory item these helpers read. */
+export interface StockedProduct {
+  name: string;
+  concentrationPct?: number;
+}
+
+/**
+ * Stocked products for the AI prompt. A product with no recorded strength is
+ * listed as such, so the model knows it cannot dose that product from a strength.
+ */
+export function formatStockForPrompt(stock: StockedProduct[]): string {
+  if (stock.length === 0) return 'none recorded';
+  return stock
+    .map((item) => (item.concentrationPct != null
+      ? `- ${item.name}, ${item.concentrationPct}% strength`
+      : `- ${item.name}, strength not recorded`))
+    .join('\n');
+}
+
+/**
+ * Prefill for the confirmation's product field: each stocked product with a
+ * recorded strength, e.g. "10% Chlorine Granules, 31% Muriatic Acid".
+ */
+export function suggestedProductsFromStock(stock: StockedProduct[]): string {
+  return stock
+    .filter((item) => item.concentrationPct != null)
+    .map((item) => `${item.concentrationPct}% ${item.name}`)
+    .join(', ');
+}

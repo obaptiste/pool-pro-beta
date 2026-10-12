@@ -1,8 +1,9 @@
 import { Type } from '@google/genai';
-import { MaintenanceTask, Reading } from '../types';
+import { InventoryItem, MaintenanceTask, Reading } from '../types';
 import { callAiWithFallback } from './ai';
 import { calculateLSI } from './lsi';
 import { formatAge, getMostRecentOrp, isAutoSyncBoilerplateNote, isOrpStale } from './readings';
+import { formatStockForPrompt } from './protocolConfirm';
 
 /**
  * The AI maintenance protocol: a Gemini (with Claude/OpenAI fallback)
@@ -196,7 +197,7 @@ export function providerLabel(provider: string): string {
   }
 }
 
-export async function requestAiProtocol(latestReading: Reading, history: Reading[]): Promise<AiProtocol> {
+export async function requestAiProtocol(latestReading: Reading, history: Reading[], stock: InventoryItem[] = []): Promise<AiProtocol> {
   const lsi = calculateLSI(latestReading);
 
   // Auto-synced controller readings (every 15 min, see sync.ts) all carry
@@ -225,6 +226,9 @@ export async function requestAiProtocol(latestReading: Reading, history: Reading
     - Differential Pressure: ${fmt(latestReading.differentialPressure)} kPa
     - Calculated LSI: ${lsi == null ? 'not computable (missing inputs)' : lsi}
 
+    PRODUCTS IN STOCK (strength is the active-ingredient percentage the operator recorded):
+    ${formatStockForPrompt(stock)}
+
     RECENT MAINTENANCE HISTORY:
     ${recentNotes || 'No recent maintenance recorded.'}
 
@@ -233,7 +237,7 @@ export async function requestAiProtocol(latestReading: Reading, history: Reading
 
     IMPORTANT: If the user has already added chemicals (based on history), adjust your advice. Do not repeat steps already taken if the readings haven't had time to stabilize.
 
-    Dosing rule: the operator has not given product type, product strength, occupancy, or circulation status. So any step that adds a chemical must (a) name the product and strength it assumes, (b) state the dose is for 68,000 litres and must be checked against the product label, and (c) be preceded by a checklist step to confirm the pool is unoccupied, circulation is running, and the product's actual type and strength. If you cannot write those, give verification and retesting steps only.
+    Dosing rule: any step that adds a chemical must (a) name the product and the strength it uses, taken from the products in stock where a strength is recorded, (b) state the dose is for 68,000 litres and must be checked against the product label, and (c) be preceded by a checklist step to confirm the pool is unoccupied, circulation is running, and the product's actual type and strength. If a product has no recorded strength, or is not in stock, give verification and retesting steps only for it.
   `;
 
   const response = await callAiWithFallback({

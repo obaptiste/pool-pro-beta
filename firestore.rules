@@ -47,6 +47,7 @@ service cloud.firestore {
     //   - quantity: number (required)
     //   - unit: string (required, max 10 chars)
     //   - minThreshold: number (required)
+    //   - concentrationPct: number (optional, 0 to 100 active-ingredient strength)
     //   - uid: string (required)
     //
     // Collection: equipment
@@ -161,6 +162,8 @@ service cloud.firestore {
              data.quantity is number &&
              data.unit is string && data.unit.size() <= 10 &&
              data.minThreshold is number &&
+             (!('concentrationPct' in data) ||
+               (data.concentrationPct is number && data.concentrationPct > 0 && data.concentrationPct <= 100)) &&
              data.uid == request.auth.uid;
     }
 

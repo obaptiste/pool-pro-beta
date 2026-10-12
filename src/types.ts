@@ -97,6 +97,8 @@ export interface InventoryItem {
   quantity: number;
   unit: string;
   minThreshold: number;
+  /** Active-ingredient strength as a percentage, e.g. 10 for 10% liquid chlorine. Optional. */
+  concentrationPct?: number;
   uid: string;
 }
 

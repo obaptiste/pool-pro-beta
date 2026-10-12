@@ -8,6 +8,8 @@ interface Props {
   open: boolean;
   /** Titles of the checklist steps about to be saved. */
   steps: string[];
+  /** Prefill for the products field, from stocked strengths. The operator edits it. */
+  suggestedProducts: string;
   onCancel: () => void;
   /** Receives the products the operator named, trimmed. */
   onConfirm: (products: string) => void;
@@ -19,7 +21,7 @@ interface Props {
  * names the products they have. Those answers gate the chemical steps that
  * follow, so they are asked each time rather than assumed.
  */
-export default function ProtocolConfirm({ open, steps, onCancel, onConfirm }: Props) {
+export default function ProtocolConfirm({ open, steps, suggestedProducts, onCancel, onConfirm }: Props) {
   const [unoccupied, setUnoccupied] = useState(false);
   const [circulating, setCirculating] = useState(false);
   const [products, setProducts] = useState('');
@@ -30,7 +32,7 @@ export default function ProtocolConfirm({ open, steps, onCancel, onConfirm }: Pr
     if (!open) return;
     setUnoccupied(false);
     setCirculating(false);
-    setProducts('');
+    setProducts(suggestedProducts);
   }, [open]);
 
   const ready = isProtocolConfirmReady({ unoccupied, circulating, products });

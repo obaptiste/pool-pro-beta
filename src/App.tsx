@@ -6,6 +6,7 @@ import TrendsView from './components/TrendsView';
 import TabBar, { Tab } from './components/TabBar';
 import MoreSheet from './components/MoreSheet';
 import ProtocolConfirm from './components/ProtocolConfirm';
+import { suggestedProductsFromStock } from './lib/protocolConfirm';
 import ReadingForm from './components/ReadingForm';
 import CheatSheet from './components/CheatSheet';
 import OfflineIndicator from './components/OfflineIndicator';
@@ -538,7 +539,7 @@ export default function App() {
     setProtocol(null);
     setProtocolState('loading');
     try {
-      const next = await requestAiProtocol(latestForAi, readings);
+      const next = await requestAiProtocol(latestForAi, readings, inventory);
       if (requestId !== protocolRequestId.current) return;
       setProtocol(next);
       setProtocolState('ready');
@@ -1122,6 +1123,7 @@ export default function App() {
       <ProtocolConfirm
         open={protocolConfirmOpen}
         steps={protocol?.checklist.map((step) => step.title) ?? []}
+        suggestedProducts={suggestedProductsFromStock(inventory)}
         onCancel={() => settleProtocolConfirm(false)}
         onConfirm={(products) => settleProtocolConfirm(true, products)}
       />
