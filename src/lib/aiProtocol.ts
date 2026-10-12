@@ -275,11 +275,14 @@ export async function requestAiProtocol(latestReading: Reading, history: Reading
 }
 
 /** Checklist steps as the isAI tasks handleExecuteProtocol (App.tsx) writes. */
-export function protocolToTasks(protocol: AiProtocol): MaintenanceTask[] {
+export function protocolToTasks(protocol: AiProtocol, confirmedProducts?: string): MaintenanceTask[] {
   const stamp = Date.now();
+  // The products the operator confirmed are written on every task, so a
+  // strength that differs from the one the step assumes is visible on the checklist.
+  const suffix = confirmedProducts ? ` · Your products: ${confirmedProducts}` : '';
   return protocol.checklist.map((step) => ({
     id: `ai-${stamp}-${step.id}`,
-    title: step.title,
+    title: `${step.title}${suffix}`,
     completed: false,
     isAI: true,
     priority: 'high',

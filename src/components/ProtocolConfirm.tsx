@@ -9,7 +9,8 @@ interface Props {
   /** Titles of the checklist steps about to be saved. */
   steps: string[];
   onCancel: () => void;
-  onConfirm: () => void;
+  /** Receives the products the operator named, trimmed. */
+  onConfirm: (products: string) => void;
 }
 
 /**
@@ -109,7 +110,7 @@ export default function ProtocolConfirm({ open, steps, onCancel, onConfirm }: Pr
               </button>
               <button
                 type="button"
-                onClick={onConfirm}
+                onClick={() => onConfirm(products.trim())}
                 disabled={!ready}
                 className="flex-1 min-h-11 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition-all"
               >

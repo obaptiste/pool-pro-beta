@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useModalFocus } from '../lib/useModalFocus';
 import { Book, BookOpen, Bell, Download, FileText, Heart, LineChart, LogOut, Plug, Printer, Timer, Upload, Wrench, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -29,6 +29,8 @@ export default function MoreSheet({
   onOpenCheatSheet, onOpenReminderSettings, onOpenAgents, onTemplateUpload, onExport, onPrint, onSignOut,
 }: Props) {
   const run = (fn: () => void) => () => { onClose(); fn(); };
+  // The file input stays hidden; the focusable button opens it, so keyboard users can upload too.
+  const templateInputRef = useRef<HTMLInputElement>(null);
 
   const sheetRef = useModalFocus<HTMLDivElement>(isOpen, onClose);
   const items: Item[] = [
@@ -88,11 +90,23 @@ export default function MoreSheet({
                   <span className="truncate">{label}</span>
                 </button>
               ))}
-              <label className="h-12 px-3 rounded-[10px] bg-surface-2 border border-border-dim flex items-center gap-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white cursor-pointer active:scale-95 transition-transform">
+              <button
+                type="button"
+                onClick={() => templateInputRef.current?.click()}
+                className="h-12 px-3 rounded-[10px] bg-surface-2 border border-border-dim flex items-center gap-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white active:scale-95 transition-transform"
+              >
                 <Upload size={14} className="text-accent" />
                 <span className="truncate">Report Template</span>
-                <input type="file" accept=".txt,.md,.csv" onChange={(e) => { onTemplateUpload(e); onClose(); }} className="hidden" />
-              </label>
+              </button>
+              <input
+                ref={templateInputRef}
+                type="file"
+                accept=".txt,.md,.csv"
+                onChange={(e) => { onTemplateUpload(e); onClose(); }}
+                className="hidden"
+                tabIndex={-1}
+                aria-hidden="true"
+              />
             </div>
           </motion.div>
         </>

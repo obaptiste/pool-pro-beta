@@ -252,8 +252,12 @@ export function summarizeWeek(readings: Reading[], now: Date = new Date()): Week
   let daysWithReadings = 0;
   let daysNominal = 0;
   for (let i = 0; i < dayCount; i += 1) {
-    const dayStart = new Date(weekStart.getTime() + i * DAY_MS);
-    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+    // Local calendar days, not 24-hour steps: a daylight-saving change makes
+    // one day 23 or 25 hours long, which would shift the boundaries.
+    const dayStart = new Date(weekStart);
+    dayStart.setDate(weekStart.getDate() + i);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayStart.getDate() + 1);
     const dayReadings = readings.filter((r) => r.timestamp >= dayStart && r.timestamp < dayEnd);
     const verdicts = dayReadings.map(isReadingNominal).filter((v): v is boolean => v != null);
     if (verdicts.length === 0) continue;

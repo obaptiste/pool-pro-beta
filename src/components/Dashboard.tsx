@@ -276,6 +276,13 @@ export default function Dashboard({
     // guidance) needs its own alert. Below the minimum is critical, matching
     // the old card's out-of-range status.
     {
+      id: 'temp_out',
+      condition: latest.temperature != null && (latest.temperature < DEFAULT_RANGES.temperature.min || latest.temperature > DEFAULT_RANGES.temperature.max),
+      msg: `Water temperature ${latest.temperature}°C is outside the ${DEFAULT_RANGES.temperature.min}–${DEFAULT_RANGES.temperature.max}°C working range.`,
+      action: 'Test chlorine and pH more often while the water is outside this range.',
+      severity: 'warning',
+    },
+    {
       id: 'dp_low',
       condition: latest.differentialPressure != null && latest.differentialPressure < DEFAULT_RANGES.differentialPressure.min,
       msg: 'Filter pressure low — check for an air leak, blocked skimmer, or pump cavitation.',
@@ -647,9 +654,22 @@ function TelemetryCard({ label, field, value, unit, decimals, status, trend, ide
   // this field focused — the same long-press shortcut the previous card
   // layout had, kept so a poolside operator can go straight to the field.
   const { handlers, isPressing } = useLongPress({ onLongPress: () => onLogReading(field), onClick: () => onOpenTrends(field) });
+  // The keyboard action matches the label: Enter or Space opens trends. The
+  // long-press hook would otherwise log a reading, so override its key handler.
+  // Logging stays reachable from the keyboard via the Log Manually button.
+  const keyHandlers = {
+    ...handlers,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onOpenTrends(field);
+      }
+    },
+  };
   return (
     <div
-      {...handlers}
+      {...keyHandlers}
       role="button"
       tabIndex={0}
       aria-label={`${label}${value == null ? ', not measured' : `, ${value} ${unit}`}. Tap for trends, hold to log a reading.`}

@@ -170,6 +170,20 @@ test('summarizeWeek: counts Monday-to-today days with readings and how many stay
   assert.equal(monday.sub, 'Mon · 1 of 1 day nominal');
 });
 
+test('summarizeWeek keeps a reading late on a daylight-saving Sunday in its day', () => {
+  // In America/Chicago, 1 Nov 2026 is 25 hours long: its 23:30 reading must still count.
+  const previousTz = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  try {
+    const sunday = new Date(2026, 10, 1, 23, 45);
+    const s = summarizeWeek([reading({ timestamp: new Date(2026, 10, 1, 23, 30), ph: 7.4 })], sunday);
+    assert.equal(s.daysWithReadings, 1);
+    assert.equal(s.daysNominal, 1);
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz;
+  }
+});
+
 test('describePhDrift: least-squares slope per day over 7 days, steady under the threshold', () => {
   const rising = [0, 1, 2, 3].map((d) => reading({ timestamp: daysAgo(NOW, 3 - d), ph: 7.2 + d * 0.1 }));
   assert.equal(describePhDrift(rising, NOW), 'pH drifting +0.1 / day since Sun');

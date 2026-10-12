@@ -554,12 +554,12 @@ export default function App() {
   // save is pending is ignored, and the protocol is marked executed only if
   // it is still the current one when the save finishes: a refresh that
   // started meanwhile has replaced it, and its checklist was never saved.
-  const handleExecuteCurrentProtocol = async (): Promise<boolean> => {
+  const handleExecuteCurrentProtocol = async (confirmedProducts?: string): Promise<boolean> => {
     if (!protocol || protocol.checklist.length === 0 || protocolExecuting.current) return false;
     protocolExecuting.current = true;
     const runId = protocolRequestId.current;
     try {
-      const saved = await handleExecuteProtocol(protocolToTasks(protocol));
+      const saved = await handleExecuteProtocol(protocolToTasks(protocol, confirmedProducts));
       if (saved && protocolRequestId.current === runId) setProtocolState('executed');
       return saved;
     } finally {
@@ -580,7 +580,7 @@ export default function App() {
     });
   };
 
-  const settleProtocolConfirm = async (confirmed: boolean) => {
+  const settleProtocolConfirm = async (confirmed: boolean, products = '') => {
     const resolve = protocolConfirmResolve.current;
     protocolConfirmResolve.current = null;
     setProtocolConfirmOpen(false);
@@ -596,7 +596,7 @@ export default function App() {
       resolve(false);
       return;
     }
-    resolve(await handleExecuteCurrentProtocol());
+    resolve(await handleExecuteCurrentProtocol(products));
   };
 
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {
@@ -1123,7 +1123,7 @@ export default function App() {
         open={protocolConfirmOpen}
         steps={protocol?.checklist.map((step) => step.title) ?? []}
         onCancel={() => settleProtocolConfirm(false)}
-        onConfirm={() => settleProtocolConfirm(true)}
+        onConfirm={(products) => settleProtocolConfirm(true, products)}
       />
 
       <GeminiAssistant
