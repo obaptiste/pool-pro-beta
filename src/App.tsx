@@ -29,7 +29,7 @@ import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValida
 import { AiProtocol, ProtocolState, protocolToTasks, requestAiProtocol } from './lib/aiProtocol';
 import { TrendMetricKey } from './lib/trends';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc, runTransaction } from 'firebase/firestore';
 import { LogIn, User as UserIcon, X } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
@@ -402,6 +402,7 @@ export default function App() {
         markSaved('Note saved to database');
         setIsLogging(false);
         setHistoricLogTimestamp(null);
+        if (isHistoricEntry) setIsHistoryOpen(true);
         return;
       }
 
@@ -417,17 +418,26 @@ export default function App() {
         const nextTest = new Date(timestamp);
         nextTest.setDate(nextTest.getDate() + daysToAdd);
 
-        await setDoc(doc(db, 'schedules', user.uid), {
-          ...schedule,
-          uid: user.uid,
-          lastTestDate: Timestamp.fromDate(timestamp),
-          nextTestDate: Timestamp.fromDate(nextTest),
-        }, { merge: true });
+        // Check the stored schedule inside the transaction, not this client's
+        // snapshot: another tab or device may already have logged a later test.
+        const scheduleRef = doc(db, 'schedules', user.uid);
+        await runTransaction(db, async (transaction) => {
+          const current = await transaction.get(scheduleRef);
+          const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
+          if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
+          transaction.set(scheduleRef, {
+            ...schedule,
+            uid: user.uid,
+            lastTestDate: Timestamp.fromDate(timestamp),
+            nextTestDate: Timestamp.fromDate(nextTest),
+          }, { merge: true });
+        });
       }
 
       markSaved('Reading saved to database');
       setIsLogging(false);
       setHistoricLogTimestamp(null);
+      if (isHistoricEntry) setIsHistoryOpen(true);
     } catch (err) {
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
@@ -1098,6 +1108,9 @@ export default function App() {
               setEditingReading(reading);
             }}
             onAddHistoricReading={(timestamp) => {
+              // Close the calendar while the form is open so it isn't left
+              // interactive behind the form; it reopens on cancel or save.
+              setIsHistoryOpen(false);
               setHistoricLogTimestamp(timestamp);
               setLogFocusField(undefined);
               setIsLogging(true);
@@ -1110,8 +1123,10 @@ export default function App() {
             focusField={logFocusField}
             onSave={handleSaveReading}
             onCancel={() => {
+              const fromHistory = historicLogTimestamp !== null;
               setIsLogging(false);
               setHistoricLogTimestamp(null);
+              if (fromHistory) setIsHistoryOpen(true);
             }}
             initialTimestamp={historicLogTimestamp ?? undefined}
           />
