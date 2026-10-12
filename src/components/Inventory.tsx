@@ -84,7 +84,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                       type="text"
                       value={newItem.name}
                       onChange={e => setNewItem({ ...newItem, name: e.target.value })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                       placeholder="e.g. Chlorine Tablets"
                     />
                   </div>
@@ -94,7 +94,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                       type="text"
                       value={newItem.unit}
                       onChange={e => setNewItem({ ...newItem, unit: e.target.value })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                       placeholder="e.g. kg, L, bags"
                     />
                   </div>
@@ -104,7 +104,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                       type="number"
                       value={newItem.quantity}
                       onChange={e => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -113,7 +113,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                       type="number"
                       value={newItem.minThreshold}
                       onChange={e => setNewItem({ ...newItem, minThreshold: Number(e.target.value) })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                 </div>
@@ -140,7 +140,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2 bg-[#060e1a] rounded-xl border border-border-dim p-1">
+                  <div className="flex items-center gap-2 bg-bg rounded-xl border border-border-dim p-1">
                     <button 
                       onClick={() => onUpdateItem({ ...item, quantity: Math.max(0, item.quantity - 1) })}
                       className="w-8 h-8 rounded-lg hover:bg-surface flex items-center justify-center text-ink-dim hover:text-white transition-all"

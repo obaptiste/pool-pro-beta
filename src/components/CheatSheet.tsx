@@ -23,7 +23,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
   const sections = [
     {
       title: 'Golden Parameters',
-      icon: <Star size={16} className="text-amber-400" />,
+      icon: <Star size={16} className="text-warning-text" />,
       items: [
         { label: 'Free Chlorine', value: '1.0 - 3.0 ppm', desc: 'Primary sanitization' },
         { label: 'pH Level', value: '7.2 - 7.6', desc: 'Water balance & comfort' },
@@ -53,7 +53,7 @@ export default function CheatSheet({ isOpen, onClose }: Props) {
     },
     {
       title: 'Safety Directives',
-      icon: <ShieldCheck size={16} className="text-emerald-400" />,
+      icon: <ShieldCheck size={16} className="text-success-text" />,
       items: [
         { label: 'Storage', value: 'Dry & Isolated', desc: 'Prevent cross-reaction' },
         { label: 'PPE Protocol', value: 'Eyes & Dermal', desc: 'Handling concentrates' },

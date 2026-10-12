@@ -119,7 +119,7 @@ export default function Glossary({ isOpen, onClose }: Props) {
                   placeholder="Search technical terms, categories, or definitions..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="input pl-12 bg-[#060e1a] border-border-dim text-sm"
+                  className="input pl-12 bg-bg border-border-dim text-sm"
                 />
               </div>
             </div>

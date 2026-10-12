@@ -103,7 +103,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
                       type="text"
                       value={newItem.name}
                       onChange={e => setNewItem({ ...newItem, name: e.target.value })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                       placeholder="e.g. Hayward Variable Speed Pump"
                     />
                   </div>
@@ -112,7 +112,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
                     <input 
                       type="date"
                       onChange={e => setNewItem({ ...newItem, installDate: new Date(e.target.value) })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -121,7 +121,7 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
                       type="number"
                       value={newItem.serviceIntervalMonths}
                       onChange={e => setNewItem({ ...newItem, serviceIntervalMonths: Number(e.target.value) })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                 </div>
@@ -161,13 +161,13 @@ export default function Equipment({ isOpen, onClose, items, onUpdateItem, onDele
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-[#060e1a] border border-border-dim">
+                    <div className="p-3 rounded-xl bg-bg border border-border-dim">
                       <p className="text-[9px] text-ink-dim uppercase tracking-widest mb-1">Last Service</p>
                       <p className="text-xs font-bold text-white">
                         {item.lastServiceDate ? item.lastServiceDate.toLocaleDateString() : 'Never'}
                       </p>
                     </div>
-                    <div className={`p-3 rounded-xl bg-[#060e1a] border ${due ? 'border-red-500/30' : 'border-border-dim'}`}>
+                    <div className={`p-3 rounded-xl bg-bg border ${due ? 'border-red-500/30' : 'border-border-dim'}`}>
                       <p className="text-[9px] text-ink-dim uppercase tracking-widest mb-1">Next Service</p>
                       <p className={`text-xs font-bold ${due ? 'text-red-500' : 'text-accent'}`}>
                         {nextService ? nextService.toLocaleDateString() : 'Set interval'}
