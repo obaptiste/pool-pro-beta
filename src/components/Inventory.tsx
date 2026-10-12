@@ -166,6 +166,9 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     <p className="text-[10px] text-ink-dim uppercase tracking-widest">
                       {item.quantity} {item.unit} in stock
                     </p>
+                    <div className="mt-2">
+                      <StrengthEditor item={item} onSave={onUpdateItem} />
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
@@ -202,6 +205,76 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
           </div>
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+/**
+ * Inline editor for an existing item's strength, so the seeded chemicals can
+ * get their values. Blank clears the strength. Otherwise it must be above 0
+ * and at most 100, the same limits the Firestore rule enforces.
+ */
+function StrengthEditor({ item, onSave }: { item: InventoryItem; onSave: (item: InventoryItem) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const parsed = draft.trim() === '' ? null : Number(draft);
+  const invalid = parsed !== null && !(parsed > 0 && parsed <= 100);
+
+  const start = () => {
+    setDraft(item.concentrationPct != null ? String(item.concentrationPct) : '');
+    setEditing(true);
+  };
+
+  const save = () => {
+    if (invalid) return;
+    // Rebuild without the old key: Firestore rejects undefined values.
+    const { concentrationPct: _previous, ...rest } = item;
+    onSave(parsed === null ? rest : { ...rest, concentrationPct: parsed });
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={start}
+        className="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline"
+      >
+        {item.concentrationPct != null ? `Strength ${item.concentrationPct}%, edit` : 'Set strength'}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="number"
+        min={0.1}
+        max={100}
+        step="0.1"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        aria-label={`Strength for ${item.name}, percent`}
+        placeholder="%"
+        autoFocus
+        className="w-24 bg-bg border border-border-dim rounded-lg px-2 py-1 text-xs focus:border-accent outline-none"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={invalid}
+        className="px-3 py-1 rounded-lg bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white"
+      >
+        Cancel
+      </button>
+      {invalid && <span className="text-[10px] text-red-400">Enter 0.1 to 100, or leave blank to clear.</span>}
     </div>
   );
 }
