@@ -507,6 +507,16 @@ export default function App() {
   };
 
   const latestForAi = getLatestReadingForDisplay(readings);
+  const hasLatestReading = latestForAi != null;
+
+  // With no readings left, any protocol was built from evidence that no
+  // longer exists, so it must not stay executable.
+  useEffect(() => {
+    if (hasLatestReading) return;
+    protocolRequestId.current++;
+    setProtocol(null);
+    setProtocolState('idle');
+  }, [hasLatestReading]);
 
   // Requests a fresh AI protocol for the latest reading. The request id
   // guards against an older in-flight response landing after a newer one

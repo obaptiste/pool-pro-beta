@@ -1,6 +1,6 @@
 import { DEFAULT_RANGES, EquipmentItem, InventoryItem, Reading, Status } from '../types.js';
 import { classifyOrp, formatAge, isAutoSyncBoilerplateNote } from './readings.js';
-import { NumericReadingField } from './readingValidation.js';
+import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus } from './readingValidation.js';
 
 /**
  * Pure, testable derivations behind the home dashboard's summary surfaces
@@ -187,6 +187,16 @@ export function startOfIsoWeek(d: Date): Date {
 
 /** Every measured field of a reading sits inside its working range. */
 export function isReadingNominal(reading: Reading): boolean | null {
+  // Free and total chlorine can each sit in range while their difference is
+  // not (FC 1.0 / TC 1.8 is 0.8 ppm combined), and total below free is a
+  // measurement error. Both count as not nominal, matching the warnings
+  // WeeklyReport and the home screen already show.
+  if (reading.chlorine != null && reading.totalChlorine != null && reading.totalChlorine < reading.chlorine) {
+    return false;
+  }
+  const combined = combinedChlorineOf(reading.chlorine, reading.totalChlorine);
+  if (combined != null && getCombinedChlorineStatus(combined) !== 'good') return false;
+
   let observed = false;
   const fields: NumericReadingField[] = ['chlorine', 'totalChlorine', 'sanitisationMv', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'];
   for (const field of fields) {

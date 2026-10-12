@@ -215,7 +215,7 @@ export default function GeminiAssistant({ latestReading, history, mode, onModeCh
         : 'No latest reading is currently available.';
       const response = await callAiWithFallback({
         model: 'gemini-3-flash-preview',
-        contents: `${context}\n\nUser question: ${trimmed}\n\nProvide a direct practical answer. If diagnostics are needed, include specific checks in order.`,
+        contents: `${context}\n\nUser question: ${trimmed}\n\nProvide a direct practical answer. If diagnostics are needed, include specific checks in order.\n\nDosing rule: if the question asks how much of a chemical to add, first check that you know the product type and its strength, whether the pool is occupied or closed, and whether circulation is running. If any of these is missing, ask for it and give no amount. When you do give a dose, state the assumptions and end with a reminder to follow the product label and the pool contractor's guidance.`,
         config: { systemInstruction: POOL_SYSTEM_PROMPT },
       }, process.env.GEMINI_API_KEY!);
       setAnswer(response.text || 'No response generated.');

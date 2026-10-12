@@ -137,6 +137,11 @@ test('isReadingNominal: null when nothing measured, false on any out-of-range fi
   assert.equal(isReadingNominal(reading({ ph: 7.4, chlorine: 0.4 })), false);
   assert.equal(isReadingNominal(reading({ sanitisationMv: 700 })), true);
   assert.equal(isReadingNominal(reading({ sanitisationMv: 600 })), false);
+  // Each chlorine value in range, but combined chlorine is 0.8 ppm: not nominal.
+  assert.equal(isReadingNominal(reading({ chlorine: 1.0, totalChlorine: 1.8 })), false);
+  assert.equal(isReadingNominal(reading({ chlorine: 1.0, totalChlorine: 1.4 })), true);
+  // Total below free is a measurement error.
+  assert.equal(isReadingNominal(reading({ chlorine: 2.0, totalChlorine: 1.5 })), false);
 });
 
 test('summarizeWeek: counts Monday-to-today days with readings and how many stayed nominal', () => {
