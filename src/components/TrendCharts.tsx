@@ -19,6 +19,8 @@ interface Props {
   readings: Reading[];
   userId: string;
   onLogReading: () => void;
+  /** Chart to scroll into view on mount (e.g. the telemetry card that was tapped on the dashboard). */
+  focusMetric?: TrendMetricKey;
 }
 
 const METRICS: { key: TrendMetricKey; title: string; color: string; unit: string }[] = [
@@ -39,8 +41,16 @@ const parseStoredDate = (value: string | null): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export default function TrendCharts({ readings, userId, onLogReading }: Props) {
+export default function TrendCharts({ readings, userId, onLogReading, focusMetric }: Props) {
   const storageKey = `poolpro:trend-start:${userId}`;
+  React.useEffect(() => {
+    if (!focusMetric) return;
+    // Next frame: the charts (ResponsiveContainer) need a layout pass first.
+    const id = requestAnimationFrame(() => {
+      document.getElementById(`trend-${focusMetric}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [focusMetric]);
   const [resetAt, setResetAt] = React.useState<Date | null>(() => parseStoredDate(localStorage.getItem(storageKey)));
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
   const currentReadings = filterReadingsFrom(readings, resetAt);
@@ -111,6 +121,7 @@ export default function TrendCharts({ readings, userId, onLogReading }: Props) {
         {METRICS.map((metric) => (
           <ChartSection
             key={metric.key}
+            id={`trend-${metric.key}`}
             title={metric.title}
             data={buildTrendPoints(currentReadings, metric.key, (date) => format(date, 'MMM d, HH:mm'))}
             color={metric.color}
@@ -123,7 +134,8 @@ export default function TrendCharts({ readings, userId, onLogReading }: Props) {
   );
 }
 
-function ChartSection({ title, data, color, unit, range }: {
+function ChartSection({ id, title, data, color, unit, range }: {
+  id: string;
   title: string;
   data: ReturnType<typeof buildTrendPoints>;
   color: string;
@@ -133,7 +145,7 @@ function ChartSection({ title, data, color, unit, range }: {
   const gradientId = `gradient-${title.replace(/\s+/g, '-')}`;
   const hasActual = data.some((point) => point.actual != null);
   return (
-    <section className="card bg-[#0d1f38] border-border-dim space-y-4 p-5" aria-label={`${title} trend chart`}>
+    <section id={id} className="card bg-[#0d1f38] border-border-dim space-y-4 p-5 scroll-mt-4" aria-label={`${title} trend chart`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-xs font-bold uppercase tracking-widest text-white">{title}</h3>

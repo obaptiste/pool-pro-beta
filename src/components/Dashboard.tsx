@@ -1,108 +1,115 @@
-import React, { useRef, useState } from 'react';
-import { 
-  Droplets, 
-  Thermometer, 
-  Activity, 
-  AlertCircle, 
-  Plus, 
-  BookOpen, 
-  Book,
-  Download, 
-  CheckCircle2, 
-  Circle,
-  ChevronRight,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Printer,
-  LayoutDashboard,
-  LineChart as LineChartIcon,
-  X,
-  Sparkles,
+import React from 'react';
+import {
+  AlertCircle,
+  AlertTriangle,
   Bell,
-  Calendar,
-  ChevronDown,
-  RotateCw
+  CheckCircle2,
+  ChevronRight,
+  FileText,
+  LineChart as LineChartIcon,
+  ListChecks,
+  Loader2,
+  Package,
+  Play,
+  Plus,
+  Plug,
+  RotateCw,
+  Sparkles,
+  Wrench,
+  X,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem } from '../types';
-import TrendCharts from './TrendCharts';
-import { calculateLSI, getLsiStatus, getLsiDisplayLabel } from '../lib/lsi';
-import { callAiWithFallback } from '../lib/ai';
+import { motion } from 'motion/react';
+import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE } from '../types';
+import { calculateLSI, getLsiStatus } from '../lib/lsi';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
-import { NumericReadingField, COMBINED_CHLORINE_OK_MAX, combinedChlorineOf, getCombinedChlorineStatus, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
+import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
+import {
+  describePhDrift,
+  describeSync,
+  getLsiStateWord,
+  getRangeStatus,
+  getTrendGlyph,
+  lsiMarkerPercent,
+  summarizeAgentActivity,
+  summarizeEquipment,
+  summarizeInventory,
+  summarizeWeek,
+  TileBadge,
+} from '../lib/dashboardSummary';
+import { AiProtocol, ProtocolState, PROTOCOL_ERROR_MESSAGE, protocolHeadline } from '../lib/aiProtocol';
+import { TrendMetricKey } from '../lib/trends';
 import { useLongPress } from '../lib/useLongPress';
 import { useToast } from '../lib/toast';
 
-// Per AGENTS.md's pool chemistry safety rules: keep dosing guidance
-// conservative, never state a specific amount without volume/concentration
-// context, and don't dress up guesswork as certainty. Passed as the system
-// instruction for the LSI recommendation so this holds whether Gemini
-// answers directly or the request falls back to Claude/OpenAI (which have
-// no other exposure to this app's domain rules for this particular call).
-const LSI_SAFETY_INSTRUCTION =
-  'You are a professional pool-chemistry advisor. Give one conservative, technically accurate sentence of guidance based on the LSI and readings provided. Never state a specific chemical dosing amount unless pool volume and product concentration are given — speak in relative terms (e.g. "add a small amount of muriatic acid") instead. Recommend retesting after any adjustment before swimming. If a reading needed for a confident recommendation is missing, say so instead of guessing.';
+export type AssistantOpenMode = 'menu' | 'protocol';
 
 interface Props {
-  userId: string;
   readings: Reading[];
+  /** False until the first Firestore snapshot lands — drives the skeleton state. */
+  readingsLoaded: boolean;
   tasks: MaintenanceTask[];
   schedule: MaintenanceSchedule;
   inventory: InventoryItem[];
   equipment: EquipmentItem[];
+  protocol: AiProtocol | null;
+  protocolState: ProtocolState;
+  onRequestProtocol: () => void;
+  onExecuteProtocol: () => void;
   onLogReading: (focusField?: NumericReadingField) => void;
-  onOpenCheatSheet: () => void;
-  onOpenGlossary: () => void;
   onViewHistory: () => void;
+  onOpenTrends: (metric?: TrendMetricKey) => void;
+  onOpenTasks: () => void;
+  onOpenEquipment: () => void;
+  onOpenInventory: () => void;
+  onOpenWeeklyReport: () => void;
   onOpenReminderSettings: () => void;
-  onExport: () => void;
-  onPrint: () => void;
-  toggleTask: (id: string) => void;
-  onAddTask: (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => void;
+  onOpenAssistant: (mode: AssistantOpenMode) => void;
   onSyncPoolController: () => Promise<{ written: boolean; outcome?: string }>;
 }
 
-export default function Dashboard({ userId, readings, tasks, schedule, inventory, equipment, onLogReading, onOpenCheatSheet, onOpenGlossary, onViewHistory, onOpenReminderSettings, onExport, onPrint, toggleTask, onAddTask, onSyncPoolController }: Props) {
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'trends'>('overview');
-  const [taskFilter, setTaskFilter] = React.useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
-  const [isAddingTask, setIsAddingTask] = React.useState(false);
-  const [newTask, setNewTask] = React.useState<Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>>({
-    title: '',
-    completed: false,
-    priority: 'medium',
-    frequency: 'once'
-  });
+// Status tints from the design tokens: text at the -400 Tailwind stop,
+// background at 6–8 % and border at 35–45 % of the base colour.
+const STATUS_UI: Record<Status, { text: string; bg: string; border: string; chip: string; hex: string }> = {
+  good: { text: 'text-emerald-400', bg: 'bg-success/6', border: 'border-success/35', chip: '✓ OK', hex: '#34D399' },
+  warning: { text: 'text-amber-400', bg: 'bg-warning/7', border: 'border-warning/40', chip: '⚠ Watch', hex: '#FBBF24' },
+  critical: { text: 'text-red-400', bg: 'bg-critical/8', border: 'border-critical/45', chip: '✕ Action', hex: '#F87171' },
+};
+const NEUTRAL_UI = { text: 'text-ink-muted', bg: 'bg-surface-2', border: 'border-border-dim', chip: '—', hex: '#8AB4CC' };
+
+const LABEL = 'text-[10px] font-bold uppercase tracking-[0.16em] text-ink-dim';
+const CARD_SHADOW = 'shadow-[0_10px_20px_rgba(0,0,0,0.4)]';
+
+const sectionMotion = (index: number) => ({
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  transition: { delay: index * 0.04 },
+});
+
+export default function Dashboard({
+  readings, readingsLoaded, tasks, schedule, inventory, equipment,
+  protocol, protocolState, onRequestProtocol, onExecuteProtocol,
+  onLogReading, onViewHistory, onOpenTrends, onOpenTasks, onOpenEquipment, onOpenInventory, onOpenWeeklyReport,
+  onOpenReminderSettings, onOpenAssistant, onSyncPoolController,
+}: Props) {
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
-  const [lsiAnalysis, setLsiAnalysis] = React.useState<string | null>(null);
-  const [isLsiLoading, setIsLsiLoading] = React.useState(false);
-  // ORP staleness (below) is judged against wall-clock "now", but this
-  // component otherwise only re-renders when props/state change -- if
-  // auto-sync polling stops entirely, no new Firestore snapshot ever
-  // arrives, so nothing would trigger a re-render and isOrpStale/formatAge
-  // would stay frozen at whatever "now" was during the last render,
-  // forever. This ticks the clock forward once a minute so a reading that
-  // crosses the staleness threshold while the page just sits open still
-  // gets caught.
+  // ORP staleness and the sync pill's age are judged against wall-clock
+  // "now", but this component otherwise only re-renders when props/state
+  // change -- if auto-sync polling stops entirely, no new Firestore snapshot
+  // ever arrives, so nothing would trigger a re-render and the "LIVE · 2
+  // MIN" pill would stay frozen forever. Tick once a minute so a reading
+  // that crosses the staleness threshold while the page sits open is caught.
   const [now, setNow] = React.useState(() => new Date());
   React.useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
   }, []);
 
-  // Small status light on the "Status" wordmark, doubling as a manual
-  // "sync now" button for the Hanna Cloud pool controller telemetry job
-  // (see CLAUDE.md's "Pool controller telemetry" section) — rather than
-  // waiting for the next scheduled poll. syncLight reflects the outcome
-  // briefly, then fades back to idle so it never looks like a permanent
-  // status (the ORP staleness caption above already covers "is the data
-  // actually current").
+  // The sync pill doubles as the manual "sync now" button for the Hanna
+  // Cloud pool controller telemetry job (see CLAUDE.md's "Pool controller
+  // telemetry" section). syncLight reflects the outcome briefly, then
+  // fades back to idle so it never looks like a permanent status.
   const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
   const toast = useToast();
-  // Tracks the pending "fade back to idle" timer so a second sync started
-  // during that 3s window can cancel it: otherwise the first sync's timer
-  // could fire while the second request is still in flight, resetting the
-  // light to idle (re-enabling the button, since handleSyncClick's guard
-  // reads syncLight) and hiding that a sync is still actually running.
   const syncResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => () => {
     if (syncResetTimer.current) clearTimeout(syncResetTimer.current);
@@ -120,10 +127,8 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
     } catch (e) {
       console.error('Manual pool controller sync failed:', e);
       setSyncLight('error');
-      // The dot alone is aria-hidden and fades after a few seconds — on
-      // its own that's no feedback for a screen reader, and easy to miss
-      // even for a sighted user glancing away. toast's error variant is
-      // role="alert"/aria-live="assertive" (see lib/toast.tsx).
+      // The pill alone fades after a few seconds — toast's error variant is
+      // role="alert" so a screen reader (or a glance away) doesn't miss it.
       toast.error(e instanceof Error ? e.message : 'Pool controller sync failed');
     } finally {
       syncResetTimer.current = setTimeout(() => {
@@ -134,946 +139,605 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
   };
 
   // Backfills alkalinity/calciumHardness (LSI's slow-changing inputs) from
-  // history when the latest reading is a controller-only poll that
-  // doesn't report them — see getLatestReadingForDisplay's docstring for
-  // why only those two fields, and why this is presentation-only.
+  // history when the latest reading is a controller-only poll — see
+  // getLatestReadingForDisplay's docstring for why only those two fields.
   const latest = getLatestReadingForDisplay(readings);
 
   // ORP alone: a real controller response can report pH/temperature but
-  // omit ORP for one poll. Without this, that single blank field would
-  // silently drop a genuinely recent, still-relevant low/high ORP warning
-  // from the alert list and status card the moment the next poll lands.
-  // Bounded (see getMostRecentOrp) and always labeled with its own age
-  // below — never presented as if it were this instant's reading.
-  //
-  // Staleness is judged against wall-clock "now" (isOrpStale), not against
-  // whether a fallback happened: if auto-sync polling stops entirely
-  // (expired credentials, an outage), the last successful reading IS the
-  // latest reading — there's no fallback to trigger on — so comparing
-  // recentOrp.at to latest.timestamp would never catch a monitoring gap
-  // that's making an old value look current.
+  // omit ORP for one poll. Bounded (see getMostRecentOrp) and always
+  // labeled with its own age — never presented as this instant's reading.
   const recentOrp = getMostRecentOrp(readings);
   const orpIsStale = recentOrp != null && isOrpStale(recentOrp.at, now);
 
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
-  const lsiCardStatus: Status | null = lsiScore == null ? null : getLsiStatus(lsiScore);
+  const lsiStatus: Status | null = lsiScore == null ? null : getLsiStatus(lsiScore);
 
-  const fmtField = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
-
-  const runLsiAnalysis = async () => {
-    if (!latest || isLsiLoading || lsiScore == null) return;
-    setIsLsiLoading(true);
-    try {
-      const response = await callAiWithFallback({
-        model: "gemini-2.0-flash",
-        contents: `Analyze this LSI score of ${lsiScore} for a pool.
-        Context: pH ${fmtField(latest.ph)}, Temp ${fmtField(latest.temperature)}°C, CH ${fmtField(latest.calciumHardness)}, TA ${fmtField(latest.alkalinity)}.
-        Provide a 1-sentence technical recommendation.`,
-        config: {
-          systemInstruction: LSI_SAFETY_INSTRUCTION,
-        },
-      }, process.env.GEMINI_API_KEY!);
-      setLsiAnalysis(response.text || "Analysis unavailable.");
-    } catch (e) {
-      console.error(e);
-      setLsiAnalysis("Failed to load AI analysis.");
-    } finally {
-      setIsLsiLoading(false);
-    }
-  };
-
-  // Key on the actual LSI inputs, not latest.id: every 15-min auto-sync
-  // poll (see sync.ts) creates a new reading document, so keying on id
-  // alone re-triggers this paid AI call on every single poll once
-  // getLatestReadingForDisplay's alkalinity/calciumHardness backfill makes
-  // lsiScore computable from an otherwise-unchanged manual test. Only a
-  // genuine change in what calculateLSI() actually reads should re-run it.
+  // Protocol auto-run keyed on the actual LSI inputs, not latest.id: every
+  // 15-min auto-sync poll creates a new reading document, so keying on id
+  // alone would re-trigger this paid AI call on every single poll. Only a
+  // genuine change in what the analysis reads should re-run it; the
+  // assistant sheet's "Analyze readings" re-runs it on demand.
   const lsiInputsKey = latest ? [latest.ph, latest.temperature, latest.calciumHardness, latest.alkalinity].join('|') : null;
-
   React.useEffect(() => {
-    if (latest) {
-      runLsiAnalysis();
-    }
+    if (latest) onRequestProtocol();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lsiInputsKey]);
 
-  const getStatus = (value: number, min: number, max: number): Status => {
-    if (value < min || value > max) return 'critical';
-    const range = max - min;
-    const buffer = range * 0.1;
-    if (value < min + buffer || value > max - buffer) return 'warning';
-    return 'good';
-  };
-
-  // ORP doesn't fit the generic min/max classifier above: it has its own
-  // three-tier band (650/750/850 mV, see classifyOrp's own doc comment)
-  // rather than a single critical ceiling. Delegates to lib/readings.ts's
-  // classifyOrp so this status badge, the MCP server's fieldStatus, and
-  // WeeklyReport's classifyOrpRange all share one set of thresholds.
-  const getOrpStatus = (value: number): Status => classifyOrp(value);
+  const combinedChlorine = latest ? combinedChlorineOf(latest.chlorine, latest.totalChlorine) : null;
 
   // Every alert's own live condition, unfiltered by dismissal — feeds both
   // allAlerts (for rendering) and the effect below that decides which
   // dismissals are still valid.
-  const rawAlerts = latest ? [
+  const rawAlerts: { id: string; condition: boolean; msg: string; action: string; severity: 'critical' | 'warning' }[] = latest ? [
     {
       id: 'cl_low',
-      type: 'chlorine',
       condition: latest.chlorine != null && latest.chlorine < DEFAULT_RANGES.chlorine.min,
       msg: 'Free chlorine critically low — pool unsafe. Dose now.',
       action: 'Add chlorine or shock treatment immediately.',
-      severity: 'critical'
+      severity: 'critical',
     },
     {
       id: 'cl_high',
-      type: 'chlorine',
       condition: latest.chlorine != null && latest.chlorine > DEFAULT_RANGES.chlorine.max,
       msg: 'Chlorine elevated — likely post-shock.',
       action: 'Stop chlorination and wait for levels to drop.',
-      severity: 'warning'
+      severity: 'warning',
+    },
+    // Combined chlorine (chloramines) isn't one of the four telemetry cards
+    // on this screen, so the one place it can still reach the operator is
+    // here. Thresholds follow readingValidation's getCombinedChlorineStatus.
+    {
+      id: 'cc_high',
+      condition: combinedChlorine != null && getCombinedChlorineStatus(combinedChlorine) === 'critical',
+      msg: `Combined chlorine ${combinedChlorine?.toFixed(1)} ppm (>${COMBINED_CHLORINE_MAX}) — chloramines high.`,
+      action: 'Shock to breakpoint and retest before swimming.',
+      severity: 'warning',
     },
     // sanitisationMv (ORP) is the only sanitiser signal a pool-controller
-    // sync ever reports (chlorine ppm stays null — see the "Pool
-    // controller telemetry" note in CLAUDE.md), so without this alert a
-    // dangerously low ORP from an auto-synced reading would show zero
-    // alerts on the dashboard. Thresholds and the "verify before dosing"
-    // action text follow AGENTS.md's "ORP / sanitisation power" and
-    // "Chlorine and shocking" sections: ORP indicates sanitising
-    // effectiveness, not a chlorine ppm value, so an ORP-only alert
-    // must send the operator to actually test chlorine (and check
-    // circulation) rather than tell them to dose blind.
-    //
-    // Reads recentOrp, not latest.sanitisationMv directly: a real
-    // controller poll can report pH/temperature but omit ORP for one
-    // cycle, and requiring the literal latest reading to carry ORP would
-    // let a genuinely recent, still-relevant warning vanish the moment
-    // that happens. When recentOrp falls back to an earlier reading, its
-    // age is appended so it's never presented as this instant's value.
-    // orp_low/orp_high check the raw value against named boundaries rather
-    // than branching on getOrpStatus's coarse Status: since classifyOrp now
-    // has a genuine high-side critical tier (>850 mV, not just >750),
-    // 'critical' alone no longer means "low" -- these two alerts need their
-    // own direction. orp_high deliberately keys off ORP_ACTION_ALERT_MV
-    // (800 mV, AGENTS.md's own literal "verify before swimming" line), not
-    // classifyOrp's ORP_HIGH_WARNING_MV (850 mV, the status badge's stricter
-    // ceiling) -- those are two different thresholds for two different
-    // purposes, and collapsing them into one previously made this alert
-    // silently stop firing for 801-850 mV, a real regression a review caught.
+    // sync ever reports, so without this alert a dangerously low ORP from an
+    // auto-synced reading would show zero alerts. Thresholds and the "verify
+    // before dosing" action text follow AGENTS.md: ORP indicates sanitising
+    // effectiveness, not a chlorine ppm value, so an ORP-only alert must send
+    // the operator to actually test chlorine rather than dose blind.
+    // orp_high keys off ORP_ACTION_ALERT_MV (800 mV, AGENTS.md's own literal
+    // "verify before swimming" line), not classifyOrp's 850 mV ceiling.
     {
       id: 'orp_low',
-      type: 'sanitisation',
       condition: recentOrp != null && recentOrp.value < DEFAULT_RANGES.sanitisationMv.min,
       msg: `Sanitisation (ORP) too low — disinfection may be inadequate.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Test free chlorine and confirm circulation/filtration is running before dosing — ORP is not a ppm reading.',
-      severity: 'critical'
+      severity: 'critical',
     },
     {
       id: 'orp_high',
-      type: 'sanitisation',
       condition: recentOrp != null && recentOrp.value > ORP_ACTION_ALERT_MV,
       msg: `Sanitisation (ORP) high — verify before swimming or adding more chlorine.${orpIsStale ? ` (last measured ${formatAge(recentOrp!.at, now)})` : ''}`,
       action: 'Retest and confirm dosing hasn\'t over-shot before any further additions.',
-      severity: 'warning'
+      severity: 'warning',
     },
     {
       id: 'ph_low',
-      type: 'ph',
       condition: latest.ph != null && latest.ph < DEFAULT_RANGES.ph.min,
       msg: 'pH too low — corrosive water.',
       action: 'Add sodium carbonate (Soda Ash).',
-      severity: 'critical'
+      severity: 'critical',
     },
     {
       id: 'ph_high',
-      type: 'ph',
       condition: latest.ph != null && latest.ph > DEFAULT_RANGES.ph.max,
       msg: 'pH too high — chlorine less effective.',
       action: 'Add muriatic acid.',
-      severity: 'warning'
+      severity: 'warning',
     },
     {
       id: 'alk_low',
-      type: 'alkalinity',
       condition: latest.alkalinity != null && latest.alkalinity < DEFAULT_RANGES.alkalinity.min,
       msg: 'Low alkalinity — pH will be unstable.',
       action: 'Add sodium bicarbonate.',
-      severity: 'warning'
+      severity: 'warning',
     },
     {
       id: 'alk_high',
-      type: 'alkalinity',
       condition: latest.alkalinity != null && latest.alkalinity > DEFAULT_RANGES.alkalinity.max,
       msg: 'Alkalinity is too high.',
       action: 'Add pH decreaser or partially drain.',
-      severity: 'warning'
+      severity: 'warning',
     },
     {
       id: 'dp_high',
-      type: 'pressure',
       condition: latest.differentialPressure != null && latest.differentialPressure > DEFAULT_RANGES.differentialPressure.max,
       msg: 'Filter pressure elevated — flow restricted.',
       action: 'Backwash filter or clean cartridges immediately.',
-      severity: 'critical'
+      severity: 'critical',
     },
     {
-      // Unlike the sensor alerts above, test_due can stay continuously
-      // true across a schedule change: ReminderSettings.handleFrequencyChange
-      // derives the new nextTestDate from the existing lastTestDate, so a
-      // frequency change can produce a still-overdue date without the
-      // condition ever going false in between. Folding nextTestDate into
-      // the id gives each due-date its own dismissal identity, so a
-      // schedule change re-surfaces the warning even when "overdue" never
-      // toggled off — condition-based clearing (the effect below) still
-      // handles the normal case where logging a reading pushes it into
-      // the future.
+      // Folding nextTestDate into the id gives each due-date its own
+      // dismissal identity, so a schedule change re-surfaces the warning
+      // even when "overdue" never toggled off in between.
       id: schedule.nextTestDate ? `test_due:${new Date(schedule.nextTestDate).getTime()}` : 'test_due',
-      type: 'schedule',
-      condition: schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false,
+      condition: schedule.nextTestDate ? now >= new Date(schedule.nextTestDate) : false,
       msg: 'Water test due — maintenance schedule.',
       action: 'Log a new reading to maintain water balance.',
-      severity: 'warning'
-    }
+      severity: 'warning',
+    },
   ] : [];
 
-  const allAlerts = rawAlerts.filter(a => a.condition && !dismissedAlerts.includes(a.id));
+  const allAlerts = rawAlerts.filter((a) => a.condition && !dismissedAlerts.includes(a.id));
 
-  // Auto-clear a dismissal once its own alert's condition resolves (goes
-  // false) rather than resetting all dismissals on any composite-value
-  // change: that earlier approach either reset every dismissal on any
-  // 15-min auto-sync poll (keying on latest.id) or still reset all of
-  // them whenever any *one* tracked value changed, including unrelated
-  // fields or same-band jitter (e.g. ORP moving a few mV while still
-  // under the low threshold) — see the PR review this replaced. Keying
-  // per-alert on its own condition means a dismissal survives noise and
-  // unrelated changes, and only actually re-arms once that alert's
-  // condition has gone false and can genuinely recur.
-  const activeAlertIdsKey = rawAlerts.filter(a => a.condition).map(a => a.id).join('|');
+  // Auto-clear a dismissal once its own alert's condition resolves, so a
+  // dismissal survives unrelated changes and same-band jitter but re-arms
+  // once the alert has genuinely gone away and can recur.
+  const activeAlertIdsKey = rawAlerts.filter((a) => a.condition).map((a) => a.id).join('|');
   React.useEffect(() => {
     const activeIds = new Set(activeAlertIdsKey ? activeAlertIdsKey.split('|') : []);
-    setDismissedAlerts(prev => {
-      const next = prev.filter(id => activeIds.has(id));
+    setDismissedAlerts((prev) => {
+      const next = prev.filter((id) => activeIds.has(id));
       return next.length === prev.length ? prev : next;
     });
   }, [activeAlertIdsKey]);
 
-  const dismissAlert = (id: string) => {
-    setDismissedAlerts(prev => [...prev, id]);
-  };
+  const isTestDue = schedule.nextTestDate ? now >= new Date(schedule.nextTestDate) : false;
+  const hasUnread = isTestDue || allAlerts.length > 0;
 
-  const isTestDue = schedule.nextTestDate ? new Date() >= new Date(schedule.nextTestDate) : false;
+  const sync = describeSync(readings[0], now);
 
-  const lowInventory = inventory.filter(item => item.quantity <= item.minThreshold);
-  const equipmentNeedingService = equipment.filter(item => {
-    if (!item.lastServiceDate || !item.serviceIntervalMonths) return false;
-    const nextService = new Date(item.lastServiceDate);
-    nextService.setMonth(nextService.getMonth() + item.serviceIntervalMonths);
-    return new Date() >= nextService;
-  });
+  const tasksDone = tasks.filter((t) => t.completed).length;
+  const tasksTotal = tasks.length;
 
-  const getPriorityColor = (priority: MaintenanceTask['priority']) => {
-    switch (priority) {
-      case 'critical': return 'text-red-400 bg-red-400/10 border-red-400/20';
-      case 'high': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
-      case 'medium': return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20';
-      case 'low': return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
-      default: return 'text-ink-dim bg-surface border-border-dim';
-    }
-  };
+  const equipmentTile = summarizeEquipment(equipment, now);
+  const inventoryTile = summarizeInventory(inventory);
+  const weekTile = summarizeWeek(readings, now);
+  const agents = summarizeAgentActivity(readings, now);
 
-  // Filter nulls before slicing to 7, not after: auto-synced controller
-  // readings (every 15 min, see sync.ts) only report pH/ORP/temperature, so
-  // slicing the 7 most recent documents first could hit seven consecutive
-  // controller-only polls (~105 minutes) and empty out the chlorine/
-  // alkalinity/pressure sparklines even when recent manual measurements
-  // exist just beyond that window.
-  // Same "filter nulls before taking 7" behavior as before, but stops
-  // scanning as soon as 7 valid points are found instead of always
-  // mapping/filtering the whole (unbounded — see CLAUDE.md's "unbounded
-  // readings growth" known issue) readings array on every render.
-  const getTrendData = (key: keyof Reading) => {
-    const values: number[] = [];
-    for (const r of readings) {
-      const v = r[key];
-      if (typeof v === 'number' && !isNaN(v)) {
-        values.push(v);
-        if (values.length === 7) break;
-      }
-    }
-    return values.reverse();
-  };
+  const metricStatus = (value: number | null | undefined, range: { min: number; max: number }): Status | null =>
+    value == null ? null : getRangeStatus(value, range.min, range.max);
 
-  const combinedChlorineTrend = (() => {
-    const values: number[] = [];
-    for (const r of readings) {
-      const v = combinedChlorineOf(r.chlorine, r.totalChlorine);
-      if (v != null) {
-        values.push(v);
-        if (values.length === 7) break;
-      }
-    }
-    return values.reverse();
-  })();
-
-  const handleAddTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTask.title.trim()) return;
-    onAddTask(newTask);
-    setNewTask({ title: '', completed: false, priority: 'medium', frequency: 'once' });
-    setIsAddingTask(false);
-  };
+  let section = 0;
 
   return (
-    <div className="space-y-6 pb-24 anim-fade-up">
-      {/* Header Section */}
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="wordmark text-2xl text-white flex items-center">
-            Pool<span className="text-accent">Status</span>
-            {/* A dot overlaid on the wordmark text (the original design) is
-                invisible at idle and only ~text-height on a touch screen --
-                easy for a poolside operator to never discover or to miss
-                with wet fingers. This is a separate, always-visible icon
-                with a real touch target (44px via padding, independent of
-                the icon's own small visual size) right after the wordmark,
-                colored/animated by syncLight so the affordance itself
-                explains what it does without depending on a hover tooltip. */}
+    <div className="min-h-screen">
+      {/* ── Top chrome ─────────────────────────────────────────────────── */}
+      <header
+        className="sticky top-0 z-30 bg-bg/85 backdrop-blur-[12px] border-b border-border-dim no-print"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      >
+        <div className="max-w-4xl mx-auto px-5 py-3 flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h1 className="text-lg font-extrabold uppercase tracking-[0.14em] leading-none whitespace-nowrap text-white">
+              Pool<span className="text-accent">Status</span>
+            </h1>
+            <p className="font-mono text-[10px] tracking-[0.12em] uppercase text-ink-dim whitespace-nowrap">
+              {POOL_PROFILE.name} · {POOL_PROFILE.volumeLitres.toLocaleString()} L
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={handleSyncClick}
               disabled={syncLight === 'syncing'}
-              aria-label="Sync latest reading from the pool controller now"
+              aria-label="Telemetry sync status. Tap to sync the latest reading from the pool controller now."
               title="Sync latest reading from the pool controller now"
-              className="no-print inline-flex items-center justify-center w-11 h-11 -m-3.5 ml-0.5 rounded-full bg-transparent border-0 hover:bg-white/5 active:bg-white/10 transition-colors disabled:cursor-wait"
+              className="h-9 px-2.5 rounded-full bg-surface border border-border-dim flex items-center gap-[7px] active:scale-95 transition-transform disabled:cursor-wait"
             >
-              <RotateCw
-                size={15}
-                aria-hidden="true"
-                className={`transition-colors duration-300 ${
-                  syncLight === 'syncing' ? 'text-accent animate-spin' :
-                  syncLight === 'success' ? 'text-success' :
-                  syncLight === 'error'   ? 'text-critical' :
-                  syncLight === 'neutral' ? 'text-warning' :
-                  'text-ink-dim'
-                }`}
-              />
+              <SyncDot kind={syncLight === 'syncing' ? 'syncing' : syncLight === 'error' ? 'error' : sync.kind} />
+              <span className={`font-mono text-[10px] tracking-[0.1em] uppercase whitespace-nowrap ${sync.kind === 'stale' && syncLight === 'idle' ? 'text-amber-400' : 'text-ink-muted'}`}>
+                {syncLight === 'syncing' ? 'SYNCING…' : syncLight === 'success' ? 'SYNCED' : syncLight === 'error' ? 'SYNC FAILED' : sync.label}
+              </span>
             </button>
-          </h1>
-          <p className="text-[10px] font-mono text-ink-dim uppercase tracking-[0.2em]">
-            Last reading: {latest ? latest.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data'}
-          </p>
-        </div>
-        <div className="flex gap-2 no-print">
-          <button onClick={onPrint} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors">
-            <Printer size={18} />
-          </button>
-          <button onClick={onExport} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors">
-            <Download size={18} />
-          </button>
-          <button onClick={onOpenCheatSheet} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors" title="Technical Reference">
-            <BookOpen size={18} />
-          </button>
-          <button onClick={onOpenGlossary} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors" title="Glossary">
-            <Book size={18} />
-          </button>
-          <button onClick={onOpenReminderSettings} className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors" title="Reminders">
-            <Bell size={18} />
-          </button>
+            <button
+              type="button"
+              onClick={onOpenReminderSettings}
+              aria-label={hasUnread ? 'Reminders — attention needed' : 'Reminders'}
+              title="Reminders"
+              className="relative w-11 h-11 rounded-xl bg-surface border border-border-dim flex items-center justify-center text-ink-muted active:scale-95 transition-transform"
+            >
+              <Bell size={20} />
+              {hasUnread && <span aria-hidden="true" className="absolute top-[10px] right-[11px] w-[7px] h-[7px] rounded-full bg-warning ring-2 ring-surface" />}
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Tab Navigation */}
-      <div className="flex p-1 bg-[#0a1628] border border-border-dim rounded-xl no-print">
-        <button 
-          onClick={() => setActiveTab('overview')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeTab === 'overview' ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'}`}
-        >
-          <LayoutDashboard size={14} />
-          Overview
-        </button>
-        <button 
-          onClick={() => setActiveTab('trends')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeTab === 'trends' ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'}`}
-        >
-          <LineChartIcon size={14} />
-          Trends
-        </button>
-      </div>
-
-      <AnimatePresence mode="wait">
-        {activeTab === 'overview' ? (
-          <motion.div 
-            key="overview"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
-      {/* Alerts Section */}
-      <div className="space-y-3 no-print">
-        {allAlerts.length > 0 && (
-          <div className="space-y-2">
-            {allAlerts.map((alert: any) => (
-              <motion.div 
-                key={alert.id}
-                initial={{ opacity: 0, height: 0, scale: 0.95 }}
-                animate={{ opacity: 1, height: 'auto', scale: 1 }}
-                exit={{ opacity: 0, height: 0, scale: 0.95 }}
-                className={`p-3 rounded-xl border flex gap-3 relative overflow-hidden ${
-                  alert.severity === 'critical' 
-                    ? 'bg-critical/10 border-critical/30 text-red-300' 
-                    : 'bg-warning/10 border-warning/30 text-amber-300'
-                }`}
-              >
-                <div className="mt-0.5">
-                  <AlertCircle size={16} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold uppercase tracking-wider mb-1">
-                    {alert.msg}
-                  </p>
-                  <p className="text-[10px] opacity-80 leading-relaxed">
-                    <span className="font-bold">ACTION:</span> {alert.action}
-                  </p>
-                </div>
-                <button 
-                  onClick={() => dismissAlert(alert.id)}
-                  className="p-1 h-fit text-current opacity-50 hover:opacity-100 transition-opacity"
-                >
-                  <X size={14} />
-                </button>
-              </motion.div>
-            ))}
-          </div>
-        )}
-
-        {lowInventory.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center gap-4"
-          >
-            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 shrink-0">
-              <Plus size={20} />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-red-500 font-bold text-xs uppercase tracking-widest">Low Inventory</h3>
-              <p className="text-ink-dim text-[11px]">{lowInventory.length} items are below minimum threshold.</p>
-            </div>
-          </motion.div>
-        )}
-
-        {equipmentNeedingService.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="p-4 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-4"
-          >
-            <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center text-yellow-500 shrink-0">
-              <Activity size={20} />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-yellow-500 font-bold text-xs uppercase tracking-widest">Equipment Service Due</h3>
-              <p className="text-ink-dim text-[11px]">{equipmentNeedingService.length} items require maintenance.</p>
-            </div>
-          </motion.div>
-        )}
-      </div>
-
-            {/* Status Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className={`card anim-scan border col-span-2 flex flex-col justify-between p-4 ${
-                lsiCardStatus == null ? 'text-ink-dim border-border-dim bg-surface' :
-                lsiCardStatus === 'critical' ? 'text-red-400 border-red-500/30 bg-red-500/5' :
-                lsiCardStatus === 'warning' ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
-                'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Saturation Index (LSI)</p>
-                  <Sparkles size={14} className={isLsiLoading ? 'animate-spin' : ''} />
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-4xl font-bold font-mono">{lsiScore ?? '—'}</span>
-                  <span className="text-[10px] uppercase tracking-widest opacity-70">
-                    {lsiScore == null ? 'Insufficient data' : getLsiDisplayLabel(lsiScore)}
-                  </span>
-                </div>
-                <p className="text-[9px] mt-2 italic opacity-80 line-clamp-2">
-                  {lsiScore == null ? 'Log pH, temperature, calcium hardness, and alkalinity to compute LSI.' : isLsiLoading ? 'AI analyzing saturation...' : lsiAnalysis}
-                </p>
-              </div>
-              <StatusCard
-                label="Free Chlorine"
-                field="chlorine"
-                value={latest?.chlorine ?? null}
-                unit="ppm"
-                status={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
-                trend={getTrendData('chlorine')}
-                ideal="1–3"
-                onLongPress={onLogReading}
-              />
-              <CombinedChlorineCard
-                free={latest?.chlorine ?? null}
-                total={latest?.totalChlorine ?? null}
-                freeStatus={latest?.chlorine != null ? getStatus(latest.chlorine, DEFAULT_RANGES.chlorine.min, DEFAULT_RANGES.chlorine.max) : 'good'}
-                totalStatus={latest?.totalChlorine != null ? getStatus(latest.totalChlorine, DEFAULT_RANGES.totalChlorine.min, DEFAULT_RANGES.totalChlorine.max) : 'good'}
-                trend={combinedChlorineTrend}
-                onLongPress={onLogReading}
-              />
-              <StatusCard
-                label="Sanitisation / ORP"
-                field="sanitisationMv"
-                value={recentOrp?.value ?? null}
-                unit="mV"
-                status={recentOrp != null ? getOrpStatus(recentOrp.value) : 'good'}
-                trend={getTrendData('sanitisationMv')}
-                ideal="650–750"
-                onLongPress={onLogReading}
-                caption={orpIsStale ? `As of ${formatAge(recentOrp!.at, now)}` : undefined}
-              />
-              <StatusCard
-                label="pH Level"
-                field="ph"
-                value={latest?.ph ?? null}
-                unit=""
-                status={latest?.ph != null ? getStatus(latest.ph, DEFAULT_RANGES.ph.min, DEFAULT_RANGES.ph.max) : 'good'}
-                trend={getTrendData('ph')}
-                ideal="7.2–7.6"
-                onLongPress={onLogReading}
-              />
-              <StatusCard
-                label="Alkalinity"
-                field="alkalinity"
-                value={latest?.alkalinity ?? null}
-                unit="ppm"
-                status={latest?.alkalinity != null ? getStatus(latest.alkalinity, DEFAULT_RANGES.alkalinity.min, DEFAULT_RANGES.alkalinity.max) : 'good'}
-                trend={getTrendData('alkalinity')}
-                ideal="80–120"
-                onLongPress={onLogReading}
-              />
-              <StatusCard
-                label="Diff Pressure"
-                field="differentialPressure"
-                value={latest?.differentialPressure ?? null}
-                unit="kPa"
-                status={latest?.differentialPressure != null ? getStatus(latest.differentialPressure, DEFAULT_RANGES.differentialPressure.min, DEFAULT_RANGES.differentialPressure.max) : 'good'}
-                trend={getTrendData('differentialPressure')}
-                ideal="55–140"
-                onLongPress={onLogReading}
-              />
-              <TemperatureCard value={latest?.temperature ?? null} onLongPress={onLogReading} />
-            </div>
-
-            {/* Maintenance Checklist */}
-            <section className="card space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Maintenance Checklist</h2>
-                  <div className="flex bg-[#060e1a] rounded-lg border border-border-dim p-0.5">
-                    {(['all', 'daily', 'weekly', 'monthly'] as const).map(f => (
+      <div
+        className="max-w-4xl mx-auto px-5 pt-5 flex flex-col gap-5"
+        style={{ paddingBottom: 'calc(140px + env(safe-area-inset-bottom))' }}
+      >
+        {!readingsLoaded ? (
+          <DashboardSkeleton />
+        ) : (
+          <>
+            {/* ── Alerts ──────────────────────────────────────────────── */}
+            {allAlerts.length > 0 && (
+              <motion.section {...sectionMotion(section++)} className="flex flex-col gap-3 no-print" aria-label="Alerts">
+                {allAlerts.map((alert) => {
+                  const ui = STATUS_UI[alert.severity];
+                  const Icon = alert.severity === 'critical' ? AlertCircle : AlertTriangle;
+                  return (
+                    <div key={alert.id} role="alert" className={`flex gap-3 items-start px-4 py-3.5 rounded-xl border ${ui.bg} ${ui.border}`}>
+                      <Icon size={20} className={`shrink-0 mt-px ${ui.text}`} aria-hidden="true" />
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <p className="text-sm font-semibold leading-[1.35] text-white [text-wrap:pretty]">{alert.msg}</p>
+                        <p className={`font-mono text-[10px] tracking-[0.08em] uppercase leading-normal ${ui.text}`}>ACTION: {alert.action}</p>
+                      </div>
                       <button
-                        key={f}
-                        onClick={() => setTaskFilter(f)}
-                        className={`px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${taskFilter === f ? 'bg-accent text-primary' : 'text-ink-dim hover:text-ink-muted'}`}
+                        type="button"
+                        onClick={() => setDismissedAlerts((prev) => [...prev, alert.id])}
+                        aria-label="Dismiss alert"
+                        className="shrink-0 -m-2 p-2 text-ink-dim hover:text-white transition-colors"
                       >
-                        {f}
+                        <X size={14} />
                       </button>
-                    ))}
+                    </div>
+                  );
+                })}
+              </motion.section>
+            )}
+
+            <div className="flex flex-col gap-5 md:grid md:grid-cols-2 md:items-stretch">
+              {/* ── LSI hero ──────────────────────────────────────────── */}
+              <motion.section {...sectionMotion(section++)} aria-label="Water balance" className={`rounded-2xl bg-surface border p-[18px] pb-4 flex flex-col gap-3.5 md:col-start-1 md:row-start-1 ${CARD_SHADOW} ${lsiStatus ? STATUS_UI[lsiStatus].border : 'border-border-dim'}`}>
+                <div className="flex justify-between items-center">
+                  <p className={`${LABEL} whitespace-nowrap`}>Water Balance · LSI</p>
+                  <StatusChip status={lsiStatus} />
+                </div>
+                <div className="flex items-end justify-between gap-3">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <p className={`font-mono text-5xl font-bold leading-none tracking-[-0.02em] tabular-nums ${lsiStatus ? STATUS_UI[lsiStatus].text : 'text-ink-dim'}`}>
+                      {lsiScore == null ? '—' : `${lsiScore > 0 ? '+' : lsiScore < 0 ? '−' : ''}${Math.abs(lsiScore).toFixed(2)}`}
+                    </p>
+                    <p className="text-base font-extrabold uppercase tracking-[0.16em] text-white mt-2">
+                      {lsiScore == null ? 'Insufficient data' : getLsiStateWord(lsiScore)}
+                    </p>
                   </div>
-                  <button 
-                    onClick={() => setIsAddingTask(!isAddingTask)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors"
+                  <div className="flex gap-3.5 pb-1 shrink-0">
+                    <MiniMetric label="Temp" value={latest?.temperature ?? null} unit="°C" />
+                    <MiniMetric label="Ca Hard." value={latest?.calciumHardness ?? null} unit="ppm" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="relative h-1.5 rounded-full bg-surface-2 border border-border-dim" aria-hidden="true">
+                    <div className="absolute inset-y-0 left-[40%] right-[40%] bg-success/35" />
+                    {lsiScore != null && lsiStatus && (
+                      <div
+                        className="absolute -top-[5px] w-3.5 h-3.5 rounded-full border-2 border-surface -translate-x-1/2 transition-[left] duration-400"
+                        style={{ left: `${lsiMarkerPercent(lsiScore)}%`, backgroundColor: STATUS_UI[lsiStatus].hex, boxShadow: `0 0 0 1px ${STATUS_UI[lsiStatus].hex}` }}
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-between font-mono text-[9px] tracking-[0.1em] uppercase text-ink-dim">
+                    <span>−0.5 Corrosive</span><span>0 Balanced</span><span>+0.5 Scaling</span>
+                  </div>
+                  {lsiScore == null && (
+                    <p className="text-[10px] text-ink-dim">Log pH, temperature, calcium hardness and alkalinity to compute LSI.</p>
+                  )}
+                </div>
+              </motion.section>
+
+              {/* ── Live telemetry ────────────────────────────────────── */}
+              <motion.section {...sectionMotion(section++)} aria-label="Live telemetry" className="flex flex-col gap-3 md:col-span-2 md:row-start-2">
+                <div className="flex justify-between items-center px-0.5">
+                  <h2 className={LABEL}>Live Telemetry</h2>
+                  <button
+                    type="button"
+                    onClick={() => onLogReading()}
+                    className="h-8 pl-2 pr-2.5 rounded-lg bg-surface border border-border-dim flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-muted active:scale-95 transition-transform"
                   >
-                    <Plus size={10} />
-                    <span className="text-[8px] font-bold uppercase tracking-widest">Add Task</span>
+                    <Plus size={14} aria-hidden="true" />Log Manually
                   </button>
                 </div>
-                {tasks.some(t => t.isAI && !t.completed) && (
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/20">
-                    <Sparkles size={10} className="text-accent" />
-                    <span className="text-[8px] font-bold uppercase tracking-widest text-accent">Active AI Protocol</span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <TelemetryCard
+                    label="pH" field="ph" unit=""
+                    value={latest?.ph ?? null} decimals={1}
+                    status={metricStatus(latest?.ph, DEFAULT_RANGES.ph)}
+                    trend={getTrendGlyph(readings, 'ph')}
+                    ideal="Ideal 7.2–7.6"
+                    onOpenTrends={onOpenTrends} onLogReading={onLogReading}
+                  />
+                  <TelemetryCard
+                    label="Free Cl" field="chlorine" unit="ppm"
+                    value={latest?.chlorine ?? null} decimals={1}
+                    status={metricStatus(latest?.chlorine, DEFAULT_RANGES.chlorine)}
+                    trend={getTrendGlyph(readings, 'chlorine')}
+                    ideal="Ideal 1–3"
+                    onOpenTrends={onOpenTrends} onLogReading={onLogReading}
+                  />
+                  <TelemetryCard
+                    label="ORP" field="sanitisationMv" unit="mV"
+                    value={recentOrp?.value ?? null} decimals={0}
+                    // ORP has its own three-tier band (650/750/850 mV, see
+                    // classifyOrp) rather than the generic 10 % buffer, and the
+                    // ideal shown is DEFAULT_RANGES' 650–750 per AGENTS.md — not
+                    // the 700–780 the design mock-up happened to use.
+                    status={recentOrp ? classifyOrp(recentOrp.value) : null}
+                    trend={getTrendGlyph(readings, 'sanitisationMv')}
+                    ideal={`Ideal ${DEFAULT_RANGES.sanitisationMv.min}–${DEFAULT_RANGES.sanitisationMv.max}`}
+                    caption={orpIsStale && recentOrp ? `As of ${formatAge(recentOrp.at, now)}` : undefined}
+                    onOpenTrends={onOpenTrends} onLogReading={onLogReading}
+                  />
+                  <TelemetryCard
+                    label="Alkalinity" field="alkalinity" unit="ppm"
+                    value={latest?.alkalinity ?? null} decimals={0}
+                    status={metricStatus(latest?.alkalinity, DEFAULT_RANGES.alkalinity)}
+                    trend={getTrendGlyph(readings, 'alkalinity')}
+                    ideal="Ideal 80–120"
+                    onOpenTrends={onOpenTrends} onLogReading={onLogReading}
+                  />
+                </div>
+              </motion.section>
+              {/* ── Active AI protocol ────────────────────────────────── */}
+              <motion.section {...sectionMotion(section++)} aria-label="Active AI protocol" className={`rounded-2xl bg-surface border border-accent/30 overflow-hidden flex flex-col md:col-start-2 md:row-start-1 ${CARD_SHADOW}`}>
+                <div className="flex justify-between items-center px-[18px] pt-3.5">
+                  <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-accent">
+                    <Sparkles size={14} aria-hidden="true" />Active AI Protocol
+                  </p>
+                  {protocol && (
+                    <p className="font-mono text-[9px] tracking-[0.1em] uppercase text-ink-dim">
+                      {protocol.model} · {protocol.generatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+                <div className="px-[18px] pt-3 pb-4 flex flex-col gap-3.5">
+                  <ProtocolBody state={protocolState} protocol={protocol} hasReading={Boolean(latest)} />
+                  <div className="flex gap-2.5">
+                    <ProtocolPrimaryButton
+                      state={protocolState}
+                      protocol={protocol}
+                      hasReading={Boolean(latest)}
+                      onExecute={onExecuteProtocol}
+                      onAnalyze={onRequestProtocol}
+                      onLogReading={() => onLogReading()}
+                      onOpenTasks={onOpenTasks}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onOpenAssistant(protocol ? 'protocol' : 'menu')}
+                      aria-label="Open protocol detail in the AI assistant"
+                      className="w-[52px] h-[52px] shrink-0 rounded-xl bg-surface-2 border border-border-dim flex items-center justify-center text-ink-muted active:scale-[0.96] transition-transform"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
                   </div>
-                )}
-              </div>
-
-              <AnimatePresence>
-                {isAddingTask && (
-                  <motion.form 
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    onSubmit={handleAddTask}
-                    className="overflow-hidden space-y-3 bg-[#060e1a] p-3 rounded-lg border border-border-dim"
-                  >
-                    <div className="space-y-1">
-                      <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Task Title</label>
-                      <input 
-                        type="text"
-                        value={newTask.title}
-                        onChange={e => setNewTask(prev => ({ ...prev, title: e.target.value }))}
-                        placeholder="e.g. Clean filter cartridges"
-                        className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
-                        autoFocus
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenTasks}
+                  className="border-t border-border-dim bg-surface-2 px-[18px] py-3 flex items-center gap-3 text-left w-full active:bg-surface transition-colors"
+                  aria-label={`Shift checklist, ${tasksDone} of ${tasksTotal} done. Open tasks.`}
+                >
+                  <ListChecks size={18} className="text-accent shrink-0" aria-hidden="true" />
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-[0.14em] text-ink-muted">
+                      <span>Shift Checklist</span>
+                      <span className="font-mono text-white">{tasksDone}/{tasksTotal}</span>
+                    </div>
+                    <div className="h-1 rounded-full bg-border-dim overflow-hidden">
+                      <div
+                        className="h-full bg-accent transition-[width] duration-400 ease-[cubic-bezier(.16,1,.3,1)]"
+                        style={{ width: `${tasksTotal === 0 ? 0 : Math.round((tasksDone / tasksTotal) * 100)}%` }}
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Priority</label>
-                        <select 
-                          value={newTask.priority}
-                          onChange={e => setNewTask(prev => ({ ...prev, priority: e.target.value as any }))}
-                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
-                        >
-                          <option value="low">Low</option>
-                          <option value="medium">Medium</option>
-                          <option value="high">High</option>
-                          <option value="critical">Critical</option>
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Frequency</label>
-                        <select 
-                          value={newTask.frequency}
-                          onChange={e => setNewTask(prev => ({ ...prev, frequency: e.target.value as any }))}
-                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
-                        >
-                          <option value="once">Once</option>
-                          <option value="daily">Daily</option>
-                          <option value="weekly">Weekly</option>
-                          <option value="monthly">Monthly</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <button 
-                        type="submit"
-                        className="flex-1 bg-accent text-primary font-bold text-[10px] uppercase tracking-widest py-2 rounded-md hover:bg-accent/90 transition-colors"
-                      >
-                        Create Task
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => setIsAddingTask(false)}
-                        className="px-4 bg-border-dim text-ink-dim font-bold text-[10px] uppercase tracking-widest py-2 rounded-md hover:bg-border transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </motion.form>
-                )}
-              </AnimatePresence>
-
-              <div className="space-y-2">
-                {/* Active AI Tasks First */}
-                {tasks
-                  .filter(t => t.isAI && !t.completed && (taskFilter === 'all' || t.frequency === taskFilter))
-                  .map(task => (
-                  <button 
-                    key={task.id} 
-                    onClick={() => toggleTask(task.id)}
-                    className="flex items-center gap-3 w-full text-left group p-2 rounded-lg transition-all bg-accent/5 border border-accent/20 shadow-sm shadow-accent/5"
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-3">
-                        <Circle size={18} className="text-accent" />
-                        <span className="text-sm font-medium tracking-wide text-ink">
-                          {task.title}
-                        </span>
-                      </div>
-                      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-tighter ${getPriorityColor(task.priority)}`}>
-                        {task.priority}
-                      </span>
-                    </div>
-                    <Sparkles size={12} className="text-accent opacity-50" />
-                  </button>
-                ))}
-
-                {/* Manual and Completed Tasks */}
-                {tasks
-                  .filter(t => (!t.isAI || t.completed) && (taskFilter === 'all' || t.frequency === taskFilter))
-                  .map(task => (
-                  <button 
-                    key={task.id} 
-                    onClick={() => toggleTask(task.id)}
-                    className="flex items-center gap-3 w-full text-left group p-2 rounded-lg transition-all hover:bg-surface/50"
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-3">
-                        {task.completed ? (
-                          <CheckCircle2 size={18} className="text-success" />
-                        ) : (
-                          <Circle size={18} className="text-border-dim group-hover:text-accent" />
-                        )}
-                        <span className={`text-sm font-medium tracking-wide ${task.completed ? 'text-ink-dim line-through' : 'text-ink'}`}>
-                          {task.title}
-                        </span>
-                      </div>
-                      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-tighter ${getPriorityColor(task.priority)}`}>
-                        {task.priority}
-                      </span>
-                    </div>
-                    {task.isAI && task.completed && (
-                      <span className="text-[8px] font-bold uppercase tracking-widest text-ink-dim/50">AI</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            {/* Recent Readings */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Recent Logs</h2>
-                <button 
-                  onClick={onViewHistory}
-                  className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center gap-1 hover:underline"
-                >
-                  History <ChevronRight size={12} />
-                </button>
-              </div>
-              <div className="space-y-2">
-                {readings.slice(0, 3).map(reading => (
-                  <div key={reading.id} className="card py-3 flex items-center justify-between bg-[#0a1628]/50 border-border-dim/50">
-                    <div>
-                      <p className="text-xs font-bold text-white">{reading.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                      <p className="text-[9px] text-ink-dim uppercase tracking-widest font-mono">{reading.timestamp.toLocaleDateString()}</p>
-                    </div>
-                    <div className="flex gap-4 text-[10px] font-mono">
-                      <div className="text-center">
-                        <p className="text-ink-dim mb-0.5">CL</p>
-                        <p className="font-bold text-accent">{reading.chlorine ?? '—'}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-ink-dim mb-0.5">PH</p>
-                        <p className="font-bold text-accent">{reading.ph ?? '—'}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-ink-dim mb-0.5">kPa</p>
-                        <p className="font-bold text-accent">{reading.differentialPressure ?? '—'}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-ink-dim mb-0.5">TEMP</p>
-                        <p className="font-bold text-accent">{reading.temperature == null ? '—' : `${reading.temperature}°`}</p>
-                      </div>
-                    </div>
                   </div>
-                ))}
-              </div>
-            </section>
-          </motion.div>
-        ) : (
-          <motion.div 
-            key="trends"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <TrendCharts readings={readings} userId={userId} onLogReading={onLogReading} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+                </button>
+              </motion.section>
 
-      {/* Quick Action FAB */}
-      <button
-        onClick={() => onLogReading()}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print anim-fab-pulse"
-      >
-        <Plus size={28} />
-      </button>
-    </div>
-  );
-}
-
-function Sparkline({ values, color }: { values: number[], color: string }) {
-  const safeValues = values.map(v => isNaN(v) ? 0 : v);
-  if (safeValues.length < 2) return null;
-  
-  const min = Math.min(...safeValues);
-  const max = Math.max(...safeValues) - min || 1;
-  const points = safeValues.map((v, i) => {
-    const x = (i / (safeValues.length - 1)) * 60;
-    const y = 20 - ((v - min) / max) * 20;
-    return `${x},${y}`;
-  }).join(' ');
-
-  const lastValue = safeValues[safeValues.length - 1];
-  const lastY = 20 - ((lastValue - min) / max) * 20;
-
-  return (
-    <svg width="60" height="20" className="opacity-50">
-      <polyline
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle 
-        cx="60" 
-        cy={isNaN(lastY) ? 10 : lastY} 
-        r="2" 
-        fill={color} 
-      />
-    </svg>
-  );
-}
-
-function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPress, caption }: { label: string, field: NumericReadingField, value: number | null, unit: string, status: Status, trend: number[], ideal: string, onLongPress: (field: NumericReadingField) => void, caption?: string }) {
-  const statusColors = {
-    good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
-    warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
-    critical: 'text-red-400 border-red-500/30 bg-red-500/5',
-  };
-
-  const sparklineColors = {
-    good: '#10b981',
-    warning: '#f59e0b',
-    critical: '#ef4444',
-  };
-
-  const isMissing = value == null;
-  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress(field) });
-
-  return (
-    <div
-      {...handlers}
-      role="button"
-      tabIndex={0}
-      aria-label={`${label}. Hold to log a new reading for this field.`}
-      title="Hold to log a new reading for this field"
-      className={`card anim-scan border select-none cursor-pointer transition-transform ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} flex flex-col gap-2 p-4`}
-    >
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
-        <Sparkline values={trend} color={sparklineColors[status]} />
-      </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold font-mono">{isMissing ? '—' : value.toFixed(label === 'pH Level' ? 1 : 0)}</span>
-        <span className="text-[10px] text-ink-dim font-medium">{unit}</span>
-      </div>
-      <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest">
-        <span className="text-ink-dim">Ideal: {ideal}</span>
-        <span className="opacity-80">{isMissing ? 'Not measured' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Action'}</span>
-      </div>
-      {caption && <p className="text-[9px] font-medium text-ink-dim opacity-70">{caption}</p>}
-    </div>
-  );
-}
-
-const STATUS_TEXT = {
-  good: 'text-emerald-400',
-  warning: 'text-amber-400',
-  critical: 'text-red-400',
-};
-
-const DOUBLE_TAP_MS = 350;
-
-// Combined chlorine derived from the latest free + total readings. A
-// double-tap (or double-click) expands the card to show the two inputs;
-// a long press logs a new reading like every other status card. Detected
-// from two short taps rather than the native dblclick event, which iOS
-// Safari doesn't reliably fire for touch.
-function CombinedChlorineCard({ free, total, freeStatus, totalStatus, trend, onLongPress }: {
-  free: number | null,
-  total: number | null,
-  freeStatus: Status,
-  totalStatus: Status,
-  trend: number[],
-  onLongPress: (field: NumericReadingField) => void,
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const lastTapAt = useRef(0);
-  const statusColors = {
-    good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
-    warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
-    critical: 'text-red-400 border-red-500/30 bg-red-500/5',
-  };
-  const sparklineColors = { good: '#10b981', warning: '#f59e0b', critical: '#ef4444' };
-
-  const combined = combinedChlorineOf(free, total);
-  const isMissing = combined == null;
-  const status: Status = isMissing ? 'good' : getCombinedChlorineStatus(combined);
-
-  const onTap = () => {
-    const now = Date.now();
-    if (now - lastTapAt.current < DOUBLE_TAP_MS) {
-      lastTapAt.current = 0;
-      setExpanded(v => !v);
-    } else {
-      lastTapAt.current = now;
-    }
-  };
-  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress('totalChlorine'), onClick: onTap });
-
-  return (
-    <div
-      {...handlers}
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
-      aria-label="Combined chlorine. Double-tap to show free and total chlorine. Hold to log a new reading."
-      title="Double-tap to show free and total chlorine. Hold to log a new reading."
-      className={`card anim-scan border select-none touch-manipulation cursor-pointer transition-transform ${isMissing ? 'text-ink-dim border-border-dim bg-surface' : statusColors[status]} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} flex flex-col gap-2 p-4`}
-    >
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Combined Chlorine</p>
-        <Sparkline values={trend} color={sparklineColors[status]} />
-      </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold font-mono">{isMissing ? '—' : combined.toFixed(1)}</span>
-        <span className="text-[10px] text-ink-dim font-medium">ppm</span>
-      </div>
-      <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest">
-        <span className="text-ink-dim">Ideal: &lt; {COMBINED_CHLORINE_OK_MAX}</span>
-        <span className="flex items-center gap-1 opacity-80">
-          {isMissing ? 'Needs free + total' : status === 'good' ? '✓ OK' : status === 'warning' ? '⚠ Watch' : '✕ Shock'}
-          <ChevronDown size={10} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
-        </span>
-      </div>
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border-dim/40">
-              {([
-                ['Free', free, freeStatus, DEFAULT_RANGES.chlorine],
-                ['Total', total, totalStatus, DEFAULT_RANGES.totalChlorine],
-              ] as const).map(([label, value, valueStatus, range]) => (
-                <div key={label}>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-ink-dim">{label}</p>
-                  <p className={`text-lg font-bold font-mono ${value == null ? 'text-ink-dim' : STATUS_TEXT[valueStatus]}`}>
-                    {value == null ? '—' : value.toFixed(1)}
-                    <span className="text-[9px] text-ink-dim font-medium ml-1">ppm</span>
-                  </p>
-                  <p className="text-[9px] text-ink-dim">Ideal: {range.min}–{range.max}</p>
-                </div>
-              ))}
             </div>
-          </motion.div>
+
+            {/* ── Operations ──────────────────────────────────────────── */}
+            <motion.section {...sectionMotion(section++)} aria-label="Operations" className="flex flex-col gap-3">
+              <h2 className={`${LABEL} px-0.5`}>Operations</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <OperationTile icon={Wrench} title="Equipment" sub={equipmentTile.sub} badge={equipmentTile.badge} onClick={onOpenEquipment} />
+                <OperationTile icon={Package} title="Inventory" sub={inventoryTile.sub} badge={inventoryTile.badge} onClick={onOpenInventory} />
+                <OperationTile icon={FileText} title="Weekly Report" sub={weekTile.sub} badge={weekTile.badge} onClick={onOpenWeeklyReport} />
+                <OperationTile icon={LineChartIcon} title="Trends" sub={describePhDrift(readings, now)} badge={{ text: '7 D', status: 'neutral' }} onClick={() => onOpenTrends('ph')} />
+              </div>
+            </motion.section>
+
+            {/* ── Connected agents ────────────────────────────────────── */}
+            <motion.section {...sectionMotion(section++)} aria-label="Connected agents">
+              <button
+                type="button"
+                onClick={onViewHistory}
+                className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl bg-surface border border-border-dim text-left active:scale-[0.98] transition-transform"
+              >
+                <span className="w-9 h-9 rounded-lg bg-surface-2 border border-border-dim flex items-center justify-center shrink-0">
+                  <Plug size={18} className="text-accent" aria-hidden="true" />
+                </span>
+                <span className="flex-1 flex flex-col gap-[3px] min-w-0">
+                  <span className="flex items-center gap-2">
+                    <span className="text-[13px] font-bold text-white">Connected agents</span>
+                    <span className={`text-[9px] font-bold tracking-[0.12em] uppercase ${agents.live ? 'text-emerald-400' : 'text-ink-dim'}`}>
+                      ● {agents.live ? 'MCP Live' : 'MCP Ready'}
+                    </span>
+                  </span>
+                  <span className="font-mono text-[10px] text-ink-muted whitespace-nowrap overflow-hidden text-ellipsis">{agents.sub}</span>
+                </span>
+                <ChevronRight size={18} className="text-ink-dim shrink-0" aria-hidden="true" />
+              </button>
+            </motion.section>
+          </>
         )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 }
 
-function TemperatureCard({ value, onLongPress }: { value: number | null, onLongPress: (field: NumericReadingField) => void }) {
-  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLongPress('temperature') });
+// ── Pieces ───────────────────────────────────────────────────────────────────
+
+function SyncDot({ kind }: { kind: 'live' | 'stale' | 'manual' | 'none' | 'syncing' | 'error' }) {
+  if (kind === 'syncing') return <RotateCw size={10} className="text-accent animate-spin shrink-0" aria-hidden="true" />;
+  const color = kind === 'live' ? 'bg-emerald-400' : kind === 'stale' ? 'bg-amber-400' : kind === 'error' ? 'bg-red-400' : 'bg-ink-muted';
+  return (
+    <span
+      aria-hidden="true"
+      className={`w-2 h-2 rounded-full shrink-0 ${color} ${kind === 'live' ? 'anim-live-pulse shadow-[0_0_0_3px_rgba(16,185,129,0.2)]' : ''}`}
+    />
+  );
+}
+
+function StatusChip({ status }: { status: Status | null }) {
+  const ui = status ? STATUS_UI[status] : NEUTRAL_UI;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold tracking-[0.14em] uppercase px-2.5 py-[5px] rounded-md whitespace-nowrap border ${ui.bg} ${ui.border} ${ui.text}`}>
+      {status ? ui.chip : 'No LSI'}
+    </span>
+  );
+}
+
+function MiniMetric({ label, value, unit }: { label: string; value: number | null; unit: string }) {
+  return (
+    <div className="flex flex-col gap-[3px] items-end">
+      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-ink-dim whitespace-nowrap">{label}</p>
+      <p className={`font-mono text-lg font-bold ${value == null ? 'text-ink-dim' : 'text-white'}`}>
+        {value == null ? '—' : value}
+        <span className="text-[10px] text-ink-dim ml-0.5">{unit}</span>
+      </p>
+    </div>
+  );
+}
+
+function TelemetryCard({ label, field, value, unit, decimals, status, trend, ideal, caption, onOpenTrends, onLogReading }: {
+  label: string;
+  field: NumericReadingField;
+  value: number | null;
+  unit: string;
+  decimals: number;
+  status: Status | null;
+  trend: string | null;
+  ideal: string;
+  caption?: string;
+  onOpenTrends: (metric: TrendMetricKey) => void;
+  onLogReading: (field: NumericReadingField) => void;
+}) {
+  const ui = status ? STATUS_UI[status] : NEUTRAL_UI;
+  // Tap opens this metric's trend chart; holding logs a new reading with
+  // this field focused — the same long-press shortcut the previous card
+  // layout had, kept so a poolside operator can go straight to the field.
+  const { handlers, isPressing } = useLongPress({ onLongPress: () => onLogReading(field), onClick: () => onOpenTrends(field) });
   return (
     <div
       {...handlers}
       role="button"
       tabIndex={0}
-      aria-label="Temperature. Hold to log a new reading for this field."
-      title="Hold to log a new reading for this field"
-      className={`card bg-[#0a1628] border-border-dim select-none cursor-pointer transition-transform flex flex-col justify-between p-4 ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''}`}
+      aria-label={`${label}${value == null ? ', not measured' : `, ${value} ${unit}`}. Tap for trends, hold to log a reading.`}
+      title="Tap for trends · hold to log a reading"
+      className={`min-h-[118px] px-3.5 pt-3.5 pb-3 rounded-xl border flex flex-col justify-between gap-2 select-none cursor-pointer transition-transform ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : 'active:scale-[0.97]'} ${status ? `${ui.bg} ${ui.border}` : 'bg-surface border-border-dim'}`}
     >
-      <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
+      <div className="flex justify-between items-center gap-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-ink-muted">{label}</span>
+        {trend && <span className={`font-mono text-[10px] ${ui.text}`} aria-hidden="true">{trend}</span>}
+      </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold text-accent font-mono">{value ?? '—'}</span>
-        <span className="text-xs text-ink-dim">°C</span>
+        <span className={`font-mono text-[32px] font-bold leading-none tabular-nums ${status ? ui.text : 'text-ink-dim'}`}>
+          {value == null ? '—' : value.toFixed(decimals)}
+        </span>
+        {value != null && unit && <span className="text-[11px] text-ink-dim">{unit}</span>}
+      </div>
+      <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-[0.12em] text-ink-dim">
+        <span>{ideal}</span>
+        <span className={status ? ui.text : 'text-ink-dim'}>{status ? ui.chip : 'Not measured'}</span>
+      </div>
+      {caption && <p className="text-[9px] font-medium text-ink-dim">{caption}</p>}
+    </div>
+  );
+}
+
+function ProtocolBody({ state, protocol, hasReading }: { state: ProtocolState; protocol: AiProtocol | null; hasReading: boolean }) {
+  if (state === 'loading') {
+    return (
+      <p className="flex items-center gap-2.5 text-[15px] leading-[1.45] text-ink-muted" aria-live="polite">
+        <Loader2 size={18} className="text-accent animate-spin shrink-0" aria-hidden="true" />
+        AI analyzing saturation...
+      </p>
+    );
+  }
+  if (state === 'error') {
+    return <p className="font-mono text-xs text-critical" role="alert">{PROTOCOL_ERROR_MESSAGE}</p>;
+  }
+  if (protocol) {
+    return <p className="text-[15px] leading-[1.45] text-white [text-wrap:pretty]">{protocolHeadline(protocol)}</p>;
+  }
+  return (
+    <p className="text-[15px] leading-[1.45] text-ink-muted [text-wrap:pretty]">
+      {hasReading ? 'Run an AI analysis of the latest reading for a step-by-step protocol.' : 'Log a reading to generate an AI maintenance protocol.'}
+    </p>
+  );
+}
+
+function ProtocolPrimaryButton({ state, protocol, hasReading, onExecute, onAnalyze, onLogReading, onOpenTasks }: {
+  state: ProtocolState;
+  protocol: AiProtocol | null;
+  hasReading: boolean;
+  onExecute: () => void;
+  onAnalyze: () => void;
+  onLogReading: () => void;
+  onOpenTasks: () => void;
+}) {
+  const base = 'flex-1 h-[52px] rounded-xl flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] transition-transform active:scale-[0.96] disabled:opacity-60 disabled:active:scale-100';
+  const primary = `${base} bg-accent text-primary shadow-[0_12px_24px_rgba(79,195,247,0.2)]`;
+
+  if (state === 'executed' && protocol) {
+    const n = protocol.checklist.length;
+    return (
+      <button type="button" onClick={onOpenTasks} className={`${base} bg-surface-2 border border-success/35 text-emerald-400`}>
+        <CheckCircle2 size={16} aria-hidden="true" />Checklist Built · {n} Task{n === 1 ? '' : 's'}
+      </button>
+    );
+  }
+  if (state === 'loading') {
+    return <button type="button" disabled className={primary}><Loader2 size={16} className="animate-spin" aria-hidden="true" />Analyzing…</button>;
+  }
+  if (state === 'error') {
+    return <button type="button" onClick={onAnalyze} className={primary}><RotateCw size={16} aria-hidden="true" />Retry Analysis</button>;
+  }
+  if (protocol) {
+    return protocol.checklist.length > 0
+      ? <button type="button" onClick={onExecute} className={primary}><Play size={16} aria-hidden="true" />Execute Protocol</button>
+      : <button type="button" onClick={onOpenTasks} className={primary}><Play size={16} aria-hidden="true" />View Checklist</button>;
+  }
+  return hasReading
+    ? <button type="button" onClick={onAnalyze} className={primary}><Sparkles size={16} aria-hidden="true" />Analyze Readings</button>
+    : <button type="button" onClick={onLogReading} className={primary}><Plus size={16} aria-hidden="true" />Log Reading</button>;
+}
+
+function OperationTile({ icon: Icon, title, sub, badge, onClick }: {
+  icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' }>;
+  title: string;
+  sub: string;
+  badge: TileBadge;
+  onClick: () => void;
+}) {
+  const ui = badge.status === 'neutral' ? NEUTRAL_UI : STATUS_UI[badge.status];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-h-[104px] p-3.5 rounded-xl bg-surface border border-border-dim flex flex-col justify-between gap-2.5 text-left active:scale-[0.97] transition-transform"
+    >
+      <span className="flex justify-between items-center w-full">
+        <Icon size={20} className="text-ink-muted" aria-hidden="true" />
+        <span className={`text-[9px] font-bold uppercase tracking-[0.12em] px-[7px] py-[3px] rounded-md border ${ui.bg} ${ui.border} ${ui.text}`}>{badge.text}</span>
+      </span>
+      <span className="flex flex-col gap-[3px] min-w-0">
+        <span className="text-[13px] font-bold text-white">{title}</span>
+        <span className="font-mono text-[10px] leading-[1.4] text-ink-muted">{sub}</span>
+      </span>
+    </button>
+  );
+}
+
+function DashboardSkeleton() {
+  const block = 'rounded-xl bg-surface border border-border-dim animate-pulse';
+  return (
+    <div className="flex flex-col gap-5" aria-busy="true" aria-label="Loading pool data">
+      <div className={`${block} rounded-2xl h-[196px]`} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => <div key={i} className={`${block} h-[118px]`} />)}
+      </div>
+      <div className={`${block} rounded-2xl h-[210px]`} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => <div key={i} className={`${block} h-[104px]`} />)}
       </div>
     </div>
   );

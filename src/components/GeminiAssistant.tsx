@@ -1,360 +1,156 @@
-import React, { useState } from 'react';
-import { Sparkles, Loader2, X, ChevronRight, Terminal, MapPin, CheckCircle2, FileText, Download } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Activity, CheckCircle2, ChevronLeft, ChevronRight, Download, FileText, Loader2, MapPin, Mic, MicOff, Send, Sparkles, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
-import { Reading, MaintenanceTask } from '../types';
+import { Reading } from '../types';
 import { callAiWithFallback } from '../lib/ai';
-import { calculateLSI } from '../lib/lsi';
-import { isAutoSyncBoilerplateNote, getMostRecentOrp, formatAge, isOrpStale } from '../lib/readings';
+import { AiProtocol, POOL_SYSTEM_PROMPT, PROTOCOL_ERROR_MESSAGE, ProtocolState, formatOrpForPrompt } from '../lib/aiProtocol';
 import { buildSupplySearchUrl, getSupplySearchLocation } from '../lib/supplySearch';
-import { Type } from "@google/genai";
+
+/** Which panel the assistant sheet is showing; null means closed. */
+export type AssistantMode = 'menu' | 'protocol' | 'maps' | 'answer';
 
 interface Props {
   latestReading?: Reading;
   history: Reading[];
-  onExecuteProtocol: (tasks: MaintenanceTask[]) => void;
+  /** Controlled: App owns this so the dashboard's protocol card can deep-link into 'protocol'. */
+  mode: AssistantMode | null;
+  onModeChange: (mode: AssistantMode | null) => void;
+  protocol: AiProtocol | null;
+  protocolState: ProtocolState;
+  onRequestProtocol: () => void;
+  onExecuteProtocol: () => Promise<void> | void;
   onAddToReport?: (entry: { timestamp: string; summary: string }) => void;
+  /** Hide the floating button (e.g. while a full-screen form is open). */
+  hidden?: boolean;
 }
 
-interface AIResponse {
-  analysis: string;
-  checklist: { id: string; title: string }[];
-  expectedOutcome: string;
+// Minimal typing for the (prefixed on WebKit) Web Speech API.
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
 }
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+const getSpeechRecognition = (): SpeechRecognitionCtor | null => {
+  const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+};
 
-const POOL_SYSTEM_PROMPT = `
-You are a knowledgeable pool maintenance assistant. You have detailed knowledge of pool chemistry, equipment operation, troubleshooting, and compliance requirements. You give practical, confident, field-ready advice — not textbook generalities.
+const QUICK_ACTION = 'h-12 rounded-[10px] bg-surface-2 border border-border-dim flex items-center justify-center gap-2 text-[10px] font-bold tracking-[0.12em] uppercase text-white active:scale-95 transition-transform disabled:opacity-50';
+const FOOTER_BTN = 'min-h-11 py-2.5 px-3 rounded-[10px] bg-surface-2 border border-border-dim text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed';
 
----
-
-## The Pool You're Maintaining
-
-- **Volume:** 68,000 litres
-- **Filter type:** Sand filter
-- **Filter baseline pressure:** Just below 1 bar (recorded post-backwash)
-- **Backwash trigger:** ~1.2–1.3 bar (0.3 bar above baseline)
-- **End-of-shift requirement:** Photo must be taken documenting gauge positions, chemical levels, and water clarity
-
-If the user asks about dosing, always base calculations on 68,000 litres unless they specify otherwise.
-
----
-
-## Chemical Target Ranges
-
-| Parameter | Ideal Range | Action if Low | Action if High |
-|---|---|---|---|
-| Free Chlorine | 1–3 ppm | Dose chlorine immediately. Below 1 ppm = unsafe. | Above 5 ppm = retest before swimming |
-| Combined Chlorine | < 0.5 ppm | — | Shock to breakpoint (10× CC level) |
-| pH | 7.2–7.6 | Add sodium carbonate (soda ash) | Add muriatic acid |
-| Total Alkalinity | 80–120 ppm | Add sodium bicarbonate | Add muriatic acid, aerate |
-| Calcium Hardness | 200–400 ppm | Add calcium chloride | Partial drain |
-| Cyanuric Acid (CYA) | 30–50 ppm | Add stabiliser via skimmer | No chemical fix — partial drain only |
-| Temperature | 26–32°C | — | Test chemistry more frequently |
-| TDS | < 2000 ppm | — | Partial drain |
-
-**Adjustment order:** Always adjust in this sequence — Alkalinity → pH → Sanitiser → Other
-
----
-
-## Sanitisation / ORP
-
-- ORP (sanitisation power, in mV) indicates sanitising *effectiveness* — it is NOT a direct chlorine ppm measurement and must never be treated as one.
-- Suggested thresholds: below 650 mV — sanitisation may be weak; 650–800 mV — generally acceptable working zone; above 800 mV — sanitisation may be high, verify before swimming or further chlorine additions.
-- NEVER recommend increasing chlorine dosing based on ORP alone. Before suggesting any chlorine dose change, first require/verify the operator's actual free chlorine reading (ppm), current circulation/filtration status, pool volume, and product concentration.
-- If free chlorine wasn't measured (e.g. an auto-synced controller reading, which only reports pH/ORP/temperature) but ORP is low or high, tell the operator to test free chlorine directly and confirm circulation is running — do not calculate or suggest a dose from ORP alone.
-
----
-
-## Dosing Calculations (based on 68,000 litres)
-
-- **Raise FC by 1 ppm:** ~68g granular chlorine or ~680ml of 10% liquid chlorine
-- **Shock dose (raise FC to 10 ppm):** ~680g cal-hypo (add at dusk, pre-dissolve first)
-- **Raise TA by 10 ppm:** ~1kg sodium bicarbonate
-- **Raise pH by 0.2:** ~100g soda ash (dilute before adding)
-- **Lower pH by 0.2:** ~68ml muriatic acid (add acid to water, never reverse)
-- **Raise Ca Hardness by 10 ppm:** ~1.1kg calcium chloride (pre-dissolve, exothermic)
-- **Raise CYA by 30 ppm:** ~2kg cyanuric acid (add slowly via skimmer)
-
-If the user gives you a current reading and a target, calculate the exact dose needed.
-
----
-
-## Chemical Safety Rules
-
-- NEVER mix trichlor and calcium hypochlorite — explosive reaction
-- NEVER mix any two sanitisers
-- Always add acid to water, never water to acid
-- Add cal-hypo at dusk to prevent UV degradation
-- Pre-dissolve cal-hypo in a bucket before adding to pool
-- Wear PPE when handling acids and oxidisers
-- Store chemicals separately, cool, dry, and away from each other
-
----
-
-## Filter & Equipment
-
-**Backwash procedure:**
-1. Turn off pump
-2. Set valve to BACKWASH
-3. Run until sight glass clears (~2 minutes)
-4. Turn off pump, set valve to RINSE
-5. Run 30 seconds to seat the sand bed
-6. Return to FILTER, restart pump
-7. Note new pressure reading
-
-**Low pressure warning (below baseline):** Usually means air leak on suction side, blocked skimmer basket, or pump cavitating. Not a normal state — investigate.
-
-**Turnover rule:** Full pool volume should turn over at least twice per day. For 68,000L at 15–20 m³/hr, that means running the pump at least 8 hours/day.
-
----
-
-## Common Problems & Fixes
-
-**Green / algae water:**
-- Brush all surfaces first
-- Adjust pH to 7.2
-- Raise FC to 10× CYA level (e.g. CYA=40 → target FC=40 ppm)
-- Run filter 24/7, backwash every 6–8 hours
-- Vacuum dead algae to WASTE, not return
-- Rebalance after clear
-
-**Cloudy / milky water:**
-- Check and lower pH
-- Run filter continuously
-- Add clarifier or floc
-- Check calcium — if > 500 ppm, partial drain needed
-
-**Chlorine smell / eye irritation (chloramines):**
-- Test combined chlorine — if > 0.5 ppm, shock required
-- Dose to 10× combined chlorine level
-- Check pH is in range
-
-**pH keeps dropping:** Low alkalinity is usually the cause. Raise TA to 100–120 ppm first, then adjust pH.
-
-**pH keeps rising:** Often caused by aeration (fountains, waterfalls) or high TA. Reduce TA to 80–90 ppm range.
-
-**Chlorine won't hold:** Check CYA — if below 30 ppm, chlorine has no UV protection. Add stabiliser. Also check pH — above 7.6, chlorine effectiveness drops sharply.
-
----
-
-## Procedures
-
-**Daily:** Test FC and pH. Visual inspection. Check equipment running. Skim if needed. Log readings. Take end-of-shift photo.
-
-**2–3× per week:** Full test — FC, CC, pH, TA, Ca, CYA, temperature. Collect sample at elbow depth (30–45cm), away from inlets.
-
-**Shocking:** Adjust pH to 7.2 first. Add after sunset. Run pump 8+ hours. Don't allow swimming until FC drops below 5 ppm.
-
-**End of shift:** Photograph gauge panel, dosing reservoir levels, and water surface from a consistent position. Timestamp is required.
-
----
-
-## How to Respond
-
-- Be direct and practical — this is field work, not a chemistry class
-- If given a reading, assess it immediately against the target ranges above
-- If asked for a dose, calculate it precisely for 68,000 litres
-- Flag anything that needs urgent action clearly
-- If something sounds like a safety issue (mixed chemicals, very low FC, very high CC), say so plainly
-- Keep answers concise unless the user asks for detail
-`;
-
-export default function GeminiAssistant({ latestReading, history, onExecuteProtocol, onAddToReport }: Props) {
-  const [isOpen, setIsOpen] = useState(false);
+/**
+ * Floating AI assistant: a 60 px FAB bottom-right that opens a sheet
+ * anchored above the tab bar. Quick actions run the shared AI protocol
+ * (owned by App.tsx, also shown on the dashboard's protocol card) and the
+ * supply locator; the input asks a free-form question against the pool
+ * system prompt, with voice dictation where the browser offers it.
+ */
+export default function GeminiAssistant({ latestReading, history, mode, onModeChange, protocol, protocolState, onRequestProtocol, onExecuteProtocol, onAddToReport, hidden }: Props) {
   const [loading, setLoading] = useState(false);
-  const [insight, setInsight] = useState<AIResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isFindingSupplies, setIsFindingSupplies] = useState(false);
-  const [isMapsMode, setIsMapsMode] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
   const [mapsContent, setMapsContent] = useState<string | null>(null);
   const [mapsSearchUrl, setMapsSearchUrl] = useState(buildSupplySearchUrl());
   const [mapsLocationFound, setMapsLocationFound] = useState(false);
   const [protocolStaged, setProtocolStaged] = useState(false);
   const [addedToReport, setAddedToReport] = useState(false);
   const [question, setQuestion] = useState('');
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechSupported = typeof window !== 'undefined' && getSpeechRecognition() != null;
 
-  // A real controller poll can report pH/temperature but omit ORP for one
-  // cycle, so latestReading.sanitisationMv alone would let a genuinely
-  // recent, still-relevant low/high ORP reading silently drop out of every
-  // prompt below the moment that happens (see getMostRecentOrp). Used in
-  // place of latestReading.sanitisationMv everywhere ORP is reported to the
-  // model; always labeled with its age when stale, never presented as if
-  // it were the current reading.
-  //
-  // Deliberately computed fresh inside the function itself, not as a
-  // component-render-scoped const: this component only re-renders on
-  // prop/state changes, so a value captured once at render time would
-  // reflect whatever "now" was then, not the actual moment a user clicks
-  // a button minutes or hours later — silently sending a now-stale ORP
-  // reading to the model as if it just checked. Calling this fresh inside
-  // each handler, right when the prompt is actually built, avoids relying
-  // on React's render timing entirely.
-  const fmtOrp = () => {
-    const recentOrp = getMostRecentOrp(history);
-    if (recentOrp == null) return 'not measured';
-    const stale = isOrpStale(recentOrp.at);
-    return `${recentOrp.value}${stale ? ` (last measured ${formatAge(recentOrp.at)} — may not reflect current conditions)` : ''}`;
-  };
+  const isOpen = mode != null;
+  const close = () => onModeChange(null);
 
-  const getInsight = async () => {
-    if (!latestReading) return;
-    setIsOpen(true);
-    setLoading(true);
-    setError(null);
-    setIsMapsMode(false);
+  useEffect(() => () => recognitionRef.current?.stop(), []);
 
-    try {
-      const lsi = calculateLSI(latestReading);
-      const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
-
-      // Auto-synced controller readings (every 15 min, see sync.ts) all carry
-      // a boilerplate "Auto-logged from <source>" note. Filtering those out
-      // before the slice(0, 5) keeps this list to genuine manual maintenance
-      // notes instead of letting a few hours of polling evict them. Only
-      // untouched boilerplate is excluded — an operator amending an
-      // auto-synced reading's note (voice/photo transcription appends to
-      // the existing text) still surfaces here.
-      const recentNotes = history
-        .filter(r => r.notes && !isAutoSyncBoilerplateNote(r.notes))
-        .slice(0, 5)
-        .map(r => `[${r.timestamp.toLocaleDateString()}] ${r.notes}`)
-        .join('\n');
-
-      const prompt = `
-        You are an expert pool maintenance system (PoolStatus AI). 
-        Analyze the following telemetry data:
-        - Free Chlorine: ${fmt(latestReading.chlorine)} ppm
-        - Total Chlorine: ${fmt(latestReading.totalChlorine)} ppm (combined chlorine = total − free)
-        - Sanitisation (ORP): ${fmtOrp()} mV
-        - pH Level: ${fmt(latestReading.ph)}
-        - Total Alkalinity: ${fmt(latestReading.alkalinity)} ppm
-        - Water Temperature: ${fmt(latestReading.temperature)}°C
-        - Calcium Hardness: ${fmt(latestReading.calciumHardness)} ppm
-        - Cyanuric Acid: ${fmt(latestReading.cyanuricAcid)} ppm
-        - Differential Pressure: ${fmt(latestReading.differentialPressure)} kPa
-        - Calculated LSI: ${lsi == null ? 'not computable (missing inputs)' : lsi}
-        
-        RECENT MAINTENANCE HISTORY:
-        ${recentNotes || 'No recent maintenance recorded.'}
-
-        Provide a technical assessment and a step-by-step checklist of actions in the recommended order.
-        Also, provide a "Target Telemetry" section showing exactly what the readings (Chlorine, pH, Alkalinity, LSI) should be after these actions are completed and the water has stabilized.
-        
-        IMPORTANT: If the user has already added chemicals (based on history), adjust your advice. Do not repeat steps already taken if the readings haven't had time to stabilize.
-      `;
-
-      const response = await callAiWithFallback({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          systemInstruction: POOL_SYSTEM_PROMPT,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              analysis: {
-                type: Type.STRING,
-                description: "Technical assessment of the pool health and LSI analysis in markdown."
-              },
-              checklist: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.STRING },
-                    title: { type: Type.STRING, description: "Actionable maintenance step with specific metric amounts." }
-                  },
-                  required: ["id", "title"]
-                }
-              },
-              expectedOutcome: {
-                type: Type.STRING,
-                description: "Target telemetry values (Chlorine, pH, Alkalinity, LSI) after the protocol is executed and stabilized."
-              }
-            },
-            required: ["analysis", "checklist", "expectedOutcome"]
-          }
-        }
-      }, process.env.GEMINI_API_KEY!);
-
-      const data = JSON.parse(response.text || '{}') as AIResponse;
-      setInsight(data);
-    } catch (error) {
-      console.error("AI Error:", error);
-      setError("ERR_ANALYSIS_FAILED: Unable to process telemetry data.");
-    } finally {
-      setLoading(false);
+  const toggleListening = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
     }
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return;
+    const rec = new Ctor();
+    rec.lang = navigator.language || 'en-GB';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      const transcript = e.results[0]?.[0]?.transcript ?? '';
+      if (transcript) setQuestion((q) => (q ? `${q} ${transcript}` : transcript));
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
   };
 
-  const executeProtocol = () => {
-    if (!insight) return;
-    
-    const tasks: MaintenanceTask[] = insight.checklist.map(item => ({
-      id: `ai-${Date.now()}-${item.id}`,
-      title: item.title,
-      completed: false,
-      isAI: true,
-      priority: 'high',
-      frequency: 'once',
-      uid: '', // Will be set in App.tsx
-      createdAt: new Date()
-    }));
+  const analyzeReadings = () => {
+    onModeChange('protocol');
+    onRequestProtocol();
+  };
 
-    onExecuteProtocol(tasks);
+  const executeProtocol = async () => {
+    if (!protocol) return;
+    await onExecuteProtocol();
     setProtocolStaged(true);
     setTimeout(() => {
       setProtocolStaged(false);
-      setIsOpen(false);
+      onModeChange(null);
     }, 2500);
   };
 
   const buildReportSummary = () => {
-    if (!insight || !latestReading) return '';
-    const fmt = (v: number | null | undefined) => v == null ? '—' : String(v);
-    const checklist = insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
+    if (!protocol || !latestReading) return '';
+    const fmt = (v: number | null | undefined) => (v == null ? '—' : String(v));
+    const checklist = protocol.checklist.map((item, idx) => `${idx + 1}. ${item.title}`).join(' | ');
     return [
       `AI Analysis (${new Date().toLocaleString()})`,
-      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, ORP ${fmtOrp()} mV, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
-      `Assessment: ${insight.analysis.replace(/\n+/g, ' ').trim()}`,
+      `Reading: Cl ${fmt(latestReading.chlorine)} ppm, ORP ${formatOrpForPrompt(history)} mV, pH ${fmt(latestReading.ph)}, TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C`,
+      `Assessment: ${protocol.analysis.replace(/\n+/g, ' ').trim()}`,
       `Checklist: ${checklist}`,
-      `Target Outcome: ${insight.expectedOutcome.replace(/\n+/g, ' ').trim()}`
+      `Target Outcome: ${protocol.expectedOutcome.replace(/\n+/g, ' ').trim()}`,
     ].join(' — ');
   };
 
   const addToReport = () => {
-    if (!insight || !onAddToReport) return;
-    onAddToReport({
-      timestamp: new Date().toISOString(),
-      summary: buildReportSummary(),
-    });
+    if (!protocol || !onAddToReport) return;
+    onAddToReport({ timestamp: new Date().toISOString(), summary: buildReportSummary() });
     setAddedToReport(true);
     setTimeout(() => setAddedToReport(false), 2200);
   };
 
   const exportSnapshot = () => {
-    if (!insight || !latestReading) return;
-    const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
+    if (!protocol || !latestReading) return;
+    const fmt = (v: number | null | undefined) => (v == null ? 'not measured' : String(v));
     const report = [
       '# PoolStatus AI Telemetry Snapshot',
       `Generated: ${new Date().toLocaleString()}`,
       '',
       '## Current Reading',
       `- Free Chlorine: ${fmt(latestReading.chlorine)} ppm`,
-      `- Sanitisation (ORP): ${fmtOrp()} mV`,
+      `- Sanitisation (ORP): ${formatOrpForPrompt(history)} mV`,
       `- pH: ${fmt(latestReading.ph)}`,
       `- Alkalinity: ${fmt(latestReading.alkalinity)} ppm`,
       `- Temperature: ${fmt(latestReading.temperature)}°C`,
       `- Differential Pressure: ${fmt(latestReading.differentialPressure)} kPa`,
       '',
       '## Health Assessment',
-      insight.analysis,
+      protocol.analysis,
       '',
       '## Suggested Checklist',
-      ...insight.checklist.map((item, idx) => `${idx + 1}. ${item.title}`),
+      ...protocol.checklist.map((item, idx) => `${idx + 1}. ${item.title}`),
       '',
       '## Target Telemetry',
-      insight.expectedOutcome,
+      protocol.expectedOutcome,
     ].join('\n');
 
     const blob = new Blob([report], { type: 'text/markdown;charset=utf-8;' });
@@ -369,10 +165,8 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
   };
 
   const findPoolSupplies = async () => {
-    setIsFindingSupplies(true);
-    setIsOpen(true);
+    onModeChange('maps');
     setLoading(true);
-    setIsMapsMode(true);
     setError(null);
     setMapsContent(null);
     // Clear any previous search's link/location state so the fallback shown
@@ -381,56 +175,49 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     setMapsLocationFound(false);
 
     const location = await getSupplySearchLocation(navigator.geolocation);
-    const searchUrl = buildSupplySearchUrl(location);
-    setMapsSearchUrl(searchUrl);
+    setMapsSearchUrl(buildSupplySearchUrl(location));
     setMapsLocationFound(Boolean(location));
 
     try {
       const response = await callAiWithFallback({
-        model: "gemini-2.5-flash",
+        model: 'gemini-2.5-flash',
         contents: location
-          ? "Find nearby pool supply stores. List current addresses and ratings, and tell me to verify stock before travelling."
-          : "Find pool supply stores near the user. List current addresses and ratings, and tell me to verify stock before travelling.",
+          ? 'Find nearby pool supply stores. List current addresses and ratings, and tell me to verify stock before travelling.'
+          : 'Find pool supply stores near the user. List current addresses and ratings, and tell me to verify stock before travelling.',
         config: {
           tools: [{ googleMaps: {} }],
           toolConfig: location ? { retrievalConfig: { latLng: location } } : undefined,
-        }
+        },
       }, process.env.GEMINI_API_KEY!);
-      setMapsContent(response.text || "No stores found.");
-    } catch (error) {
-      console.error("Maps Error:", error);
+      setMapsContent(response.text || 'No stores found.');
+    } catch (err) {
+      console.error('Maps Error:', err);
       setMapsContent("Live store details aren't available in PoolStatus right now. Open Google Maps below to see current nearby results instead.");
     } finally {
       setLoading(false);
-      setIsFindingSupplies(false);
     }
   };
 
   const askGeneralQuestion = async () => {
-    if (!question.trim()) return;
-    setIsOpen(true);
+    const trimmed = question.trim();
+    if (!trimmed || loading) return;
+    onModeChange('answer');
     setLoading(true);
     setError(null);
-    setIsMapsMode(false);
+    setAnswer(null);
 
     try {
-      const fmt = (v: number | null | undefined) => v == null ? 'not measured' : String(v);
+      const fmt = (v: number | null | undefined) => (v == null ? 'not measured' : String(v));
       const context = latestReading
-        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, ORP ${fmtOrp()} mV, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
+        ? `Latest reading context: FC ${fmt(latestReading.chlorine)} ppm, TC ${fmt(latestReading.totalChlorine)} ppm, ORP ${formatOrpForPrompt(history)} mV, pH ${fmt(latestReading.ph)} TA ${fmt(latestReading.alkalinity)} ppm, Temp ${fmt(latestReading.temperature)}°C, CYA ${fmt(latestReading.cyanuricAcid)} ppm.`
         : 'No latest reading is currently available.';
       const response = await callAiWithFallback({
-        model: "gemini-3-flash-preview",
-        contents: `${context}\n\nUser question: ${question.trim()}\n\nProvide a direct practical answer. If diagnostics are needed, include specific checks in order.`,
-        config: {
-          systemInstruction: POOL_SYSTEM_PROMPT,
-        }
+        model: 'gemini-3-flash-preview',
+        contents: `${context}\n\nUser question: ${trimmed}\n\nProvide a direct practical answer. If diagnostics are needed, include specific checks in order.`,
+        config: { systemInstruction: POOL_SYSTEM_PROMPT },
       }, process.env.GEMINI_API_KEY!);
-
-      setInsight({
-        analysis: response.text || 'No response generated.',
-        checklist: [],
-        expectedOutcome: 'N/A',
-      });
+      setAnswer(response.text || 'No response generated.');
+      setQuestion('');
     } catch (err) {
       console.error('General QA Error:', err);
       setError('ERR_QUESTION_FAILED: Unable to answer your question right now.');
@@ -439,73 +226,87 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
     }
   };
 
+  const title = mode === 'protocol' ? 'AI Protocol' : mode === 'maps' ? 'Nearby Supplies' : mode === 'answer' ? 'Pool AI' : 'PoolStatus AI';
+
   return (
     <>
-      <button 
-        onClick={getInsight}
-        className="fixed bottom-24 right-6 w-12 h-12 bg-accent text-primary rounded-full shadow-xl shadow-accent/20 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 no-print"
-      >
-        <Sparkles size={24} />
-      </button>
+      {!hidden && (
+        <button
+          type="button"
+          onClick={() => onModeChange(isOpen ? null : 'menu')}
+          aria-label={isOpen ? 'Close AI assistant' : 'Open AI assistant'}
+          aria-expanded={isOpen}
+          className="fixed right-5 z-40 w-[60px] h-[60px] rounded-full bg-accent text-primary flex items-center justify-center shadow-[0_20px_40px_rgba(79,195,247,0.25),0_4px_12px_rgba(0,0,0,0.4)] hover:scale-110 active:scale-90 transition-transform no-print"
+          style={{ bottom: 'calc(72px + env(safe-area-inset-bottom))' }}
+        >
+          <Sparkles size={26} aria-hidden="true" />
+        </button>
+      )}
 
       <AnimatePresence>
         {isOpen && (
-          <motion.div 
-            initial={{ opacity: 0, y: 100, scale: 0.95 }}
+          <motion.div
+            key="assistant-sheet"
+            role="dialog"
+            aria-modal="false"
+            aria-label="PoolStatus AI assistant"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 100, scale: 0.95 }}
-            className="fixed bottom-0 left-0 right-0 z-[80] p-4 no-print"
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed left-3 right-3 z-[45] mx-auto max-w-2xl rounded-2xl bg-surface border border-accent/30 shadow-[0_20px_40px_rgba(0,0,0,0.5)] p-4 flex flex-col gap-3 max-h-[72vh] no-print"
+            style={{ bottom: 'calc(76px + env(safe-area-inset-bottom))' }}
           >
-            <div className="max-w-2xl mx-auto bg-[#0d1f38] rounded-2xl shadow-2xl border border-border-dim overflow-hidden">
-              <header className="p-4 border-b border-border-dim flex items-center justify-between bg-[#060e1a]">
-                <div className="flex items-center gap-3 text-accent font-bold text-[10px] uppercase tracking-widest">
-                  <Terminal size={14} />
-                  <span>AI Telemetry Analysis</span>
-                </div>
-                <button 
-                  onClick={() => setIsOpen(false)} 
-                  className="p-1.5 hover:bg-surface rounded-lg transition-colors text-ink-dim hover:text-white"
-                >
-                  <X size={16} />
+            <header className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-accent min-w-0">
+                {mode !== 'menu' ? (
+                  <button type="button" onClick={() => onModeChange('menu')} aria-label="Back to assistant menu" className="-m-2 p-2 text-ink-muted hover:text-white"><ChevronLeft size={16} /></button>
+                ) : (
+                  <Sparkles size={14} aria-hidden="true" />
+                )}
+                <span className="truncate">{title}</span>
+                {mode === 'protocol' && protocol && (
+                  <span className="font-mono text-[9px] tracking-[0.1em] text-ink-dim normal-case">· {protocol.model} {protocol.generatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                )}
+              </div>
+              <button type="button" onClick={close} aria-label="Close" className="-m-2 p-2 text-ink-dim hover:text-white"><X size={16} /></button>
+            </header>
+
+            {mode === 'menu' && (
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={analyzeReadings} disabled={!latestReading} className={QUICK_ACTION} title={latestReading ? undefined : 'Log a reading first'}>
+                  <Activity size={14} className="text-accent" aria-hidden="true" />Analyze readings
                 </button>
-              </header>
-              
-              <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
-                <div className="mb-5 p-4 rounded-xl border border-border-dim bg-[#08162a] space-y-3">
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-ink-dim">Ask a general pool question</label>
-                  <textarea
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    placeholder="e.g. Why does pH keep rising even after adding acid?"
-                    className="input bg-[#0d1f38] border-border-dim min-h-[78px] resize-none py-3 text-sm"
-                  />
-                  <button
-                    onClick={askGeneralQuestion}
-                    disabled={loading || !question.trim()}
-                    className="w-full py-2.5 px-4 rounded-lg bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Ask Pool AI
-                  </button>
-                </div>
-                {isMapsMode ? (
-                  <div className="space-y-4" aria-live="polite">
+                <button type="button" onClick={findPoolSupplies} className={QUICK_ACTION}>
+                  <MapPin size={14} className="text-accent" aria-hidden="true" />Find supplies
+                </button>
+              </div>
+            )}
+
+            {mode !== 'menu' && (
+              <div className="overflow-y-auto custom-scrollbar flex-1 min-h-0 flex flex-col gap-4 pr-1" aria-live="polite">
+                {mode === 'protocol' && (
+                  protocolState === 'loading' ? (
+                    <Spinner label="AI analyzing saturation..." />
+                  ) : protocolState === 'error' ? (
+                    <p className="font-mono text-xs text-critical" role="alert">{PROTOCOL_ERROR_MESSAGE}</p>
+                  ) : protocol ? (
+                    <ProtocolDetail protocol={protocol} />
+                  ) : (
+                    <p className="text-xs text-ink-dim">No protocol yet — tap Analyze readings.</p>
+                  )
+                )}
+
+                {mode === 'maps' && (
+                  <div className="space-y-4">
                     {loading ? (
-                      <div className="flex items-center justify-center gap-3 py-6 text-ink-dim">
-                        <Loader2 size={20} className="text-accent animate-spin" />
-                        <p className="text-[10px] font-bold uppercase tracking-widest">Searching nearby suppliers...</p>
-                      </div>
+                      <Spinner label="Searching nearby suppliers..." />
                     ) : (
                       <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
                         <ReactMarkdown>{mapsContent || ''}</ReactMarkdown>
                       </div>
                     )}
-                    <a
-                      href={mapsSearchUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-full min-h-12 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all"
-                    >
-                      <MapPin size={15} />
+                    <a href={mapsSearchUrl} target="_blank" rel="noreferrer" className="w-full min-h-12 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all">
+                      <MapPin size={15} aria-hidden="true" />
                       Open nearby suppliers in Google Maps
                     </a>
                     <p className="text-[10px] text-ink-dim leading-relaxed">
@@ -516,110 +317,139 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                           : 'Location access was unavailable. Google Maps can use your location after it opens.'}
                     </p>
                   </div>
-                ) : loading ? (
-                  <div className="flex flex-col items-center justify-center py-16 space-y-6">
-                    <div className="relative">
-                      <Loader2 size={40} className="text-accent animate-spin" />
-                      <Sparkles size={16} className="text-accent absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
-                    </div>
-                    <div className="text-center space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Processing Telemetry</p>
-                      <p className="text-[9px] font-mono text-ink-dim/50 animate-pulse">Running diagnostic protocols...</p>
-                    </div>
-                  </div>
-                ) : error ? (
-                  <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-mono">
-                    {error}
-                  </div>
-                ) : insight ? (
-                  <div className="space-y-8">
-                    <section>
-                      <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-3">Health Assessment</h3>
-                      <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
-                        <ReactMarkdown>{insight.analysis}</ReactMarkdown>
-                      </div>
-                    </section>
+                )}
 
-                    <section>
-                      <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-3">Suggested Checklist</h3>
-                      {insight.checklist.length > 0 ? (
-                        <div className="space-y-2">
-                          {insight.checklist.map((item, idx) => (
-                            <div key={item.id} className="flex items-start gap-3 p-3 bg-surface rounded-xl border border-border-dim/50">
-                              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-[10px] font-bold flex items-center justify-center border border-accent/20">
-                                {idx + 1}
-                              </span>
-                              <span className="text-sm text-ink">{item.title}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-ink-dim">No action checklist generated for this response.</p>
-                      )}
-                    </section>
-
-                    {insight.expectedOutcome !== 'N/A' && (
-                      <section className="p-4 bg-accent/5 rounded-xl border border-accent/10">
-                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Target Telemetry (Post-Protocol)</h3>
-                        <div className="markdown-body text-ink-muted text-xs leading-relaxed font-sans italic">
-                          <ReactMarkdown>{insight.expectedOutcome}</ReactMarkdown>
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                ) : null}
+                {mode === 'answer' && (
+                  loading ? (
+                    <Spinner label="Thinking..." />
+                  ) : error ? (
+                    <p className="font-mono text-xs text-critical" role="alert">{error}</p>
+                  ) : answer ? (
+                    <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
+                      <ReactMarkdown>{answer}</ReactMarkdown>
+                    </div>
+                  ) : null
+                )}
               </div>
+            )}
 
-              <footer className="p-4 bg-[#060e1a] border-t border-border-dim flex gap-3">
+            {mode === 'protocol' && protocol && protocolState !== 'loading' && (
+              <footer className="flex gap-2 flex-wrap">
                 {protocolStaged ? (
-                  <div className="flex-1 py-3 px-4 rounded-xl bg-success/10 border border-success/20 text-success text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
-                    <CheckCircle2 size={14} />
-                    Protocol Staged — Log new reading in 4–6 hours
+                  <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-success/10 border border-success/20 text-emerald-400 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                    <CheckCircle2 size={14} aria-hidden="true" />Protocol staged — retest in 4–6 h
                   </div>
                 ) : addedToReport ? (
-                  <div className="flex-1 py-3 px-4 rounded-xl bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
-                    <CheckCircle2 size={14} />
-                    Added To Report Queue
+                  <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                    <CheckCircle2 size={14} aria-hidden="true" />Added to report queue
                   </div>
                 ) : (
                   <>
-                    <button
-                      onClick={findPoolSupplies}
-                      className="flex-1 py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2"
-                    >
-                      <MapPin size={14} />
-                      Find Supplies
+                    <button type="button" onClick={addToReport} disabled={!onAddToReport} className={`${FOOTER_BTN} flex-1`}>
+                      <FileText size={14} aria-hidden="true" />Add to report
                     </button>
-                    <button
-                      onClick={addToReport}
-                      disabled={!insight || isMapsMode}
-                      className="flex-1 py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <FileText size={14} />
-                      Add To Report
+                    <button type="button" onClick={exportSnapshot} className={FOOTER_BTN} title="Export AI snapshot as markdown" aria-label="Export AI snapshot as markdown">
+                      <Download size={14} aria-hidden="true" />
                     </button>
-                    <button
-                      onClick={exportSnapshot}
-                      disabled={!insight || isMapsMode}
-                      className="py-3 px-4 rounded-xl bg-surface border border-border-dim text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title="Export AI snapshot as markdown"
-                    >
-                      <Download size={14} />
-                    </button>
-                    <button
-                      onClick={executeProtocol}
-                      className="flex-1 py-3 px-4 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all flex items-center justify-center gap-2"
-                    >
-                      Execute Protocol
-                      <ChevronRight size={14} />
-                    </button>
+                    {protocolState === 'executed' ? (
+                      <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-surface-2 border border-success/35 text-emerald-400 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                        <CheckCircle2 size={14} aria-hidden="true" />Checklist built
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={executeProtocol}
+                        disabled={protocol.checklist.length === 0}
+                        className="flex-1 min-h-11 py-2.5 px-3 rounded-[10px] bg-accent text-primary text-[10px] font-bold uppercase tracking-[0.12em] whitespace-nowrap hover:brightness-110 transition-all flex items-center justify-center gap-2 disabled:opacity-40"
+                      >
+                        Execute protocol<ChevronRight size={14} aria-hidden="true" />
+                      </button>
+                    )}
                   </>
                 )}
               </footer>
-            </div>
+            )}
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); askGeneralQuestion(); }}
+              className="h-12 pl-3.5 pr-1.5 rounded-[10px] bg-surface-2 border border-border-dim flex items-center gap-2.5"
+            >
+              {speechSupported && (
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  aria-label={listening ? 'Stop dictation' : 'Dictate a question'}
+                  aria-pressed={listening}
+                  className={`-ml-1.5 p-1.5 rounded-md ${listening ? 'text-red-400 animate-pulse' : 'text-accent'}`}
+                >
+                  {listening ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+              )}
+              <input
+                type="text"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder={listening ? 'Listening…' : 'Ask about the pool…'}
+                aria-label="Ask about the pool"
+                className="flex-1 min-w-0 bg-transparent border-0 outline-none text-[13px] text-white placeholder:text-ink-dim"
+              />
+              <button
+                type="submit"
+                disabled={loading || !question.trim()}
+                aria-label="Ask Pool AI"
+                className="w-9 h-9 rounded-lg bg-accent text-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-transform"
+              >
+                {loading && mode === 'answer' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              </button>
+            </form>
           </motion.div>
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+function Spinner({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-3 py-8 text-ink-dim">
+      <Loader2 size={20} className="text-accent animate-spin" aria-hidden="true" />
+      <p className="text-[10px] font-bold uppercase tracking-widest">{label}</p>
+    </div>
+  );
+}
+
+function ProtocolDetail({ protocol }: { protocol: AiProtocol }) {
+  return (
+    <div className="space-y-6">
+      <section>
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Health Assessment</h3>
+        <div className="markdown-body text-ink-muted text-sm leading-relaxed font-sans">
+          <ReactMarkdown>{protocol.analysis}</ReactMarkdown>
+        </div>
+      </section>
+      <section>
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Suggested Checklist</h3>
+        {protocol.checklist.length > 0 ? (
+          <ol className="space-y-2">
+            {protocol.checklist.map((item, idx) => (
+              <li key={item.id} className="flex items-start gap-3 p-3 bg-surface-2 rounded-xl border border-border-dim/60">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-[10px] font-bold flex items-center justify-center border border-accent/20">{idx + 1}</span>
+                <span className="text-sm text-ink">{item.title}</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-xs text-ink-dim">No action checklist generated for this response.</p>
+        )}
+      </section>
+      {protocol.expectedOutcome !== 'N/A' && (
+        <section className="p-4 bg-accent/5 rounded-xl border border-accent/10">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-accent mb-2">Target Telemetry (Post-Protocol)</h3>
+          <div className="markdown-body text-ink-muted text-xs leading-relaxed font-sans italic">
+            <ReactMarkdown>{protocol.expectedOutcome}</ReactMarkdown>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }

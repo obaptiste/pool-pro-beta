@@ -39,9 +39,15 @@ src/
     gemini.ts               generateContentWithRetry() — exponential backoff for 429s
     ai.ts                   callAiWithFallback() — Gemini → server fallback chain
     lsi.ts                  calculateLSI() — shared Langelier Saturation Index logic
+    aiProtocol.ts           AI maintenance protocol request + system prompt, shared by dashboard card and assistant
+    dashboardSummary.ts     Pure derivations behind dashboard surfaces (sync pill, trend glyphs, tile copy, agent activity)
   components/
-    Dashboard.tsx           Main view: LSI card, status grid, task checklist, alerts
-    GeminiAssistant.tsx     Floating AI panel: analysis, checklist, supply locator
+    Dashboard.tsx           Home tab: sync pill, alerts, LSI hero, telemetry cards, AI protocol card, Operations tiles, agents row
+    TabBar.tsx              Persistent bottom nav: Home · Readings · Tasks · Supplies · More
+    MoreSheet.tsx           "More" tab sheet: Equipment, Weekly Report, Trends, Wishlist, Glossary, Export, Sign out…
+    Tasks.tsx               Shift checklist full-screen view (Tasks tab)
+    TrendsView.tsx          Full-screen wrapper around TrendCharts (opens focused on a metric)
+    GeminiAssistant.tsx     Floating AI button + sheet: protocol detail, supply locator, free-form question
     ReadingForm.tsx         New reading entry with voice transcription (Gemini)
     Inventory.tsx           Chemical stock tracker
     Equipment.tsx           Equipment service schedule tracker

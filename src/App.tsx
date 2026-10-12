@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import Dashboard from './components/Dashboard';
+import Dashboard, { AssistantOpenMode } from './components/Dashboard';
+import Tasks from './components/Tasks';
+import TrendsView from './components/TrendsView';
+import TabBar, { Tab } from './components/TabBar';
+import MoreSheet from './components/MoreSheet';
 import ReadingForm from './components/ReadingForm';
 import CheatSheet from './components/CheatSheet';
 import OfflineIndicator from './components/OfflineIndicator';
-import GeminiAssistant from './components/GeminiAssistant';
+import GeminiAssistant, { AssistantMode } from './components/GeminiAssistant';
 import History from './components/History';
 import Glossary from './components/Glossary';
 import ReminderSettings from './components/ReminderSettings';
@@ -19,9 +23,11 @@ import { deleteObject, ref as storageRef } from 'firebase/storage';
 import { useToast } from './lib/toast';
 import { getLatestReadingForDisplay } from './lib/readings';
 import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValidation';
+import { AiProtocol, ProtocolState, protocolToTasks, requestAiProtocol } from './lib/aiProtocol';
+import { TrendMetricKey } from './lib/trends';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
-import { LogIn, LogOut, User as UserIcon, Package, Wrench, FileText, ListChecks } from 'lucide-react';
+import { LogIn, User as UserIcon, X } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
 export default function App() {
@@ -55,6 +61,19 @@ export default function App() {
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
+  const [isTasksOpen, setIsTasksOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isWorkTrackerOpen, setIsWorkTrackerOpen] = useState(false);
+  const [trendsView, setTrendsView] = useState<{ focusMetric?: TrendMetricKey } | null>(null);
+  const [assistantMode, setAssistantMode] = useState<AssistantMode | null>(null);
+  // False until the readings listener's first snapshot: lets the dashboard
+  // show a loading skeleton instead of "no data" during the initial fetch.
+  const [readingsLoaded, setReadingsLoaded] = useState(false);
+  // The AI maintenance protocol is shared by the dashboard's protocol card
+  // and the assistant sheet, so it lives here rather than in either.
+  const [protocol, setProtocol] = useState<AiProtocol | null>(null);
+  const [protocolState, setProtocolState] = useState<ProtocolState>('idle');
+  const protocolRequestId = useRef(0);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
@@ -80,6 +99,7 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setReadings([]);
+      setReadingsLoaded(false);
       setTasks([]);
       setInventory([]);
       setEquipment([]);
@@ -104,6 +124,7 @@ export default function App() {
         timestamp: (doc.data().timestamp as Timestamp).toDate(),
         editedAt: doc.data().editedAt ? (doc.data().editedAt as Timestamp).toDate() : undefined,
       } as Reading)));
+      setReadingsLoaded(true);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
 
     const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
@@ -468,6 +489,34 @@ export default function App() {
     }
   };
 
+  const latestForAi = getLatestReadingForDisplay(readings);
+
+  // Requests a fresh AI protocol for the latest reading. The request id
+  // guards against an older in-flight response landing after a newer one
+  // (StrictMode's double effect run, or an operator tapping Analyze while a
+  // reading-change auto-run is still pending).
+  const handleRequestProtocol = async () => {
+    if (!latestForAi) return;
+    const requestId = ++protocolRequestId.current;
+    setProtocolState('loading');
+    try {
+      const next = await requestAiProtocol(latestForAi, readings);
+      if (requestId !== protocolRequestId.current) return;
+      setProtocol(next);
+      setProtocolState('ready');
+    } catch (err) {
+      console.error('AI Error:', err);
+      if (requestId !== protocolRequestId.current) return;
+      setProtocolState('error');
+    }
+  };
+
+  const handleExecuteCurrentProtocol = async () => {
+    if (!protocol || protocol.checklist.length === 0) return;
+    await handleExecuteProtocol(protocolToTasks(protocol));
+    setProtocolState('executed');
+  };
+
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {
     if (!user) return;
     try {
@@ -729,6 +778,40 @@ export default function App() {
     }
   };
 
+  const closeTabViews = () => {
+    setIsHistoryOpen(false);
+    setIsTasksOpen(false);
+    setIsInventoryOpen(false);
+    setIsMoreOpen(false);
+    setTrendsView(null);
+  };
+
+  const activeTab: Tab = isMoreOpen ? 'more' : isHistoryOpen ? 'readings' : isTasksOpen ? 'tasks' : isInventoryOpen ? 'supplies' : 'home';
+
+  const selectTab = (tab: Tab) => {
+    const reopen = tab !== activeTab;
+    closeTabViews();
+    if (!reopen) return; // tapping the active tab closes it back to Home
+    switch (tab) {
+      case 'readings': setIsHistoryOpen(true); break;
+      case 'tasks': setIsTasksOpen(true); break;
+      case 'supplies': setIsInventoryOpen(true); break;
+      case 'more': setIsMoreOpen(true); break;
+      default: break;
+    }
+  };
+
+  const openTrends = (focusMetric?: TrendMetricKey) => {
+    closeTabViews();
+    setTrendsView({ focusMetric });
+  };
+
+  const openAssistant = (mode: AssistantOpenMode) => setAssistantMode(mode);
+
+  // Full-screen entry/edit forms and the printable report take the whole
+  // viewport; the tab bar and assistant button get out of their way.
+  const chromeHidden = isLogging || editingReading != null || isWeeklyReportOpen;
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center">
@@ -770,87 +853,80 @@ export default function App() {
     <div className="min-h-screen bg-bg text-ink selection:bg-accent/30 selection:text-white">
       <OfflineIndicator isOnline={isOnline} lastSaved={lastSaved} />
       
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-bg/80 backdrop-blur-md border-b border-border-dim px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="wordmark text-lg text-white">
-            Pool<span className="text-accent">Status</span>
-          </h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="px-3 py-1.5 rounded-lg bg-surface border border-border-dim text-ink-dim hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest cursor-pointer">
-            Report Template
-            <input type="file" accept=".txt,.md,.csv" onChange={handleTemplateUpload} className="hidden" />
-          </label>
-          <button
-            onClick={() => setIsInventoryOpen(true)}
-            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
-            title="Inventory"
-          >
-            <Package size={18} />
-          </button>
-          <button
-            onClick={() => setIsEquipmentOpen(true)}
-            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
-            title="Equipment"
-          >
-            <Wrench size={18} />
-          </button>
-          <button
-            onClick={() => setIsWishlistOpen(true)}
-            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-white transition-colors"
-            title="Equipment Wishlist"
-          >
-            <ListChecks size={18} />
-          </button>
-          <button
-            onClick={() => setIsWeeklyReportOpen(true)}
-            className="p-2 rounded-lg bg-surface border border-border-dim text-ink-muted hover:text-accent transition-colors"
-            title="Weekly Report"
-          >
-            <FileText size={18} />
-          </button>
-          <div className="h-8 w-[1px] bg-border-dim mx-1" />
-          <button 
-            onClick={logout}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border-dim text-ink-dim hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest"
-          >
-            <LogOut size={14} />
-            Sign Out
-          </button>
-        </div>
-      </nav>
-
-      <main className="max-w-4xl mx-auto px-4 pt-24 pb-24 md:pt-28 grid-bg space-y-4">
-        <WorkTracker
-          sessions={workSessions}
-          activeSession={activeSession}
-          geoAutoStartEnabled={geoAutoStartEnabled}
-          onStart={handleStartWorkSession}
-          onStop={handleStopWorkSession}
-          onToggleGeoAutoStart={setGeoAutoStartEnabled}
-        />
-        <Dashboard 
-          userId={user.uid}
-          readings={readings} 
+      <main className="min-h-screen">
+        <Dashboard
+          readings={readings}
+          readingsLoaded={readingsLoaded}
           tasks={tasks}
           schedule={schedule}
           inventory={inventory}
           equipment={equipment}
+          protocol={protocol}
+          protocolState={protocolState}
+          onRequestProtocol={handleRequestProtocol}
+          onExecuteProtocol={handleExecuteCurrentProtocol}
           onLogReading={(focusField) => {
             setLogFocusField(focusField);
             setIsLogging(true);
           }}
-          onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
-          onOpenGlossary={() => setIsGlossaryOpen(true)}
-          onViewHistory={() => setIsHistoryOpen(true)}
+          onViewHistory={() => selectTab('readings')}
+          onOpenTrends={openTrends}
+          onOpenTasks={() => selectTab('tasks')}
+          onOpenEquipment={() => setIsEquipmentOpen(true)}
+          onOpenInventory={() => selectTab('supplies')}
+          onOpenWeeklyReport={() => setIsWeeklyReportOpen(true)}
           onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
-          onExport={exportToCSV}
-          onPrint={() => window.print()}
-          toggleTask={toggleTask}
-          onAddTask={handleAddTask}
+          onOpenAssistant={openAssistant}
           onSyncPoolController={handleSyncPoolController}
         />
       </main>
+
+      {!chromeHidden && <TabBar active={activeTab} onSelect={selectTab} />}
+
+      <MoreSheet
+        isOpen={isMoreOpen}
+        onClose={() => setIsMoreOpen(false)}
+        onOpenEquipment={() => setIsEquipmentOpen(true)}
+        onOpenWeeklyReport={() => setIsWeeklyReportOpen(true)}
+        onOpenTrends={() => openTrends()}
+        onOpenWishlist={() => setIsWishlistOpen(true)}
+        onOpenWorkTracker={() => setIsWorkTrackerOpen(true)}
+        onOpenGlossary={() => setIsGlossaryOpen(true)}
+        onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
+        onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
+        onOpenAgents={() => selectTab('readings')}
+        onTemplateUpload={handleTemplateUpload}
+        onExport={exportToCSV}
+        onPrint={() => window.print()}
+        onSignOut={logout}
+      />
+
+      <AnimatePresence>
+        {isWorkTrackerOpen && (
+          <motion.div
+            key="work-tracker"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="overlay z-[60] flex items-center justify-center p-4"
+            onClick={() => setIsWorkTrackerOpen(false)}
+          >
+            <div className="w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-end">
+                <button type="button" onClick={() => setIsWorkTrackerOpen(false)} aria-label="Close work tracker" className="icon-btn"><X size={16} /></button>
+              </div>
+              <WorkTracker
+                sessions={workSessions}
+                activeSession={activeSession}
+                geoAutoStartEnabled={geoAutoStartEnabled}
+                onStart={handleStartWorkSession}
+                onStop={handleStopWorkSession}
+                onToggleGeoAutoStart={setGeoAutoStartEnabled}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <ReminderSettings 
         isOpen={isReminderSettingsOpen}
@@ -884,6 +960,28 @@ export default function App() {
       />
 
       <AnimatePresence>
+        {isTasksOpen && (
+          <Tasks
+            tasks={tasks}
+            toggleTask={toggleTask}
+            onAddTask={handleAddTask}
+            onBack={() => setIsTasksOpen(false)}
+          />
+        )}
+
+        {trendsView && (
+          <TrendsView
+            readings={readings}
+            userId={user.uid}
+            focusMetric={trendsView.focusMetric}
+            onLogReading={() => {
+              setLogFocusField(undefined);
+              setIsLogging(true);
+            }}
+            onBack={() => setTrendsView(null)}
+          />
+        )}
+
         {isHistoryOpen && (
           <History
             readings={readings}
@@ -940,10 +1038,16 @@ export default function App() {
       />
 
       <GeminiAssistant
-        latestReading={getLatestReadingForDisplay(readings)}
+        latestReading={latestForAi}
         history={readings}
-        onExecuteProtocol={handleExecuteProtocol}
+        mode={assistantMode}
+        onModeChange={setAssistantMode}
+        protocol={protocol}
+        protocolState={protocolState}
+        onRequestProtocol={handleRequestProtocol}
+        onExecuteProtocol={handleExecuteCurrentProtocol}
         onAddToReport={handleAddToReport}
+        hidden={chromeHidden}
       />
     </div>
   );

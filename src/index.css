@@ -97,6 +97,11 @@
     animation: fab-pulse 2.8s ease-in-out infinite;
   }
 
+  /* Sync pill's "live" dot: opacity 1 → .35 → 1 over 2 s. */
+  .anim-live-pulse {
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+
   .anim-scan {
     position: relative;
     overflow: hidden;
@@ -142,6 +147,11 @@
   45%, 100% {
     transform: translateX(120%);
   }
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
 }
 
 @keyframes audio-bar {
@@ -192,6 +202,7 @@
 @media (prefers-reduced-motion: reduce) {
   .anim-fade-up,
   .anim-fab-pulse,
+  .anim-live-pulse,
   .anim-scan::after {
     animation: none !important;
   }
