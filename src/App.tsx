@@ -17,6 +17,7 @@ import Equipment from './components/Equipment';
 import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
 import WorkTracker from './components/WorkTracker';
+import { useModalFocus } from './lib/useModalFocus';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, storage, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { deleteObject, ref as storageRef } from 'firebase/storage';
@@ -64,6 +65,7 @@ export default function App() {
   const [isTasksOpen, setIsTasksOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isWorkTrackerOpen, setIsWorkTrackerOpen] = useState(false);
+  const workTrackerRef = useModalFocus<HTMLDivElement>(isWorkTrackerOpen, () => setIsWorkTrackerOpen(false));
   const [trendsView, setTrendsView] = useState<{ focusMetric?: TrendMetricKey } | null>(null);
   const [assistantMode, setAssistantMode] = useState<AssistantMode | null>(null);
   // False until the readings listener's first snapshot: lets the dashboard
@@ -513,6 +515,9 @@ export default function App() {
   const handleRequestProtocol = async () => {
     if (!latestForAi) return;
     const requestId = ++protocolRequestId.current;
+    // Drop the previous checklist now: it was built from readings that have
+    // since changed, so it must not stay executable while (or after) a refresh runs.
+    setProtocol(null);
     setProtocolState('loading');
     try {
       const next = await requestAiProtocol(latestForAi, readings);
@@ -926,7 +931,7 @@ export default function App() {
             className="overlay z-[60] flex items-center justify-center p-4"
             onClick={() => setIsWorkTrackerOpen(false)}
           >
-            <div className="w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div ref={workTrackerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Work time tracker" className="w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
               <div className="flex justify-end">
                 <button type="button" onClick={() => setIsWorkTrackerOpen(false)} aria-label="Close work tracker" className="icon-btn"><X size={16} /></button>
               </div>

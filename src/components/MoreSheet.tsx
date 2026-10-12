@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
+import { useModalFocus } from '../lib/useModalFocus';
 import { Book, BookOpen, Bell, Download, FileText, Heart, LineChart, LogOut, Plug, Printer, Timer, Upload, Wrench, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -29,47 +30,7 @@ export default function MoreSheet({
 }: Props) {
   const run = (fn: () => void) => () => { onClose(); fn(); };
 
-  // A modal must be operable without a pointer: focus moves into the sheet
-  // on open, Tab stays inside it, Escape closes it, and focus returns to the
-  // element that opened it. onClose is read through a ref so a new callback
-  // identity on each parent render doesn't re-run the focus setup.
-  const sheetRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    if (!isOpen) return;
-    const opener = document.activeElement as HTMLElement | null;
-    const focusable = () => Array.from(
-      sheetRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [],
-    ).filter((el) => el.getClientRects().length > 0);
-
-    focusable()[0]?.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const items = focusable();
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      opener?.focus?.();
-    };
-  }, [isOpen]);
+  const sheetRef = useModalFocus<HTMLDivElement>(isOpen, onClose);
   const items: Item[] = [
     { label: 'Equipment', icon: Wrench, onClick: run(onOpenEquipment) },
     { label: 'Weekly Report', icon: FileText, onClick: run(onOpenWeeklyReport) },
@@ -100,6 +61,7 @@ export default function MoreSheet({
           />
           <motion.div
             ref={sheetRef}
+            tabIndex={-1}
             key="more-sheet"
             role="dialog"
             aria-modal="true"

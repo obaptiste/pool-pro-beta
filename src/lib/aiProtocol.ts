@@ -186,6 +186,16 @@ export function formatOrpForPrompt(history: Reading[]): string {
 
 const fmt = (v: number | null | undefined) => (v == null ? 'not measured' : String(v));
 
+/** Display name for the provider that actually answered (Gemini, or a fallback). */
+export function providerLabel(provider: string): string {
+  switch (provider) {
+    case 'gemini': return 'Gemini';
+    case 'claude': return 'Claude';
+    case 'openai': return 'OpenAI';
+    default: return 'AI';
+  }
+}
+
 export async function requestAiProtocol(latestReading: Reading, history: Reading[]): Promise<AiProtocol> {
   const lsi = calculateLSI(latestReading);
 
@@ -257,7 +267,7 @@ export async function requestAiProtocol(latestReading: Reading, history: Reading
     analysis: typeof data.analysis === 'string' ? data.analysis : 'No assessment generated.',
     checklist: Array.isArray(data.checklist) ? data.checklist.filter((s) => s && typeof s.title === 'string').map((s, i) => ({ id: String(s.id ?? i + 1), title: s.title })) : [],
     expectedOutcome: typeof data.expectedOutcome === 'string' ? data.expectedOutcome : 'N/A',
-    model: 'Gemini',
+    model: providerLabel(response.provider),
     generatedAt: new Date(),
   };
 }
