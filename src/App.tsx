@@ -53,6 +53,8 @@ export default function App() {
 
   const [isLogging, setIsLogging] = useState(false);
   const [historicLogTimestamp, setHistoricLogTimestamp] = useState<Date | null>(null);
+  // The control that opened the historic form, so focus can return to it.
+  const historicReturnFocusRef = useRef<HTMLElement | null>(null);
   const [logFocusField, setLogFocusField] = useState<NumericReadingField | undefined>(undefined);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
   const [editFocusField, setEditFocusField] = useState<NumericReadingField | undefined>(undefined);
@@ -354,6 +356,13 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [geoAutoStartEnabled, user, activeSession]);
 
+  const restoreHistoricFocus = () => {
+    const target = historicReturnFocusRef.current;
+    historicReturnFocusRef.current = null;
+    // Wait for the calendar to be shown again before moving focus into it.
+    requestAnimationFrame(() => target?.focus());
+  };
+
   const handleSaveReading = async (
     newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
     formTimestamp: Date,
@@ -402,6 +411,7 @@ export default function App() {
         markSaved('Note saved to database');
         setIsLogging(false);
         setHistoricLogTimestamp(null);
+        if (isHistoricEntry) restoreHistoricFocus();
         return;
       }
 
@@ -457,6 +467,7 @@ export default function App() {
       markSaved('Reading saved to database');
       setIsLogging(false);
       setHistoricLogTimestamp(null);
+      if (isHistoricEntry) restoreHistoricFocus();
     } catch (err) {
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
@@ -1130,6 +1141,8 @@ export default function App() {
             onAddHistoricReading={(timestamp) => {
               // The calendar stays mounted but hidden while the form is open,
               // so its month and selected day survive.
+              historicReturnFocusRef.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
               setHistoricLogTimestamp(timestamp);
               setLogFocusField(undefined);
               setIsLogging(true);
@@ -1142,6 +1155,7 @@ export default function App() {
             focusField={logFocusField}
             onSave={handleSaveReading}
             onCancel={() => {
+              if (historicLogTimestamp !== null) restoreHistoricFocus();
               setIsLogging(false);
               setHistoricLogTimestamp(null);
             }}
