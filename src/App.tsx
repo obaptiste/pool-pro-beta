@@ -367,7 +367,11 @@ export default function App() {
     const timestamp = isHistoricEntry ? formTimestamp : new Date();
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
-    const updatesSchedule = !isHistoricEntry || timestamp >= startOfToday;
+    // Never move the schedule backward: a backfilled log must not replace a
+    // later test that is already recorded as the last one.
+    const updatesSchedule =
+      (!isHistoricEntry || timestamp >= startOfToday) &&
+      (!schedule.lastTestDate || timestamp > schedule.lastTestDate);
     const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
