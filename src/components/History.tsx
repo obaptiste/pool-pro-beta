@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil, Plus, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
-import { addDays, endOfMonth, format, isAfter, isSameDay, isSameMonth, startOfDay, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
+import { addDays, endOfMonth, format, isAfter, isBefore, isSameDay, isSameMonth, startOfDay, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
 import { getSoftWarning, getCombinedChlorineWarning, NumericReadingField, FIELD_LABEL } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -129,6 +129,9 @@ export default function History({ readings, onBack, onDelete, onEdit, onAddHisto
                       isOutsideMonth={!isSameMonth(day, calendarMonth)}
                       isSelected={selectedDay !== null && isSameDay(selectedDay, day)}
                       isFuture={isAfter(startOfDay(day), startOfDay(new Date()))}
+                      // Only past days can take a historic log: a log dated today
+                      // must update the test schedule, which historic entries skip.
+                      canAddHistoric={isBefore(startOfDay(day), startOfDay(new Date()))}
                       onSelect={() => setSelectedDay(day)}
                       onLongPress={() => onAddHistoricReading(historicTimestampFor(day))}
                     />
@@ -139,7 +142,7 @@ export default function History({ readings, onBack, onDelete, onEdit, onAddHisto
             <div className="card bg-surface border-border-dim p-4 space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-widest text-ink-dim">{selectedDay ? format(selectedDay, 'EEE, MMM d') : 'Pick a day'}</h3>
               <p className="text-[11px] text-ink-muted">{selectedDayReadings.length} logs for this day. You can review each report, delete incorrect entries, and re-log corrected values.</p>
-              {selectedDay && !isAfter(startOfDay(selectedDay), startOfDay(new Date())) ? (
+              {selectedDay && isBefore(startOfDay(selectedDay), startOfDay(new Date())) ? (
                 // Keyboard path to the same action as the calendar long-press.
                 <button onClick={() => onAddHistoricReading(historicTimestampFor(selectedDay))} className="w-full rounded-lg border border-accent/40 p-2 text-xs text-accent flex items-center justify-center gap-2">
                   <Plus size={13} />Add log for {format(selectedDay, 'd MMM')}
@@ -253,6 +256,7 @@ function CalendarDay({
   isOutsideMonth,
   isSelected,
   isFuture,
+  canAddHistoric,
   onSelect,
   onLongPress,
 }: {
@@ -261,22 +265,23 @@ function CalendarDay({
   isOutsideMonth: boolean;
   isSelected: boolean;
   isFuture: boolean;
+  canAddHistoric: boolean;
   onSelect: () => void;
   onLongPress: () => void;
 }) {
-  // Long-press adds a historic log, a tap selects the day. The hook's
-  // Enter/Space trigger is dropped here so keyboard users reach the same
-  // action through the explicit "Add log" button instead of by accident.
+  // Long-press adds a historic log; a tap (or Enter/Space, via native click)
+  // selects the day. The hook's own Enter/Space trigger is dropped so the
+  // keyboard selects the day instead of opening a historic log.
   const { handlers, isPressing } = useLongPress({
     onLongPress: () => {
-      if (!isFuture) onLongPress();
+      if (canAddHistoric) onLongPress();
     },
-    onClick: onSelect,
   });
   return (
     <button
       {...handlers}
       onKeyDown={undefined}
+      onClick={onSelect}
       type="button"
       disabled={isFuture}
       aria-label={`${format(day, 'EEEE d MMMM')}, ${logCount} ${logCount === 1 ? 'log' : 'logs'}`}

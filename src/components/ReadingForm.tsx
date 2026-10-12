@@ -391,11 +391,13 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                   max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
                   value={format(timestamp, "yyyy-MM-dd'T'HH:mm")}
                   onChange={handleTimestampChange}
+                  aria-invalid={timestampError ? true : undefined}
+                  aria-describedby={timestampError ? 'reading-timestamp-error' : undefined}
                   className={`input w-full px-3 py-2 text-sm sm:w-auto ${timestampError ? 'border-critical' : 'border-border-dim'}`}
                 />
               </div>
               {timestampError ? (
-                <p className="mt-3 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-critical">
+                <p id="reading-timestamp-error" className="mt-3 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-critical">
                   <AlertCircle size={11} />
                   {timestampError}
                 </p>
