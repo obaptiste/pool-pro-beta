@@ -33,6 +33,58 @@ import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc
 import { LogIn, User as UserIcon, X } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
 
+interface PendingScheduleUpdate {
+  lastTestMs: number;
+  nextTestMs: number;
+}
+
+const pendingScheduleKey = (uid: string) => `poolstatus:pendingSchedule:${uid}`;
+
+function readPendingSchedule(uid: string): PendingScheduleUpdate | null {
+  try {
+    const raw = localStorage.getItem(pendingScheduleKey(uid));
+    return raw ? (JSON.parse(raw) as PendingScheduleUpdate) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keeps only the latest pending update: an older one must never replace a newer one.
+function queuePendingSchedule(uid: string, update: PendingScheduleUpdate) {
+  try {
+    const existing = readPendingSchedule(uid);
+    if (existing && existing.lastTestMs >= update.lastTestMs) return;
+    localStorage.setItem(pendingScheduleKey(uid), JSON.stringify(update));
+  } catch {
+    // Storage is unavailable (e.g. blocked). The update is then only attempted
+    // immediately, without a retry after reload.
+  }
+}
+
+function clearPendingSchedule(uid: string) {
+  try {
+    localStorage.removeItem(pendingScheduleKey(uid));
+  } catch {
+    // Nothing to clear if storage is unavailable.
+  }
+}
+
+// Writes the schedule only if no later test is already recorded, inside one
+// transaction, so another tab or device's newer test is never overwritten.
+async function writeScheduleIfLatest(uid: string, update: PendingScheduleUpdate) {
+  const scheduleRef = doc(db, 'schedules', uid);
+  await runTransaction(db, async (transaction) => {
+    const current = await transaction.get(scheduleRef);
+    const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
+    if (storedLast && storedLast.toMillis() > update.lastTestMs) return;
+    transaction.set(scheduleRef, {
+      uid,
+      lastTestDate: Timestamp.fromMillis(update.lastTestMs),
+      nextTestDate: Timestamp.fromMillis(update.nextTestMs),
+    }, { merge: true });
+  });
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -356,6 +408,34 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [geoAutoStartEnabled, user, activeSession]);
 
+  // Writes any queued schedule update. A failure keeps it queued, so the next
+  // launch or reconnect retries it; online failures are also reported.
+  const flushPendingSchedule = async (uid: string) => {
+    const pending = readPendingSchedule(uid);
+    if (!pending) return;
+    try {
+      await writeScheduleIfLatest(uid, pending);
+      // Only clear it if no newer update was queued while the write was running.
+      if (readPendingSchedule(uid)?.lastTestMs === pending.lastTestMs) clearPendingSchedule(uid);
+    } catch (err) {
+      if (navigator.onLine) {
+        console.error('Schedule update failed; it stays queued:', err);
+        toast.error('Reading saved, but the test schedule could not be updated');
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    void flushPendingSchedule(user.uid);
+    const retryWhenOnline = () => void flushPendingSchedule(user.uid);
+    window.addEventListener('online', retryWhenOnline);
+    return () => window.removeEventListener('online', retryWhenOnline);
+    // flushPendingSchedule only reads the queue and the uid, so it's safe to
+    // run once per signed-in user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
+
   const restoreHistoricFocus = () => {
     const target = historicReturnFocusRef.current;
     historicReturnFocusRef.current = null;
@@ -416,7 +496,6 @@ export default function App() {
       }
 
       if (updatesSchedule) {
-        // Update schedule
         const daysToAdd = {
           daily: 1,
           weekly: 7,
@@ -427,41 +506,11 @@ export default function App() {
         const nextTest = new Date(timestamp);
         nextTest.setDate(nextTest.getDate() + daysToAdd);
 
-        // Check the stored schedule inside the transaction, not this client's
-        // snapshot: another tab or device may already have logged a later test.
-        const scheduleRef = doc(db, 'schedules', user.uid);
-        const scheduleUpdate = {
-          ...schedule,
-          uid: user.uid,
-          lastTestDate: Timestamp.fromDate(timestamp),
-          nextTestDate: Timestamp.fromDate(nextTest),
-        };
-        const writeScheduleIfLatest = () => runTransaction(db, async (transaction) => {
-          const current = await transaction.get(scheduleRef);
-          const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
-          if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
-          transaction.set(scheduleRef, scheduleUpdate, { merge: true });
-        });
-        try {
-          await writeScheduleIfLatest();
-        } catch (err) {
-          // The reading is already saved. A transaction can't run offline, so
-          // when the connection is down retry the same guarded write once it's
-          // back. The guard stays in place, so a later test recorded from
-          // another device is never overwritten. Online failures are reported.
-          const reportScheduleFailure = () =>
-            toast.error('Reading saved, but the test schedule could not be updated');
-          if (navigator.onLine) {
-            console.error('Schedule update failed after reading was saved:', err);
-            reportScheduleFailure();
-          } else {
-            const retryWhenOnline = () => {
-              window.removeEventListener('online', retryWhenOnline);
-              writeScheduleIfLatest().catch(reportScheduleFailure);
-            };
-            window.addEventListener('online', retryWhenOnline);
-          }
-        }
+        // Queue the update before writing so a reload or dropped connection
+        // can't lose it. The reading doesn't wait for the schedule write.
+        const update = { lastTestMs: timestamp.getTime(), nextTestMs: nextTest.getTime() };
+        queuePendingSchedule(user.uid, update);
+        void flushPendingSchedule(user.uid);
       }
 
       markSaved('Reading saved to database');
