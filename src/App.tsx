@@ -36,6 +36,8 @@ import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './type
 interface PendingScheduleUpdate {
   lastTestMs: number;
   nextTestMs: number;
+  testFrequency: Frequency;
+  remindersEnabled: boolean;
 }
 
 const pendingScheduleKey = (uid: string) => `poolstatus:pendingSchedule:${uid}`;
@@ -49,15 +51,17 @@ function readPendingSchedule(uid: string): PendingScheduleUpdate | null {
   }
 }
 
-// Keeps only the latest pending update: an older one must never replace a newer one.
-function queuePendingSchedule(uid: string, update: PendingScheduleUpdate) {
+// Keeps only the latest pending update: an older one must never replace a newer
+// one. Returns false when storage is unavailable, so the caller keeps the update
+// in memory and writes it straight away instead.
+function queuePendingSchedule(uid: string, update: PendingScheduleUpdate): boolean {
   try {
     const existing = readPendingSchedule(uid);
-    if (existing && existing.lastTestMs >= update.lastTestMs) return;
+    if (existing && existing.lastTestMs >= update.lastTestMs) return true;
     localStorage.setItem(pendingScheduleKey(uid), JSON.stringify(update));
+    return true;
   } catch {
-    // Storage is unavailable (e.g. blocked). The update is then only attempted
-    // immediately, without a retry after reload.
+    return false;
   }
 }
 
@@ -81,6 +85,11 @@ async function writeScheduleIfLatest(uid: string, update: PendingScheduleUpdate)
       uid,
       lastTestDate: Timestamp.fromMillis(update.lastTestMs),
       nextTestDate: Timestamp.fromMillis(update.nextTestMs),
+      // Rules require these on create. An existing schedule keeps its own settings.
+      ...(current.exists() ? {} : {
+        testFrequency: update.testFrequency,
+        remindersEnabled: update.remindersEnabled,
+      }),
     }, { merge: true });
   });
 }
@@ -410,13 +419,15 @@ export default function App() {
 
   // Writes any queued schedule update. A failure keeps it queued, so the next
   // launch or reconnect retries it; online failures are also reported.
-  const flushPendingSchedule = async (uid: string) => {
-    const pending = readPendingSchedule(uid);
+  const flushPendingSchedule = async (uid: string, unpersisted?: PendingScheduleUpdate) => {
+    const pending = unpersisted ?? readPendingSchedule(uid);
     if (!pending) return;
     try {
       await writeScheduleIfLatest(uid, pending);
-      // Only clear it if no newer update was queued while the write was running.
-      if (readPendingSchedule(uid)?.lastTestMs === pending.lastTestMs) clearPendingSchedule(uid);
+      // Only clear the queue if no newer update was queued while the write ran.
+      if (!unpersisted && readPendingSchedule(uid)?.lastTestMs === pending.lastTestMs) {
+        clearPendingSchedule(uid);
+      }
     } catch (err) {
       if (navigator.onLine) {
         console.error('Schedule update failed; it stays queued:', err);
@@ -481,11 +492,35 @@ export default function App() {
       newReading.calciumHardness != null ||
       newReading.cyanuricAcid != null;
 
+    // Queue the schedule update before the reading write. An offline write
+    // doesn't resolve until it syncs, so queueing after it would lose the update.
+    let unpersistedSchedule: PendingScheduleUpdate | null = null;
+    if (hasMeasurement && updatesSchedule) {
+      const daysToAdd = {
+        daily: 1,
+        weekly: 7,
+        biweekly: 14,
+        monthly: 30,
+      }[schedule.testFrequency];
+
+      const nextTest = new Date(timestamp);
+      nextTest.setDate(nextTest.getDate() + daysToAdd);
+
+      const update: PendingScheduleUpdate = {
+        lastTestMs: timestamp.getTime(),
+        nextTestMs: nextTest.getTime(),
+        testFrequency: schedule.testFrequency,
+        remindersEnabled: schedule.remindersEnabled,
+      };
+      if (!queuePendingSchedule(user.uid, update)) unpersistedSchedule = update;
+    }
+
     try {
       await setDoc(doc(db, 'readings', id), {
         ...reading,
         timestamp: Timestamp.fromDate(timestamp)
       });
+      void flushPendingSchedule(user.uid, unpersistedSchedule ?? undefined);
 
       if (!hasMeasurement) {
         markSaved('Note saved to database');
@@ -493,24 +528,6 @@ export default function App() {
         setHistoricLogTimestamp(null);
         if (isHistoricEntry) restoreHistoricFocus();
         return;
-      }
-
-      if (updatesSchedule) {
-        const daysToAdd = {
-          daily: 1,
-          weekly: 7,
-          biweekly: 14,
-          monthly: 30,
-        }[schedule.testFrequency];
-
-        const nextTest = new Date(timestamp);
-        nextTest.setDate(nextTest.getDate() + daysToAdd);
-
-        // Queue the update before writing so a reload or dropped connection
-        // can't lose it. The reading doesn't wait for the schedule write.
-        const update = { lastTestMs: timestamp.getTime(), nextTestMs: nextTest.getTime() };
-        queuePendingSchedule(user.uid, update);
-        void flushPendingSchedule(user.uid);
       }
 
       markSaved('Reading saved to database');
