@@ -232,6 +232,8 @@ export async function requestAiProtocol(latestReading: Reading, history: Reading
     Also, provide a "Target Telemetry" section showing exactly what the readings (Chlorine, pH, Alkalinity, LSI) should be after these actions are completed and the water has stabilized.
 
     IMPORTANT: If the user has already added chemicals (based on history), adjust your advice. Do not repeat steps already taken if the readings haven't had time to stabilize.
+
+    Dosing rule: the operator has not given product type, product strength, occupancy, or circulation status. So any step that adds a chemical must (a) name the product and strength it assumes, (b) state the dose is for 68,000 litres and must be checked against the product label, and (c) be preceded by a checklist step to confirm the pool is unoccupied, circulation is running, and the product's actual type and strength. If you cannot write those, give verification and retesting steps only.
   `;
 
   const response = await callAiWithFallback({

@@ -76,6 +76,8 @@ export default function App() {
   const [protocol, setProtocol] = useState<AiProtocol | null>(null);
   const [protocolState, setProtocolState] = useState<ProtocolState>('idle');
   const protocolRequestId = useRef(0);
+  // True while a protocol save is in flight, so a second tap can't write duplicate tasks.
+  const protocolExecuting = useRef(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
@@ -542,12 +544,21 @@ export default function App() {
   };
 
   // Resolves true only when the checklist was saved, so the assistant shows
-  // its "staged" confirmation only for a real save.
+  // its "staged" confirmation only for a real save. A second call while a
+  // save is pending is ignored, and the protocol is marked executed only if
+  // it is still the current one when the save finishes: a refresh that
+  // started meanwhile has replaced it, and its checklist was never saved.
   const handleExecuteCurrentProtocol = async (): Promise<boolean> => {
-    if (!protocol || protocol.checklist.length === 0) return false;
-    const saved = await handleExecuteProtocol(protocolToTasks(protocol));
-    if (saved) setProtocolState('executed');
-    return saved;
+    if (!protocol || protocol.checklist.length === 0 || protocolExecuting.current) return false;
+    protocolExecuting.current = true;
+    const runId = protocolRequestId.current;
+    try {
+      const saved = await handleExecuteProtocol(protocolToTasks(protocol));
+      if (saved && protocolRequestId.current === runId) setProtocolState('executed');
+      return saved;
+    } finally {
+      protocolExecuting.current = false;
+    }
   };
 
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {

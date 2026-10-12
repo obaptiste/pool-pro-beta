@@ -81,6 +81,20 @@ const TREND_EPSILON: Partial<Record<NumericReadingField, number>> = {
 };
 
 /**
+ * Trend epsilon for a field. A field with no entry logs a warning and falls
+ * back to 0, so any change counts as a trend. That is noisier than intended,
+ * so the warning points at the table to update.
+ */
+export function getEpsilonForField(field: NumericReadingField): number {
+  const epsilon = TREND_EPSILON[field];
+  if (epsilon === undefined) {
+    console.warn(`dashboardSummary: no trend epsilon for "${field}"; any change will count as a trend. Add it to TREND_EPSILON.`);
+    return 0;
+  }
+  return epsilon;
+}
+
+/**
  * Direction of the latest value versus the previous reading that measured
  * the same field. Expects newest-first order. Returns null when fewer than
  * two measurements exist — a glyph implies a comparison that isn't there.
@@ -96,7 +110,7 @@ export function getTrendGlyph(readings: Reading[], field: NumericReadingField): 
   }
   if (measured.length < 2) return null;
   const delta = measured[0] - measured[1];
-  const epsilon = TREND_EPSILON[field] ?? 0;
+  const epsilon = getEpsilonForField(field);
   if (delta > epsilon) return '↑';
   if (delta < -epsilon) return '↓';
   return '→';
@@ -185,6 +199,12 @@ export function startOfIsoWeek(d: Date): Date {
   return day;
 }
 
+/** Fields checked against their working range by isReadingNominal. */
+const NOMINAL_FIELDS: readonly NumericReadingField[] = [
+  'chlorine', 'totalChlorine', 'sanitisationMv', 'ph', 'alkalinity',
+  'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid',
+];
+
 /** Every measured field of a reading sits inside its working range. */
 export function isReadingNominal(reading: Reading): boolean | null {
   // Free and total chlorine can each sit in range while their difference is
@@ -198,8 +218,7 @@ export function isReadingNominal(reading: Reading): boolean | null {
   if (combined != null && getCombinedChlorineStatus(combined) !== 'good') return false;
 
   let observed = false;
-  const fields: NumericReadingField[] = ['chlorine', 'totalChlorine', 'sanitisationMv', 'ph', 'alkalinity', 'temperature', 'differentialPressure', 'calciumHardness', 'cyanuricAcid'];
-  for (const field of fields) {
+  for (const field of NOMINAL_FIELDS) {
     const v = reading[field];
     if (v == null) continue;
     observed = true;

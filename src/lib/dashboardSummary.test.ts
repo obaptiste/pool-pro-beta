@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  getEpsilonForField,
   describePhDrift,
   describeSync,
   getLsiStateWord,
@@ -79,6 +80,7 @@ test('getTrendGlyph: compares the two most recent measurements of that field, ig
   assert.equal(getTrendGlyph([reading({ ph: 7.42 }), reading({ ph: 7.4 })], 'ph'), '→'); // within epsilon
   assert.equal(getTrendGlyph([reading({ ph: 7.4 })], 'ph'), null);
   assert.equal(getTrendGlyph([reading({ sanitisationMv: 700 }), reading({ sanitisationMv: 720 })], 'sanitisationMv'), '↓');
+  assert.equal(getEpsilonForField('ph'), 0.05);
 });
 
 const equipment = (overrides: Partial<EquipmentItem>): EquipmentItem => ({
