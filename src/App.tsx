@@ -29,9 +29,89 @@ import { NUMERIC_READING_FIELDS, NumericReadingField } from './lib/readingValida
 import { AiProtocol, ProtocolState, protocolToTasks, requestAiProtocol } from './lib/aiProtocol';
 import { TrendMetricKey } from './lib/trends';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc, updateDoc, deleteDoc, Timestamp, orderBy, getDoc, addDoc, runTransaction } from 'firebase/firestore';
 import { LogIn, User as UserIcon, X } from 'lucide-react';
 import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './types';
+
+interface PendingScheduleUpdate {
+  lastTestMs: number;
+  testFrequency: Frequency;
+  remindersEnabled: boolean;
+}
+
+const FREQUENCY_DAYS: Record<Frequency, number> = { daily: 1, weekly: 7, biweekly: 14, monthly: 30 };
+
+const pendingScheduleKey = (uid: string) => `poolstatus:pendingSchedule:${uid}`;
+
+function readPendingSchedule(uid: string): PendingScheduleUpdate | null {
+  try {
+    const raw = localStorage.getItem(pendingScheduleKey(uid));
+    return raw ? (JSON.parse(raw) as PendingScheduleUpdate) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keeps only the latest pending update: an older one must never replace a newer
+// one. Returns false when storage is unavailable, so the caller keeps the update
+// in memory and writes it straight away instead.
+function queuePendingSchedule(uid: string, update: PendingScheduleUpdate): boolean {
+  try {
+    const existing = readPendingSchedule(uid);
+    if (existing && existing.lastTestMs >= update.lastTestMs) return true;
+    localStorage.setItem(pendingScheduleKey(uid), JSON.stringify(update));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearPendingSchedule(uid: string) {
+  try {
+    localStorage.removeItem(pendingScheduleKey(uid));
+  } catch {
+    // Nothing to clear if storage is unavailable.
+  }
+}
+
+// Drops the update queued for a reading whose own save definitively failed, so a
+// schedule for a test that was never recorded is never applied. An update that
+// was queued earlier, and replaced by this one, is put back.
+function discardPendingSchedule(uid: string, update: PendingScheduleUpdate, previous: PendingScheduleUpdate | null) {
+  if (readPendingSchedule(uid)?.lastTestMs !== update.lastTestMs) return;
+  try {
+    if (previous) localStorage.setItem(pendingScheduleKey(uid), JSON.stringify(previous));
+    else localStorage.removeItem(pendingScheduleKey(uid));
+  } catch {
+    // Storage is unavailable, so there's nothing persisted to restore.
+  }
+}
+
+// Writes the schedule only if no later test is already recorded, inside one
+// transaction, so another tab or device's newer test is never overwritten.
+async function writeScheduleIfLatest(uid: string, update: PendingScheduleUpdate) {
+  const scheduleRef = doc(db, 'schedules', uid);
+  await runTransaction(db, async (transaction) => {
+    const current = await transaction.get(scheduleRef);
+    const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
+    if (storedLast && storedLast.toMillis() > update.lastTestMs) return;
+    // Use the frequency as stored now, not as it was when the reading was saved,
+    // so a change made on another device is respected.
+    const frequency = (current.exists() ? current.data().testFrequency as Frequency | undefined : undefined) ?? update.testFrequency;
+    const nextTest = new Date(update.lastTestMs);
+    nextTest.setDate(nextTest.getDate() + FREQUENCY_DAYS[frequency]);
+    transaction.set(scheduleRef, {
+      uid,
+      lastTestDate: Timestamp.fromMillis(update.lastTestMs),
+      nextTestDate: Timestamp.fromDate(nextTest),
+      // Rules require these on create. An existing schedule keeps its own settings.
+      ...(current.exists() ? {} : {
+        testFrequency: update.testFrequency,
+        remindersEnabled: update.remindersEnabled,
+      }),
+    }, { merge: true });
+  });
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -52,6 +132,9 @@ export default function App() {
   });
 
   const [isLogging, setIsLogging] = useState(false);
+  const [historicLogTimestamp, setHistoricLogTimestamp] = useState<Date | null>(null);
+  // The control that opened the historic form, so focus can return to it.
+  const historicReturnFocusRef = useRef<HTMLElement | null>(null);
   const [logFocusField, setLogFocusField] = useState<NumericReadingField | undefined>(undefined);
   const [editingReading, setEditingReading] = useState<Reading | null>(null);
   const [editFocusField, setEditFocusField] = useState<NumericReadingField | undefined>(undefined);
@@ -353,14 +436,66 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [geoAutoStartEnabled, user, activeSession]);
 
-  const handleSaveReading = async (newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>) => {
+  // Writes any queued schedule update. A failure keeps it queued, so the next
+  // launch or reconnect retries it; online failures are also reported.
+  const flushPendingSchedule = async (uid: string, unpersisted?: PendingScheduleUpdate) => {
+    const pending = unpersisted ?? readPendingSchedule(uid);
+    if (!pending) return;
+    try {
+      await writeScheduleIfLatest(uid, pending);
+      // Only clear the queue if no newer update was queued while the write ran.
+      if (!unpersisted && readPendingSchedule(uid)?.lastTestMs === pending.lastTestMs) {
+        clearPendingSchedule(uid);
+      }
+    } catch (err) {
+      if (navigator.onLine) {
+        console.error('Schedule update failed; it stays queued:', err);
+        toast.error('Reading saved, but the test schedule could not be updated');
+      }
+    }
+  };
+
+  useEffect(() => {
     if (!user) return;
-    const now = new Date();
+    void flushPendingSchedule(user.uid);
+    const retryWhenOnline = () => void flushPendingSchedule(user.uid);
+    window.addEventListener('online', retryWhenOnline);
+    return () => window.removeEventListener('online', retryWhenOnline);
+    // flushPendingSchedule only reads the queue and the uid, so it's safe to
+    // run once per signed-in user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
+
+  const restoreHistoricFocus = () => {
+    const target = historicReturnFocusRef.current;
+    historicReturnFocusRef.current = null;
+    // Wait for the calendar to be shown again before moving focus into it.
+    requestAnimationFrame(() => target?.focus());
+  };
+
+  const handleSaveReading = async (
+    newReading: Omit<Reading, 'id' | 'timestamp' | 'uid'>,
+    formTimestamp: Date,
+  ) => {
+    if (!user) return;
+    // A historic entry (added from a past day in the calendar) keeps the
+    // timestamp the user picked. Only a log dated before today must leave the
+    // test schedule alone; decide that from the submitted timestamp, since the
+    // operator can edit it.
+    const isHistoricEntry = historicLogTimestamp !== null;
+    const timestamp = isHistoricEntry ? formTimestamp : new Date();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    // Never move the schedule backward: a backfilled log must not replace a
+    // later test that is already recorded as the last one.
+    const updatesSchedule =
+      (!isHistoricEntry || timestamp >= startOfToday) &&
+      (!schedule.lastTestDate || timestamp > schedule.lastTestDate);
     const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
       id,
-      timestamp: now,
+      timestamp,
       uid: user.uid
     };
     // A reading with no actual measurements doesn't count as a completed water
@@ -376,39 +511,43 @@ export default function App() {
       newReading.calciumHardness != null ||
       newReading.cyanuricAcid != null;
 
+    // Queue the schedule update before the reading write. An offline write
+    // doesn't resolve until it syncs, so queueing after it would lose the update.
+    let queuedUpdate: PendingScheduleUpdate | null = null;
+    let previousPending: PendingScheduleUpdate | null = null;
+    let unpersistedSchedule: PendingScheduleUpdate | null = null;
+    if (hasMeasurement && updatesSchedule) {
+      previousPending = readPendingSchedule(user.uid);
+      queuedUpdate = {
+        lastTestMs: timestamp.getTime(),
+        testFrequency: schedule.testFrequency,
+        remindersEnabled: schedule.remindersEnabled,
+      };
+      if (!queuePendingSchedule(user.uid, queuedUpdate)) unpersistedSchedule = queuedUpdate;
+    }
+
     try {
       await setDoc(doc(db, 'readings', id), {
         ...reading,
-        timestamp: Timestamp.fromDate(now)
+        timestamp: Timestamp.fromDate(timestamp)
       });
+      void flushPendingSchedule(user.uid, unpersistedSchedule ?? undefined);
 
       if (!hasMeasurement) {
         markSaved('Note saved to database');
         setIsLogging(false);
+        setHistoricLogTimestamp(null);
+        if (isHistoricEntry) restoreHistoricFocus();
         return;
       }
 
-      // Update schedule
-      const daysToAdd = {
-        daily: 1,
-        weekly: 7,
-        biweekly: 14,
-        monthly: 30,
-      }[schedule.testFrequency];
-
-      const nextTest = new Date(now);
-      nextTest.setDate(nextTest.getDate() + daysToAdd);
-
-      await setDoc(doc(db, 'schedules', user.uid), {
-        ...schedule,
-        uid: user.uid,
-        lastTestDate: Timestamp.fromDate(now),
-        nextTestDate: Timestamp.fromDate(nextTest),
-      }, { merge: true });
-
       markSaved('Reading saved to database');
       setIsLogging(false);
+      setHistoricLogTimestamp(null);
+      if (isHistoricEntry) restoreHistoricFocus();
     } catch (err) {
+      // The reading itself failed, so its schedule update must not be applied.
+      if (queuedUpdate) discardPendingSchedule(user.uid, queuedUpdate, previousPending);
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
     }
@@ -949,6 +1088,7 @@ export default function App() {
           onRequestProtocol={handleRequestProtocol}
           onExecuteProtocol={requestExecuteProtocol}
           onLogReading={(focusField) => {
+            setHistoricLogTimestamp(null);
             setLogFocusField(focusField);
             setIsLogging(true);
           }}
@@ -1067,6 +1207,7 @@ export default function App() {
 
         {isHistoryOpen && (
           <History
+            hidden={isLogging}
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
@@ -1076,6 +1217,15 @@ export default function App() {
               setEditFocusField(focusField);
               setEditingReading(reading);
             }}
+            onAddHistoricReading={(timestamp) => {
+              // The calendar stays mounted but hidden while the form is open,
+              // so its month and selected day survive.
+              historicReturnFocusRef.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              setHistoricLogTimestamp(timestamp);
+              setLogFocusField(undefined);
+              setIsLogging(true);
+            }}
           />
         )}
 
@@ -1083,7 +1233,12 @@ export default function App() {
           <ReadingForm
             focusField={logFocusField}
             onSave={handleSaveReading}
-            onCancel={() => setIsLogging(false)}
+            onCancel={() => {
+              if (historicLogTimestamp !== null) restoreHistoricFocus();
+              setIsLogging(false);
+              setHistoricLogTimestamp(null);
+            }}
+            initialTimestamp={historicLogTimestamp ?? undefined}
           />
         )}
 

@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil, X } from 'lucide-react';
+import { ChevronLeft, Calendar, Clock, Droplets, Activity, Thermometer, TrendingUp, FileText, Trash2, Gauge, Waves, Sun, Grid3X3, List, ChevronRight, ImagePlus, Pencil, Plus, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Reading } from '../types';
-import { addDays, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
+import { addDays, endOfMonth, format, isAfter, isBefore, isSameDay, isSameMonth, startOfDay, startOfMonth, startOfWeek, subMonths, addMonths } from 'date-fns';
 import { getSoftWarning, getCombinedChlorineWarning, NumericReadingField, FIELD_LABEL } from '../lib/readingValidation';
 import { useLongPress } from '../lib/useLongPress';
 
@@ -11,6 +11,10 @@ interface Props {
   onBack: () => void;
   onDelete: (id: string) => void;
   onEdit: (reading: Reading, focusField?: NumericReadingField) => void;
+  /** Opens the reading form pre-dated to `timestamp` (a past day, from the calendar). */
+  onAddHistoricReading: (timestamp: Date) => void;
+  /** Keeps the view mounted (so its month and selection survive) but out of the way. */
+  hidden?: boolean;
 }
 
 interface PendingEdit {
@@ -23,7 +27,16 @@ function getPreviousValue(reading: Reading, field: NumericReadingField): number 
   return reading.previousValues[field];
 }
 
-export default function History({ readings, onBack, onDelete, onEdit }: Props) {
+// Keeps the current time of day, so a historic log is stamped with the day
+// the user picked and a plausible time rather than midnight.
+function historicTimestampFor(day: Date): Date {
+  const now = new Date();
+  const timestamp = new Date(day);
+  timestamp.setHours(now.getHours(), now.getMinutes(), 0, 0);
+  return timestamp;
+}
+
+export default function History({ readings, onBack, onDelete, onEdit, onAddHistoricReading, hidden = false }: Props) {
   const initialSelectedDay = readings[0]?.timestamp ?? null;
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(initialSelectedDay ?? new Date()));
@@ -59,7 +72,7 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
   }, [calendarMonth]);
 
   return (
-    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up">
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className={`fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up${hidden ? ' hidden' : ''}`}>
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
           <button onClick={onBack} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors">
@@ -111,10 +124,19 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
                   const dayKey = format(day, 'yyyy-MM-dd');
                   const logs = groupedByDay[dayKey] ?? [];
                   return (
-                    <button key={dayKey} onClick={() => setSelectedDay(day)} className={`min-h-16 rounded border p-2 text-left ${isSameMonth(day, calendarMonth) ? 'border-border-dim' : 'border-border-dim/40 opacity-50'} ${selectedDay && isSameDay(selectedDay, day) ? 'ring-1 ring-accent' : ''}`}>
-                      <div className="flex items-center justify-between"><span className="text-xs text-ink">{format(day, 'd')}</span>{logs.length > 0 ? <span className="text-[10px] text-accent font-bold">{logs.length}</span> : null}</div>
-                      {logs.length > 0 ? <p className="text-[9px] text-ink-dim mt-1">{logs.length} report{logs.length === 1 ? '' : 's'}</p> : null}
-                    </button>
+                    <CalendarDay
+                      key={dayKey}
+                      day={day}
+                      logCount={logs.length}
+                      isOutsideMonth={!isSameMonth(day, calendarMonth)}
+                      isSelected={selectedDay !== null && isSameDay(selectedDay, day)}
+                      isFuture={isAfter(startOfDay(day), startOfDay(new Date()))}
+                      // Only past days can take a historic log: a log dated today
+                      // must update the test schedule, which historic entries skip.
+                      canAddHistoric={isBefore(startOfDay(day), startOfDay(new Date()))}
+                      onSelect={() => setSelectedDay(day)}
+                      onLongPress={() => onAddHistoricReading(historicTimestampFor(day))}
+                    />
                   );
                 })}
               </div>
@@ -122,6 +144,12 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
             <div className="card bg-surface border-border-dim p-4 space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-widest text-ink-dim">{selectedDay ? format(selectedDay, 'EEE, MMM d') : 'Pick a day'}</h3>
               <p className="text-[11px] text-ink-muted">{selectedDayReadings.length} logs for this day. You can review each report, delete incorrect entries, and re-log corrected values.</p>
+              {selectedDay && isBefore(startOfDay(selectedDay), startOfDay(new Date())) ? (
+                // Keyboard path to the same action as the calendar long-press.
+                <button onClick={() => onAddHistoricReading(historicTimestampFor(selectedDay))} className="w-full rounded-lg border border-accent/40 p-2 text-xs text-accent flex items-center justify-center gap-2">
+                  <Plus size={13} />Add log for {format(selectedDay, 'd MMM')}
+                </button>
+              ) : null}
               <button disabled className="w-full rounded-lg border border-border-dim p-2 text-xs text-ink-dim flex items-center justify-center gap-2"><ImagePlus size={13} />Bulk photo upload (coming soon)</button>
               <div className="space-y-2 max-h-[24rem] overflow-y-auto pr-1">
                 {selectedDayReadings.map((reading) => (
@@ -221,6 +249,53 @@ export default function History({ readings, onBack, onDelete, onEdit }: Props) {
         />
       )}
     </motion.div>
+  );
+}
+
+function CalendarDay({
+  day,
+  logCount,
+  isOutsideMonth,
+  isSelected,
+  isFuture,
+  canAddHistoric,
+  onSelect,
+  onLongPress,
+}: {
+  day: Date;
+  logCount: number;
+  isOutsideMonth: boolean;
+  isSelected: boolean;
+  isFuture: boolean;
+  canAddHistoric: boolean;
+  onSelect: () => void;
+  onLongPress: () => void;
+}) {
+  // Long-press adds a historic log; a tap (or Enter/Space, via native click)
+  // selects the day. The hook's own Enter/Space trigger is dropped so the
+  // keyboard selects the day instead of opening a historic log.
+  const { handlers, isPressing } = useLongPress({
+    onLongPress: () => {
+      if (!canAddHistoric) return;
+      // Select the pressed day too, so the calendar shows it again after the form closes.
+      onSelect();
+      onLongPress();
+    },
+  });
+  return (
+    <button
+      {...handlers}
+      onKeyDown={undefined}
+      onClick={onSelect}
+      type="button"
+      disabled={isFuture}
+      aria-label={`${format(day, 'EEEE d MMMM')}, ${logCount} ${logCount === 1 ? 'log' : 'logs'}`}
+      aria-pressed={isSelected}
+      className={`min-h-16 rounded border p-2 text-left select-none touch-manipulation ${isOutsideMonth ? 'border-border-dim/40 opacity-50' : 'border-border-dim'} ${isSelected ? 'ring-1 ring-accent' : ''} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} ${isFuture ? 'opacity-30 cursor-not-allowed' : ''}`}
+    >
+      <div className="flex items-center justify-between"><span className="text-xs text-ink">{format(day, 'd')}</span>{logCount > 0 ? <span className="text-[10px] text-accent font-bold">{logCount}</span> : null}</div>
+      {logCount > 0 ? <p className="text-[9px] text-ink-dim mt-1">{logCount} report{logCount === 1 ? '' : 's'}</p> : null}
+    </button>
   );
 }
 
