@@ -421,17 +421,30 @@ export default function App() {
         // Check the stored schedule inside the transaction, not this client's
         // snapshot: another tab or device may already have logged a later test.
         const scheduleRef = doc(db, 'schedules', user.uid);
-        await runTransaction(db, async (transaction) => {
-          const current = await transaction.get(scheduleRef);
-          const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
-          if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
-          transaction.set(scheduleRef, {
-            ...schedule,
-            uid: user.uid,
-            lastTestDate: Timestamp.fromDate(timestamp),
-            nextTestDate: Timestamp.fromDate(nextTest),
-          }, { merge: true });
-        });
+        const scheduleUpdate = {
+          ...schedule,
+          uid: user.uid,
+          lastTestDate: Timestamp.fromDate(timestamp),
+          nextTestDate: Timestamp.fromDate(nextTest),
+        };
+        try {
+          await runTransaction(db, async (transaction) => {
+            const current = await transaction.get(scheduleRef);
+            const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
+            if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
+            transaction.set(scheduleRef, scheduleUpdate, { merge: true });
+          });
+        } catch {
+          // The reading is already saved, and a transaction can't queue while
+          // offline. Fall back to a plain write that the offline cache queues
+          // and syncs later, without holding up the reading. This fallback
+          // doesn't have the race guard, so a concurrent later test from
+          // another device could still be overwritten here.
+          void setDoc(scheduleRef, scheduleUpdate, { merge: true }).catch((err) => {
+            console.error('Schedule update failed after reading was saved:', err);
+            toast.error('Reading saved, but the test schedule could not be updated');
+          });
+        }
       }
 
       markSaved('Reading saved to database');
