@@ -35,10 +35,11 @@ import { DEFAULT_POOL_TASKS, DEFAULT_INVENTORY, DEFAULT_EQUIPMENT } from './type
 
 interface PendingScheduleUpdate {
   lastTestMs: number;
-  nextTestMs: number;
   testFrequency: Frequency;
   remindersEnabled: boolean;
 }
+
+const FREQUENCY_DAYS: Record<Frequency, number> = { daily: 1, weekly: 7, biweekly: 14, monthly: 30 };
 
 const pendingScheduleKey = (uid: string) => `poolstatus:pendingSchedule:${uid}`;
 
@@ -73,6 +74,12 @@ function clearPendingSchedule(uid: string) {
   }
 }
 
+// Drops the queued update for a reading whose own save definitively failed, so
+// a schedule for a test that was never recorded is never applied.
+function discardPendingSchedule(uid: string, update: PendingScheduleUpdate) {
+  if (readPendingSchedule(uid)?.lastTestMs === update.lastTestMs) clearPendingSchedule(uid);
+}
+
 // Writes the schedule only if no later test is already recorded, inside one
 // transaction, so another tab or device's newer test is never overwritten.
 async function writeScheduleIfLatest(uid: string, update: PendingScheduleUpdate) {
@@ -81,10 +88,15 @@ async function writeScheduleIfLatest(uid: string, update: PendingScheduleUpdate)
     const current = await transaction.get(scheduleRef);
     const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
     if (storedLast && storedLast.toMillis() > update.lastTestMs) return;
+    // Use the frequency as stored now, not as it was when the reading was saved,
+    // so a change made on another device is respected.
+    const frequency = (current.exists() ? current.data().testFrequency as Frequency | undefined : undefined) ?? update.testFrequency;
+    const nextTest = new Date(update.lastTestMs);
+    nextTest.setDate(nextTest.getDate() + FREQUENCY_DAYS[frequency]);
     transaction.set(scheduleRef, {
       uid,
       lastTestDate: Timestamp.fromMillis(update.lastTestMs),
-      nextTestDate: Timestamp.fromMillis(update.nextTestMs),
+      nextTestDate: Timestamp.fromDate(nextTest),
       // Rules require these on create. An existing schedule keeps its own settings.
       ...(current.exists() ? {} : {
         testFrequency: update.testFrequency,
@@ -494,25 +506,15 @@ export default function App() {
 
     // Queue the schedule update before the reading write. An offline write
     // doesn't resolve until it syncs, so queueing after it would lose the update.
+    let queuedUpdate: PendingScheduleUpdate | null = null;
     let unpersistedSchedule: PendingScheduleUpdate | null = null;
     if (hasMeasurement && updatesSchedule) {
-      const daysToAdd = {
-        daily: 1,
-        weekly: 7,
-        biweekly: 14,
-        monthly: 30,
-      }[schedule.testFrequency];
-
-      const nextTest = new Date(timestamp);
-      nextTest.setDate(nextTest.getDate() + daysToAdd);
-
-      const update: PendingScheduleUpdate = {
+      queuedUpdate = {
         lastTestMs: timestamp.getTime(),
-        nextTestMs: nextTest.getTime(),
         testFrequency: schedule.testFrequency,
         remindersEnabled: schedule.remindersEnabled,
       };
-      if (!queuePendingSchedule(user.uid, update)) unpersistedSchedule = update;
+      if (!queuePendingSchedule(user.uid, queuedUpdate)) unpersistedSchedule = queuedUpdate;
     }
 
     try {
@@ -535,6 +537,8 @@ export default function App() {
       setHistoricLogTimestamp(null);
       if (isHistoricEntry) restoreHistoricFocus();
     } catch (err) {
+      // The reading itself failed, so its schedule update must not be applied.
+      if (queuedUpdate) discardPendingSchedule(user.uid, queuedUpdate);
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
     }

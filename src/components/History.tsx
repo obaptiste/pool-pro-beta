@@ -287,6 +287,7 @@ function CalendarDay({
       type="button"
       disabled={isFuture}
       aria-label={`${format(day, 'EEEE d MMMM')}, ${logCount} ${logCount === 1 ? 'log' : 'logs'}`}
+      aria-pressed={isSelected}
       className={`min-h-16 rounded border p-2 text-left select-none touch-manipulation ${isOutsideMonth ? 'border-border-dim/40 opacity-50' : 'border-border-dim'} ${isSelected ? 'ring-1 ring-accent' : ''} ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''} ${isFuture ? 'opacity-30 cursor-not-allowed' : ''}`}
     >
       <div className="flex items-center justify-between"><span className="text-xs text-ink">{format(day, 'd')}</span>{logCount > 0 ? <span className="text-[10px] text-accent font-bold">{logCount}</span> : null}</div>
