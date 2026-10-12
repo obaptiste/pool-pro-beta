@@ -266,7 +266,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0 }}
                     className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${
-                      flash.isError ? 'text-red-400' : 'text-accent'
+                      flash.isError ? 'text-critical-text' : 'text-accent'
                     }`}
                   >
                     {flash.isError ? <AlertTriangle size={12} /> : <Check size={12} />}
@@ -301,7 +301,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                       type="text"
                       value={newItem.name}
                       onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                       placeholder="e.g. Robotic Pool Cleaner"
                     />
                   </div>
@@ -313,7 +313,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                       value={newItem.description}
                       onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
                       rows={2}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all resize-none"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all resize-none"
                       placeholder="Why it's needed, model preferences, etc."
                     />
                   </div>
@@ -322,7 +322,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                     <select
                       value={newItem.priority}
                       onChange={(e) => setNewItem({ ...newItem, priority: e.target.value as Priority })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     >
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
@@ -337,7 +337,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                       min={1}
                       value={newItem.quantity}
                       onChange={(e) => setNewItem({ ...newItem, quantity: Math.max(1, Number(e.target.value)) })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -353,7 +353,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                           estimatedCost: e.target.value === '' ? undefined : Number(e.target.value),
                         })
                       }
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -361,7 +361,7 @@ export default function Wishlist({ isOpen, onClose, items, onUpdateItem, onDelet
                     <select
                       value={newItem.currency || 'GBP'}
                       onChange={(e) => setNewItem({ ...newItem, currency: e.target.value })}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                     >
                       <option value="GBP">GBP</option>
                       <option value="USD">USD</option>
@@ -654,7 +654,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="border-t border-border-dim bg-[#060e1a]/40"
+            className="border-t border-border-dim bg-bg/40"
           >
             <div className="p-4 space-y-4">
               {saveError && (
@@ -666,7 +666,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                     className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 flex items-start gap-2"
                   >
                     <AlertTriangle size={14} className="text-red-500 mt-0.5 flex-shrink-0" />
-                    <span className="text-[10px] text-red-400 font-medium">{saveError}</span>
+                    <span className="text-[10px] text-critical-text font-medium">{saveError}</span>
                   </motion.div>
                 </AnimatePresence>
               )}
@@ -684,7 +684,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                       value={draftItem.name}
                       onChange={(e) => setField('name', e.target.value)}
                       onBlur={commitItemFields}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1 col-span-2">
@@ -717,7 +717,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                       onBlur={commitItemFields}
                       rows={2}
                       disabled={isGeneratingDescription}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all resize-none disabled:opacity-40"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all resize-none disabled:opacity-40"
                     />
                     {descriptionError && (
                       <AnimatePresence>
@@ -740,7 +740,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                     <select
                       value={draftItem.priority}
                       onChange={(e) => setAndCommitField('priority', e.target.value as Priority)}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
                     >
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
@@ -760,7 +760,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                         setField('quantity', Math.max(1, Number(e.target.value)))
                       }
                       onBlur={commitItemFields}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -777,7 +777,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                         )
                       }
                       onBlur={commitItemFields}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -787,7 +787,7 @@ function WishItemCard({ item, isExpanded, onToggleExpand, onUpdate, onDelete }: 
                     <select
                       value={draftItem.currency || 'GBP'}
                       onChange={(e) => setAndCommitField('currency', e.target.value)}
-                      className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+                      className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
                     >
                       <option value="GBP">GBP</option>
                       <option value="USD">USD</option>
@@ -935,7 +935,7 @@ function PurchaseOptionRow({
             value={draft.vendor}
             onChange={(e) => setLocal('vendor', e.target.value)}
             onBlur={commit}
-            className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+            className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
             placeholder="e.g. Pool Warehouse"
           />
         </div>
@@ -948,7 +948,7 @@ function PurchaseOptionRow({
               setLocal('price', e.target.value === '' ? undefined : Number(e.target.value))
             }
             onBlur={commit}
-            className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+            className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
           />
         </div>
         <div className="space-y-1">
@@ -957,7 +957,7 @@ function PurchaseOptionRow({
             value={draft.currency || 'GBP'}
             onChange={(e) => setLocal('currency', e.target.value)}
             onBlur={commit}
-            className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+            className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
           >
             <option value="GBP">GBP</option>
             <option value="USD">USD</option>
@@ -971,7 +971,7 @@ function PurchaseOptionRow({
               value={draft.url || ''}
               onChange={(e) => setLocal('url', e.target.value)}
               onBlur={commit}
-              className={`flex-1 bg-[#060e1a] border rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all ${
+              className={`flex-1 bg-bg border rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all ${
                 urlIsInvalid ? 'border-red-500/50' : 'border-border-dim'
               }`}
               placeholder="https://"
@@ -989,7 +989,7 @@ function PurchaseOptionRow({
             )}
           </div>
           {urlIsInvalid && (
-            <p className="text-[9px] text-red-400 uppercase tracking-widest">
+            <p className="text-[9px] text-critical-text uppercase tracking-widest">
               Only http:// or https:// links are allowed
             </p>
           )}
@@ -1001,7 +1001,7 @@ function PurchaseOptionRow({
             value={draft.availability || ''}
             onChange={(e) => setLocal('availability', e.target.value)}
             onBlur={commit}
-            className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+            className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
             placeholder="In stock / 2 wks"
           />
         </div>
@@ -1033,7 +1033,7 @@ function PurchaseOptionRow({
           value={draft.notes || ''}
           onChange={(e) => setLocal('notes', e.target.value)}
           onBlur={commit}
-          className="w-full bg-[#060e1a] border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
+          className="w-full bg-bg border border-border-dim rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none transition-all"
           placeholder="Warranty, shipping, contact, etc."
         />
       </div>

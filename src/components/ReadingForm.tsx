@@ -408,11 +408,11 @@ missingInventory and missingEquipment should be arrays of strings when identifia
               value={formData.notes}
               onChange={handleChange}
               placeholder="Record chemical additions or visual observations..."
-              className="input bg-[#0d1f38] border-border-dim min-h-[140px] resize-none py-4 text-sm"
+              className="input bg-surface border-border-dim min-h-[140px] resize-none py-4 text-sm"
             />
           </div>
 
-          <div className="fixed bottom-0 left-0 right-0 p-6 bg-[#060e1a]/95 backdrop-blur-xl border-t border-border-dim">
+          <div className="fixed bottom-0 left-0 right-0 p-6 bg-bg/95 backdrop-blur-xl border-t border-border-dim">
             <div className="max-w-2xl mx-auto space-y-3">
               {submitError && (
                 <div className="flex items-center gap-2 p-3 rounded-xl bg-critical/10 border border-critical/40">
@@ -421,7 +421,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                 </div>
               )}
               {combinedWarning && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-400/40">
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-warning-text/40">
                   <AlertCircle size={14} className="text-amber-300 flex-shrink-0" />
                   <span className="text-xs text-amber-200">{combinedWarning.message} You can still save this reading.</span>
                 </div>
@@ -430,7 +430,7 @@ missingInventory and missingEquipment should be arrays of strings when identifia
                 const v = formData[field];
                 return typeof v === 'number' && !getHardValidationError(field, v) && !!getSoftWarning(field, v);
               }) && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-400/40">
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-warning-text/40">
                   <AlertCircle size={14} className="text-amber-300 flex-shrink-0" />
                   <span className="text-xs text-amber-200">One or more values are outside the normal operating range. Please double-check, but you can still save this reading.</span>
                 </div>
@@ -509,7 +509,7 @@ function InputField({ label, name, value, unit, icon, onChange, onBlur, error, m
           max={max}
           step={step}
           placeholder="—"
-          className={`input bg-[#0d1f38] pl-12 pr-16 py-4 text-sm font-mono ${error ? 'border-critical focus:ring-critical/10' : 'border-border-dim focus:border-accent focus:ring-accent/10'}`}
+          className={`input bg-surface pl-12 pr-16 py-4 text-sm font-mono ${error ? 'border-critical focus:ring-critical/10' : 'border-border-dim focus:border-accent focus:ring-accent/10'}`}
         />
         <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ink-dim uppercase tracking-widest">
           {unit}

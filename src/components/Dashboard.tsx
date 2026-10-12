@@ -371,7 +371,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
 
   const getPriorityColor = (priority: MaintenanceTask['priority']) => {
     switch (priority) {
-      case 'critical': return 'text-red-400 bg-red-400/10 border-red-400/20';
+      case 'critical': return 'text-critical-text bg-critical-text/10 border-critical-text/20';
       case 'high': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
       case 'medium': return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20';
       case 'low': return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
@@ -481,7 +481,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
       </header>
 
       {/* Tab Navigation */}
-      <div className="flex p-1 bg-[#0a1628] border border-border-dim rounded-xl no-print">
+      <div className="flex p-1 bg-surface-2 border border-border-dim rounded-xl no-print">
         <button 
           onClick={() => setActiveTab('overview')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeTab === 'overview' ? 'bg-accent text-primary shadow-lg' : 'text-ink-dim hover:text-ink-muted'}`}
@@ -582,9 +582,9 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className={`card anim-scan border col-span-2 flex flex-col justify-between p-4 ${
                 lsiCardStatus == null ? 'text-ink-dim border-border-dim bg-surface' :
-                lsiCardStatus === 'critical' ? 'text-red-400 border-red-500/30 bg-red-500/5' :
-                lsiCardStatus === 'warning' ? 'text-amber-400 border-amber-500/30 bg-amber-500/5' :
-                'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
+                lsiCardStatus === 'critical' ? 'text-critical-text border-red-500/30 bg-red-500/5' :
+                lsiCardStatus === 'warning' ? 'text-warning-text border-amber-500/30 bg-amber-500/5' :
+                'text-success-text border-emerald-500/30 bg-emerald-500/5'
               }`}>
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Saturation Index (LSI)</p>
@@ -667,7 +667,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <h2 className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Maintenance Checklist</h2>
-                  <div className="flex bg-[#060e1a] rounded-lg border border-border-dim p-0.5">
+                  <div className="flex bg-bg rounded-lg border border-border-dim p-0.5">
                     {(['all', 'daily', 'weekly', 'monthly'] as const).map(f => (
                       <button
                         key={f}
@@ -701,7 +701,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
                     onSubmit={handleAddTask}
-                    className="overflow-hidden space-y-3 bg-[#060e1a] p-3 rounded-lg border border-border-dim"
+                    className="overflow-hidden space-y-3 bg-bg p-3 rounded-lg border border-border-dim"
                   >
                     <div className="space-y-1">
                       <label className="text-[8px] font-bold uppercase tracking-widest text-ink-dim">Task Title</label>
@@ -710,7 +710,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                         value={newTask.title}
                         onChange={e => setNewTask(prev => ({ ...prev, title: e.target.value }))}
                         placeholder="e.g. Clean filter cartridges"
-                        className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                        className="w-full bg-surface-2 border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
                         autoFocus
                       />
                     </div>
@@ -720,7 +720,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                         <select 
                           value={newTask.priority}
                           onChange={e => setNewTask(prev => ({ ...prev, priority: e.target.value as any }))}
-                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                          className="w-full bg-surface-2 border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
                         >
                           <option value="low">Low</option>
                           <option value="medium">Medium</option>
@@ -733,7 +733,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
                         <select 
                           value={newTask.frequency}
                           onChange={e => setNewTask(prev => ({ ...prev, frequency: e.target.value as any }))}
-                          className="w-full bg-[#0a1628] border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
+                          className="w-full bg-surface-2 border border-border-dim rounded-md px-3 py-2 text-xs text-ink focus:outline-none focus:border-accent"
                         >
                           <option value="once">Once</option>
                           <option value="daily">Daily</option>
@@ -831,7 +831,7 @@ export default function Dashboard({ userId, readings, tasks, schedule, inventory
               </div>
               <div className="space-y-2">
                 {readings.slice(0, 3).map(reading => (
-                  <div key={reading.id} className="card py-3 flex items-center justify-between bg-[#0a1628]/50 border-border-dim/50">
+                  <div key={reading.id} className="card py-3 flex items-center justify-between bg-surface-2/50 border-border-dim/50">
                     <div>
                       <p className="text-xs font-bold text-white">{reading.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                       <p className="text-[9px] text-ink-dim uppercase tracking-widest font-mono">{reading.timestamp.toLocaleDateString()}</p>
@@ -918,9 +918,9 @@ function Sparkline({ values, color }: { values: number[], color: string }) {
 
 function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPress, caption }: { label: string, field: NumericReadingField, value: number | null, unit: string, status: Status, trend: number[], ideal: string, onLongPress: (field: NumericReadingField) => void, caption?: string }) {
   const statusColors = {
-    good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
-    warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
-    critical: 'text-red-400 border-red-500/30 bg-red-500/5',
+    good: 'text-success-text border-emerald-500/30 bg-emerald-500/5',
+    warning: 'text-warning-text border-amber-500/30 bg-amber-500/5',
+    critical: 'text-critical-text border-red-500/30 bg-red-500/5',
   };
 
   const sparklineColors = {
@@ -959,9 +959,9 @@ function StatusCard({ label, field, value, unit, status, trend, ideal, onLongPre
 }
 
 const STATUS_TEXT = {
-  good: 'text-emerald-400',
-  warning: 'text-amber-400',
-  critical: 'text-red-400',
+  good: 'text-success-text',
+  warning: 'text-warning-text',
+  critical: 'text-critical-text',
 };
 
 const DOUBLE_TAP_MS = 350;
@@ -982,9 +982,9 @@ function CombinedChlorineCard({ free, total, freeStatus, totalStatus, trend, onL
   const [expanded, setExpanded] = useState(false);
   const lastTapAt = useRef(0);
   const statusColors = {
-    good: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5',
-    warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
-    critical: 'text-red-400 border-red-500/30 bg-red-500/5',
+    good: 'text-success-text border-emerald-500/30 bg-emerald-500/5',
+    warning: 'text-warning-text border-amber-500/30 bg-amber-500/5',
+    critical: 'text-critical-text border-red-500/30 bg-red-500/5',
   };
   const sparklineColors = { good: '#10b981', warning: '#f59e0b', critical: '#ef4444' };
 
@@ -1068,7 +1068,7 @@ function TemperatureCard({ value, onLongPress }: { value: number | null, onLongP
       tabIndex={0}
       aria-label="Temperature. Hold to log a new reading for this field."
       title="Hold to log a new reading for this field"
-      className={`card bg-[#0a1628] border-border-dim select-none cursor-pointer transition-transform flex flex-col justify-between p-4 ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''}`}
+      className={`card bg-surface-2 border-border-dim select-none cursor-pointer transition-transform flex flex-col justify-between p-4 ${isPressing ? 'scale-[0.97] ring-2 ring-accent/50' : ''}`}
     >
       <p className="text-[10px] font-bold uppercase tracking-widest text-ink-dim">Temperature</p>
       <div className="flex items-baseline gap-1">

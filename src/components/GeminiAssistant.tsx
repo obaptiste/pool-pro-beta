@@ -456,8 +456,8 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
             exit={{ opacity: 0, y: 100, scale: 0.95 }}
             className="fixed bottom-0 left-0 right-0 z-[80] p-4 no-print"
           >
-            <div className="max-w-2xl mx-auto bg-[#0d1f38] rounded-2xl shadow-2xl border border-border-dim overflow-hidden">
-              <header className="p-4 border-b border-border-dim flex items-center justify-between bg-[#060e1a]">
+            <div className="max-w-2xl mx-auto bg-surface rounded-2xl shadow-2xl border border-border-dim overflow-hidden">
+              <header className="p-4 border-b border-border-dim flex items-center justify-between bg-bg">
                 <div className="flex items-center gap-3 text-accent font-bold text-[10px] uppercase tracking-widest">
                   <Terminal size={14} />
                   <span>AI Telemetry Analysis</span>
@@ -477,7 +477,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
                     placeholder="e.g. Why does pH keep rising even after adding acid?"
-                    className="input bg-[#0d1f38] border-border-dim min-h-[78px] resize-none py-3 text-sm"
+                    className="input bg-surface border-border-dim min-h-[78px] resize-none py-3 text-sm"
                   />
                   <button
                     onClick={askGeneralQuestion}
@@ -570,7 +570,7 @@ export default function GeminiAssistant({ latestReading, history, onExecuteProto
                 ) : null}
               </div>
 
-              <footer className="p-4 bg-[#060e1a] border-t border-border-dim flex gap-3">
+              <footer className="p-4 bg-bg border-t border-border-dim flex gap-3">
                 {protocolStaged ? (
                   <div className="flex-1 py-3 px-4 rounded-xl bg-success/10 border border-success/20 text-success text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
                     <CheckCircle2 size={14} />
