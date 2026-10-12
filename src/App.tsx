@@ -74,10 +74,17 @@ function clearPendingSchedule(uid: string) {
   }
 }
 
-// Drops the queued update for a reading whose own save definitively failed, so
-// a schedule for a test that was never recorded is never applied.
-function discardPendingSchedule(uid: string, update: PendingScheduleUpdate) {
-  if (readPendingSchedule(uid)?.lastTestMs === update.lastTestMs) clearPendingSchedule(uid);
+// Drops the update queued for a reading whose own save definitively failed, so a
+// schedule for a test that was never recorded is never applied. An update that
+// was queued earlier, and replaced by this one, is put back.
+function discardPendingSchedule(uid: string, update: PendingScheduleUpdate, previous: PendingScheduleUpdate | null) {
+  if (readPendingSchedule(uid)?.lastTestMs !== update.lastTestMs) return;
+  try {
+    if (previous) localStorage.setItem(pendingScheduleKey(uid), JSON.stringify(previous));
+    else localStorage.removeItem(pendingScheduleKey(uid));
+  } catch {
+    // Storage is unavailable, so there's nothing persisted to restore.
+  }
 }
 
 // Writes the schedule only if no later test is already recorded, inside one
@@ -507,8 +514,10 @@ export default function App() {
     // Queue the schedule update before the reading write. An offline write
     // doesn't resolve until it syncs, so queueing after it would lose the update.
     let queuedUpdate: PendingScheduleUpdate | null = null;
+    let previousPending: PendingScheduleUpdate | null = null;
     let unpersistedSchedule: PendingScheduleUpdate | null = null;
     if (hasMeasurement && updatesSchedule) {
+      previousPending = readPendingSchedule(user.uid);
       queuedUpdate = {
         lastTestMs: timestamp.getTime(),
         testFrequency: schedule.testFrequency,
@@ -538,7 +547,7 @@ export default function App() {
       if (isHistoricEntry) restoreHistoricFocus();
     } catch (err) {
       // The reading itself failed, so its schedule update must not be applied.
-      if (queuedUpdate) discardPendingSchedule(user.uid, queuedUpdate);
+      if (queuedUpdate) discardPendingSchedule(user.uid, queuedUpdate, previousPending);
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
     }

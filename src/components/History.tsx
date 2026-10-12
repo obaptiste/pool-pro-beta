@@ -276,7 +276,10 @@ function CalendarDay({
   // keyboard selects the day instead of opening a historic log.
   const { handlers, isPressing } = useLongPress({
     onLongPress: () => {
-      if (canAddHistoric) onLongPress();
+      if (!canAddHistoric) return;
+      // Select the pressed day too, so the calendar shows it again after the form closes.
+      onSelect();
+      onLongPress();
     },
   });
   return (
