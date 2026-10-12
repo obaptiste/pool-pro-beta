@@ -402,7 +402,6 @@ export default function App() {
         markSaved('Note saved to database');
         setIsLogging(false);
         setHistoricLogTimestamp(null);
-        if (isHistoricEntry) setIsHistoryOpen(true);
         return;
       }
 
@@ -427,30 +426,37 @@ export default function App() {
           lastTestDate: Timestamp.fromDate(timestamp),
           nextTestDate: Timestamp.fromDate(nextTest),
         };
+        const writeScheduleIfLatest = () => runTransaction(db, async (transaction) => {
+          const current = await transaction.get(scheduleRef);
+          const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
+          if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
+          transaction.set(scheduleRef, scheduleUpdate, { merge: true });
+        });
         try {
-          await runTransaction(db, async (transaction) => {
-            const current = await transaction.get(scheduleRef);
-            const storedLast = current.exists() ? (current.data().lastTestDate as Timestamp | null) : null;
-            if (storedLast && storedLast.toMillis() > timestamp.getTime()) return;
-            transaction.set(scheduleRef, scheduleUpdate, { merge: true });
-          });
-        } catch {
-          // The reading is already saved, and a transaction can't queue while
-          // offline. Fall back to a plain write that the offline cache queues
-          // and syncs later, without holding up the reading. This fallback
-          // doesn't have the race guard, so a concurrent later test from
-          // another device could still be overwritten here.
-          void setDoc(scheduleRef, scheduleUpdate, { merge: true }).catch((err) => {
-            console.error('Schedule update failed after reading was saved:', err);
+          await writeScheduleIfLatest();
+        } catch (err) {
+          // The reading is already saved. A transaction can't run offline, so
+          // when the connection is down retry the same guarded write once it's
+          // back. The guard stays in place, so a later test recorded from
+          // another device is never overwritten. Online failures are reported.
+          const reportScheduleFailure = () =>
             toast.error('Reading saved, but the test schedule could not be updated');
-          });
+          if (navigator.onLine) {
+            console.error('Schedule update failed after reading was saved:', err);
+            reportScheduleFailure();
+          } else {
+            const retryWhenOnline = () => {
+              window.removeEventListener('online', retryWhenOnline);
+              writeScheduleIfLatest().catch(reportScheduleFailure);
+            };
+            window.addEventListener('online', retryWhenOnline);
+          }
         }
       }
 
       markSaved('Reading saved to database');
       setIsLogging(false);
       setHistoricLogTimestamp(null);
-      if (isHistoricEntry) setIsHistoryOpen(true);
     } catch (err) {
       toast.error('Could not save reading');
       handleFirestoreError(err, OperationType.WRITE, `readings/${id}`);
@@ -1111,6 +1117,7 @@ export default function App() {
 
         {isHistoryOpen && (
           <History
+            hidden={isLogging}
             readings={readings}
             onBack={() => setIsHistoryOpen(false)}
             onDelete={handleDeleteReading}
@@ -1121,9 +1128,8 @@ export default function App() {
               setEditingReading(reading);
             }}
             onAddHistoricReading={(timestamp) => {
-              // Close the calendar while the form is open so it isn't left
-              // interactive behind the form; it reopens on cancel or save.
-              setIsHistoryOpen(false);
+              // The calendar stays mounted but hidden while the form is open,
+              // so its month and selected day survive.
               setHistoricLogTimestamp(timestamp);
               setLogFocusField(undefined);
               setIsLogging(true);
@@ -1136,10 +1142,8 @@ export default function App() {
             focusField={logFocusField}
             onSave={handleSaveReading}
             onCancel={() => {
-              const fromHistory = historicLogTimestamp !== null;
               setIsLogging(false);
               setHistoricLogTimestamp(null);
-              if (fromHistory) setIsHistoryOpen(true);
             }}
             initialTimestamp={historicLogTimestamp ?? undefined}
           />

@@ -13,6 +13,8 @@ interface Props {
   onEdit: (reading: Reading, focusField?: NumericReadingField) => void;
   /** Opens the reading form pre-dated to `timestamp` (a past day, from the calendar). */
   onAddHistoricReading: (timestamp: Date) => void;
+  /** Keeps the view mounted (so its month and selection survive) but out of the way. */
+  hidden?: boolean;
 }
 
 interface PendingEdit {
@@ -34,7 +36,7 @@ function historicTimestampFor(day: Date): Date {
   return timestamp;
 }
 
-export default function History({ readings, onBack, onDelete, onEdit, onAddHistoricReading }: Props) {
+export default function History({ readings, onBack, onDelete, onEdit, onAddHistoricReading, hidden = false }: Props) {
   const initialSelectedDay = readings[0]?.timestamp ?? null;
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(initialSelectedDay ?? new Date()));
@@ -70,7 +72,7 @@ export default function History({ readings, onBack, onDelete, onEdit, onAddHisto
   }, [calendarMonth]);
 
   return (
-    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up">
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className={`fixed inset-0 z-50 bg-bg overflow-y-auto anim-fade-up${hidden ? ' hidden' : ''}`}>
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         <header className="flex items-center justify-between border-b border-border-dim pb-6">
           <button onClick={onBack} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-accent transition-colors">
