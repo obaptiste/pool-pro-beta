@@ -360,9 +360,14 @@ export default function App() {
   ) => {
     if (!user) return;
     // A historic entry (added from a past day in the calendar) keeps the
-    // timestamp the user picked and must not move the test schedule forward.
+    // timestamp the user picked. Only a log dated before today must leave the
+    // test schedule alone; decide that from the submitted timestamp, since the
+    // operator can edit it.
     const isHistoricEntry = historicLogTimestamp !== null;
     const timestamp = isHistoricEntry ? formTimestamp : new Date();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const updatesSchedule = !isHistoricEntry || timestamp >= startOfToday;
     const id = Date.now().toString();
     const reading: Reading = {
       ...newReading,
@@ -396,7 +401,7 @@ export default function App() {
         return;
       }
 
-      if (!isHistoricEntry) {
+      if (updatesSchedule) {
         // Update schedule
         const daysToAdd = {
           daily: 1,
