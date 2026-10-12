@@ -5,6 +5,7 @@ import Tasks from './components/Tasks';
 import TrendsView from './components/TrendsView';
 import TabBar, { Tab } from './components/TabBar';
 import MoreSheet from './components/MoreSheet';
+import ProtocolConfirm from './components/ProtocolConfirm';
 import ReadingForm from './components/ReadingForm';
 import CheatSheet from './components/CheatSheet';
 import OfflineIndicator from './components/OfflineIndicator';
@@ -78,6 +79,11 @@ export default function App() {
   const protocolRequestId = useRef(0);
   // True while a protocol save is in flight, so a second tap can't write duplicate tasks.
   const protocolExecuting = useRef(false);
+  // Pending confirmation for an execute request: its resolver, and the
+  // protocol request it was opened for (so a replaced protocol is not saved).
+  const [protocolConfirmOpen, setProtocolConfirmOpen] = useState(false);
+  const protocolConfirmResolve = useRef<((saved: boolean) => void) | null>(null);
+  const protocolConfirmRunId = useRef(0);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastSaved, setLastSaved] = useState<Date | undefined>();
   const [reportEntries, setReportEntries] = useState<{ timestamp: string; summary: string }[]>([]);
@@ -561,6 +567,38 @@ export default function App() {
     }
   };
 
+  // Execute goes through a confirmation first. Resolves true only when the
+  // checklist was saved; cancelling resolves false and saves nothing.
+  const requestExecuteProtocol = (): Promise<boolean> => {
+    if (!protocol || protocol.checklist.length === 0 || protocolExecuting.current || protocolConfirmResolve.current) {
+      return Promise.resolve(false);
+    }
+    protocolConfirmRunId.current = protocolRequestId.current;
+    return new Promise<boolean>((resolve) => {
+      protocolConfirmResolve.current = resolve;
+      setProtocolConfirmOpen(true);
+    });
+  };
+
+  const settleProtocolConfirm = async (confirmed: boolean) => {
+    const resolve = protocolConfirmResolve.current;
+    protocolConfirmResolve.current = null;
+    setProtocolConfirmOpen(false);
+    if (!resolve) return;
+    if (!confirmed) {
+      resolve(false);
+      return;
+    }
+    // A refresh or account change while the dialog was open replaced the
+    // checklist the operator confirmed, so stop rather than save a different one.
+    if (protocolRequestId.current !== protocolConfirmRunId.current) {
+      toast.info('The protocol changed while you were confirming. Review it and confirm again.');
+      resolve(false);
+      return;
+    }
+    resolve(await handleExecuteCurrentProtocol());
+  };
+
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {
     if (!user) return;
     try {
@@ -908,7 +946,7 @@ export default function App() {
           protocol={protocol}
           protocolState={protocolState}
           onRequestProtocol={handleRequestProtocol}
-          onExecuteProtocol={handleExecuteCurrentProtocol}
+          onExecuteProtocol={requestExecuteProtocol}
           onLogReading={(focusField) => {
             setLogFocusField(focusField);
             setIsLogging(true);
@@ -1081,6 +1119,13 @@ export default function App() {
         user={user}
       />
 
+      <ProtocolConfirm
+        open={protocolConfirmOpen}
+        steps={protocol?.checklist.map((step) => step.title) ?? []}
+        onCancel={() => settleProtocolConfirm(false)}
+        onConfirm={() => settleProtocolConfirm(true)}
+      />
+
       <GeminiAssistant
         latestReading={latestForAi}
         history={readings}
@@ -1089,7 +1134,7 @@ export default function App() {
         protocol={protocol}
         protocolState={protocolState}
         onRequestProtocol={handleRequestProtocol}
-        onExecuteProtocol={handleExecuteCurrentProtocol}
+        onExecuteProtocol={requestExecuteProtocol}
         onAddToReport={handleAddToReport}
         hidden={chromeHidden}
       />
