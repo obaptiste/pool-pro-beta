@@ -104,6 +104,11 @@ test('summarizeEquipment: names the soonest service and counts the overdue ones'
   assert.equal(soon.sub, 'Sand Filter service due in 3 d');
   assert.deepEqual(soon.badge, { text: 'OK', status: 'neutral' });
 
+  // Never serviced: the install date is the baseline, so this one is overdue.
+  const neverServiced = summarizeEquipment([equipment({ id: 'x', name: 'Main Pump', serviceIntervalMonths: 12 })], NOW);
+  assert.match(neverServiced.sub, /^Main Pump service overdue by \d+ d$/);
+  assert.deepEqual(neverServiced.badge, { text: '1 DUE', status: 'warning' });
+
   assert.equal(summarizeEquipment([], NOW).sub, 'No equipment registered');
   assert.equal(summarizeEquipment([items[2]], NOW).sub, 'No service intervals set');
 });

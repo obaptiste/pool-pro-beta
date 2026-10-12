@@ -114,9 +114,14 @@ export interface TileSummary {
   badge: TileBadge;
 }
 
+/**
+ * Next service due date. The baseline is the last service, or the install
+ * date when nothing has been serviced yet (same rule as the MCP server's
+ * equipment calculation), so default equipment reports its first service.
+ */
 export function getNextServiceDate(item: EquipmentItem): Date | null {
-  if (!item.lastServiceDate || !item.serviceIntervalMonths) return null;
-  const next = new Date(item.lastServiceDate);
+  if (!item.serviceIntervalMonths) return null;
+  const next = new Date(item.lastServiceDate ?? item.installDate);
   next.setMonth(next.getMonth() + item.serviceIntervalMonths);
   return next;
 }

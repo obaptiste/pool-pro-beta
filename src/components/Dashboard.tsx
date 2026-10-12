@@ -22,7 +22,7 @@ import { motion } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE } from '../types';
 import { calculateLSI, getLsiStatus } from '../lib/lsi';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp, isAutoSyncBoilerplateNote } from '../lib/readings';
-import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
+import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, COMBINED_CHLORINE_OK_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
 import {
   describePhDrift,
   describeSync,
@@ -159,14 +159,18 @@ export default function Dashboard({
   // prompt input (chlorine, ORP, CYA, pressure, or a new maintenance note)
   // must re-run it, or the checklist on screen goes stale. The assistant
   // sheet's "Analyze readings" re-runs it on demand.
-  const latestManualNote = readings.find((r) => r.notes && !isAutoSyncBoilerplateNote(r.notes));
+  // Same note selection as requestAiProtocol: the five most recent manual notes.
+  const promptNotes = readings
+    .filter((r) => r.notes && !isAutoSyncBoilerplateNote(r.notes))
+    .slice(0, 5)
+    .map((r) => `${r.id}:${r.notes}`);
   const protocolInputsKey = latest
-    ? [
+    ? JSON.stringify([
         latest.ph, latest.temperature, latest.calciumHardness, latest.alkalinity,
         latest.chlorine, latest.totalChlorine, latest.cyanuricAcid, latest.differentialPressure,
-        recentOrp?.value ?? null,
-        latestManualNote ? `${latestManualNote.id}:${latestManualNote.notes}` : null,
-      ].join('|')
+        recentOrp?.value ?? null, orpIsStale,
+        promptNotes,
+      ])
     : null;
   React.useEffect(() => {
     if (latest) onRequestProtocol();
@@ -174,6 +178,9 @@ export default function Dashboard({
   }, [protocolInputsKey]);
 
   const combinedChlorine = latest ? combinedChlorineOf(latest.chlorine, latest.totalChlorine) : null;
+  // Combined chlorine has no card on this screen, so every non-good level
+  // must reach the operator here, keeping its own severity.
+  const combinedStatus: Status = combinedChlorine == null ? 'good' : getCombinedChlorineStatus(combinedChlorine);
 
   // Every alert's own live condition, unfiltered by dismissal — feeds both
   // allAlerts (for rendering) and the effect below that decides which
@@ -198,10 +205,14 @@ export default function Dashboard({
     // here. Thresholds follow readingValidation's getCombinedChlorineStatus.
     {
       id: 'cc_high',
-      condition: combinedChlorine != null && getCombinedChlorineStatus(combinedChlorine) === 'critical',
-      msg: `Combined chlorine ${combinedChlorine?.toFixed(1)} ppm (>${COMBINED_CHLORINE_MAX}) — chloramines high.`,
-      action: 'Shock to breakpoint and retest before swimming.',
-      severity: 'warning',
+      condition: combinedStatus !== 'good',
+      msg: combinedStatus === 'critical'
+        ? `Combined chlorine ${combinedChlorine?.toFixed(1)} ppm (>${COMBINED_CHLORINE_MAX}) — chloramines high.`
+        : `Combined chlorine ${combinedChlorine?.toFixed(1)} ppm — ideal is under ${COMBINED_CHLORINE_OK_MAX}.`,
+      action: combinedStatus === 'critical'
+        ? 'Shock to breakpoint and retest before swimming.'
+        : 'Retest free and total chlorine; shock if combined chlorine keeps rising.',
+      severity: combinedStatus === 'critical' ? 'critical' : 'warning',
     },
     // sanitisationMv (ORP) is the only sanitiser signal a pool-controller
     // sync ever reports, so without this alert a dangerously low ORP from an
