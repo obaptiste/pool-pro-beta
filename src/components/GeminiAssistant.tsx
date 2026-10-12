@@ -338,7 +338,7 @@ export default function GeminiAssistant({ latestReading, history, mode, onModeCh
             {mode === 'protocol' && protocol && (protocolState === 'ready' || protocolState === 'executed') && (
               <footer className="flex gap-2 flex-wrap">
                 {protocolStaged ? (
-                  <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-success/10 border border-success/20 text-emerald-400 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                  <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-success/10 border border-success/20 text-success-text text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
                     <CheckCircle2 size={14} aria-hidden="true" />Protocol staged — retest in 4–6 h
                   </div>
                 ) : addedToReport ? (
@@ -354,7 +354,7 @@ export default function GeminiAssistant({ latestReading, history, mode, onModeCh
                       <Download size={14} aria-hidden="true" />
                     </button>
                     {protocolState === 'executed' ? (
-                      <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-surface-2 border border-success/35 text-emerald-400 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                      <div className="flex-1 min-h-11 px-3 rounded-[10px] bg-surface-2 border border-success/35 text-success-text text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
                         <CheckCircle2 size={14} aria-hidden="true" />Checklist built
                       </div>
                     ) : (
@@ -382,7 +382,7 @@ export default function GeminiAssistant({ latestReading, history, mode, onModeCh
                   onClick={toggleListening}
                   aria-label={listening ? 'Stop dictation' : 'Dictate a question'}
                   aria-pressed={listening}
-                  className={`-ml-1.5 p-1.5 rounded-md ${listening ? 'text-red-400 animate-pulse' : 'text-accent'}`}
+                  className={`-ml-1.5 p-1.5 rounded-md ${listening ? 'text-critical-text animate-pulse' : 'text-accent'}`}
                 >
                   {listening ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>

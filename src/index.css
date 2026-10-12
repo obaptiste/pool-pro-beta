@@ -1,5 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
+
+/* Exo 2 is self-hosted (variable, weights 100–900) so it ships with the app
+   and the service worker precaches it for offline use. Files come from the
+   PoolMaster Pro design system; SIL Open Font License, carried in each
+   file's metadata. */
+@font-face {
+  font-family: "Exo 2";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/Exo2-VariableFont_wght.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Exo 2";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/Exo2-Italic-VariableFont_wght.woff2") format("woff2");
+}
 
 @theme {
   --font-sans: "Exo 2", ui-sans-serif, system-ui, sans-serif;
@@ -11,6 +31,9 @@
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-critical: #ef4444;
+  --color-success-text: #34d399;
+  --color-warning-text: #fbbf24;
+  --color-critical-text: #f87171;
   --color-bg: #060e1a;
   --color-surface: #0d1f38;
   --color-surface-2: #0a1628;
@@ -66,7 +89,7 @@
   }
   
   .input {
-    @apply w-full px-4 py-3 rounded-lg border border-border-dim focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all bg-[#060e1a] text-white text-lg font-mono;
+    @apply w-full px-4 py-3 rounded-lg border border-border-dim focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all bg-bg text-white text-lg font-mono;
   }
   
   .label {

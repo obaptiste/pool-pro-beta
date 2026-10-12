@@ -65,7 +65,7 @@ export default function TrendCharts({ readings, userId, onLogReading, focusMetri
 
   return (
     <div className="space-y-5">
-      <section className="card bg-[#0a1628] border-accent/20 p-5 md:p-6" aria-labelledby="trend-heading">
+      <section className="card bg-surface-2 border-accent/20 p-5 md:p-6" aria-labelledby="trend-heading">
         <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-accent">
@@ -145,7 +145,7 @@ function ChartSection({ id, title, data, color, unit, range }: {
   const gradientId = `gradient-${title.replace(/\s+/g, '-')}`;
   const hasActual = data.some((point) => point.actual != null);
   return (
-    <section id={id} className="card bg-[#0d1f38] border-border-dim space-y-4 p-5 scroll-mt-4" aria-label={`${title} trend chart`}>
+    <section id={id} className="card bg-surface border-border-dim space-y-4 p-5 scroll-mt-4" aria-label={`${title} trend chart`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-xs font-bold uppercase tracking-widest text-white">{title}</h3>

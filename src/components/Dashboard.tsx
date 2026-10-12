@@ -70,9 +70,9 @@ interface Props {
 // Status tints from the design tokens: text at the -400 Tailwind stop,
 // background at 6–8 % and border at 35–45 % of the base colour.
 const STATUS_UI: Record<Status, { text: string; bg: string; border: string; chip: string; hex: string }> = {
-  good: { text: 'text-emerald-400', bg: 'bg-success/6', border: 'border-success/35', chip: '✓ OK', hex: '#34D399' },
-  warning: { text: 'text-amber-400', bg: 'bg-warning/7', border: 'border-warning/40', chip: '⚠ Watch', hex: '#FBBF24' },
-  critical: { text: 'text-red-400', bg: 'bg-critical/8', border: 'border-critical/45', chip: '✕ Action', hex: '#F87171' },
+  good: { text: 'text-success-text', bg: 'bg-success/6', border: 'border-success/35', chip: '✓ OK', hex: '#34D399' },
+  warning: { text: 'text-warning-text', bg: 'bg-warning/7', border: 'border-warning/40', chip: '⚠ Watch', hex: '#FBBF24' },
+  critical: { text: 'text-critical-text', bg: 'bg-critical/8', border: 'border-critical/45', chip: '✕ Action', hex: '#F87171' },
 };
 const NEUTRAL_UI = { text: 'text-ink-muted', bg: 'bg-surface-2', border: 'border-border-dim', chip: '—', hex: '#8AB4CC' };
 
@@ -352,7 +352,7 @@ export default function Dashboard({
               className="h-9 px-2.5 rounded-full bg-surface border border-border-dim flex items-center gap-[7px] active:scale-95 transition-transform disabled:cursor-wait"
             >
               <SyncDot kind={syncLight === 'syncing' ? 'syncing' : syncLight === 'error' ? 'error' : sync.kind} />
-              <span className={`font-mono text-[10px] tracking-[0.1em] uppercase whitespace-nowrap ${sync.kind === 'stale' && syncLight === 'idle' ? 'text-amber-400' : 'text-ink-muted'}`}>
+              <span className={`font-mono text-[10px] tracking-[0.1em] uppercase whitespace-nowrap ${sync.kind === 'stale' && syncLight === 'idle' ? 'text-warning-text' : 'text-ink-muted'}`}>
                 {syncLight === 'syncing' ? 'SYNCING…' : syncLight === 'success' ? 'SYNCED' : syncLight === 'error' ? 'SYNC FAILED' : sync.label}
               </span>
             </button>
@@ -579,7 +579,7 @@ export default function Dashboard({
                 <span className="flex-1 flex flex-col gap-[3px] min-w-0">
                   <span className="flex items-center gap-2">
                     <span className="text-[13px] font-bold text-white">Connected agents</span>
-                    <span className={`text-[9px] font-bold tracking-[0.12em] uppercase ${agents.live ? 'text-emerald-400' : 'text-ink-dim'}`}>
+                    <span className={`text-[9px] font-bold tracking-[0.12em] uppercase ${agents.live ? 'text-success-text' : 'text-ink-dim'}`}>
                       ● {agents.live ? 'MCP Live' : 'MCP Ready'}
                     </span>
                   </span>
@@ -712,7 +712,7 @@ function ProtocolPrimaryButton({ state, protocol, hasReading, onExecute, onAnaly
   if (state === 'executed' && protocol) {
     const n = protocol.checklist.length;
     return (
-      <button type="button" onClick={onOpenTasks} className={`${base} bg-surface-2 border border-success/35 text-emerald-400`}>
+      <button type="button" onClick={onOpenTasks} className={`${base} bg-surface-2 border border-success/35 text-success-text`}>
         <CheckCircle2 size={16} aria-hidden="true" />Checklist Built · {n} Task{n === 1 ? '' : 's'}
       </button>
     );

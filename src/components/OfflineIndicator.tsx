@@ -32,7 +32,7 @@ export default function OfflineIndicator({ isOnline, lastSaved }: Props) {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed top-16 right-4 md:right-6 z-40 bg-[#0d1f38]/90 backdrop-blur-md border border-border-dim rounded-full px-3 py-1.5 shadow-2xl flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-ink-dim"
+            className="fixed top-16 right-4 md:right-6 z-40 bg-surface/90 backdrop-blur-md border border-border-dim rounded-full px-3 py-1.5 shadow-2xl flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-ink-dim"
           >
             <CheckCircle2 size={12} className="text-success" />
             <span>Synced {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>

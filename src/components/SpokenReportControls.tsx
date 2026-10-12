@@ -103,7 +103,7 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
   }
 
   return (
-    <div className="rounded-2xl bg-[#0D1F38] border border-[#1E3A5F] p-5 space-y-4 no-print">
+    <div className="rounded-2xl bg-surface border border-border-dim p-5 space-y-4 no-print">
 
       {/* ── Section header ──────────────────────────────────────────────────── */}
       <div className="flex items-start gap-3">
@@ -114,7 +114,7 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
           <h3 className="text-[11px] font-bold uppercase tracking-widest text-white mb-1">
             Audio Briefing
           </h3>
-          <p className="text-[10px] text-[#4A6A80] leading-relaxed">
+          <p className="text-[10px] text-ink-dim leading-relaxed">
             Prefer to listen? Use the audio briefing controls below to hear either the full
             maintenance report or a short summary.
           </p>
@@ -179,7 +179,7 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
 
         <button
           onClick={() => speak('summary')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0A1628] border border-[#1E3A5F] text-[#8AB4CC] font-bold text-[10px] uppercase tracking-widest hover:text-white hover:border-accent/40 transition-all active:scale-95"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-2 border border-border-dim text-ink-muted font-bold text-[10px] uppercase tracking-widest hover:text-white hover:border-accent/40 transition-all active:scale-95"
           aria-label="Listen to summary report"
           aria-pressed={isPlaying && activeType === 'summary'}
         >
@@ -194,7 +194,7 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
           {isPlaying ? (
             <button
               onClick={pause}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold text-[10px] uppercase tracking-widest hover:bg-amber-500/25 transition-all active:scale-95"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-warning-text font-bold text-[10px] uppercase tracking-widest hover:bg-amber-500/25 transition-all active:scale-95"
               aria-label="Pause narration"
             >
               <Pause size={13} aria-hidden="true" />
@@ -213,7 +213,7 @@ export default function SpokenReportControls({ fullReportText, summaryReportText
 
           <button
             onClick={stopSpeech}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400 font-bold text-[10px] uppercase tracking-widest hover:bg-red-500/20 transition-all active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-critical-text font-bold text-[10px] uppercase tracking-widest hover:bg-red-500/20 transition-all active:scale-95"
             aria-label="Stop narration"
           >
             <Square size={13} fill="currentColor" aria-hidden="true" />
