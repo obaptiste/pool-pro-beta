@@ -97,6 +97,13 @@ export default function App() {
 
   // Firestore sync
   useEffect(() => {
+    // Protocol state is App-wide, so a sign-out or account switch must drop
+    // the previous account's checklist and invalidate any request still in
+    // flight (its id no longer matches, so its result is ignored).
+    protocolRequestId.current++;
+    setProtocol(null);
+    setProtocolState('idle');
+
     if (!user) {
       setReadings([]);
       setReadingsLoaded(false);
@@ -125,7 +132,11 @@ export default function App() {
         editedAt: doc.data().editedAt ? (doc.data().editedAt as Timestamp).toDate() : undefined,
       } as Reading)));
       setReadingsLoaded(true);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'readings'));
+    }, (err) => {
+      // Leave the loading skeleton on failure too, so "Log Manually" stays reachable.
+      setReadingsLoaded(true);
+      handleFirestoreError(err, OperationType.LIST, 'readings');
+    });
 
     const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
       if (snapshot.empty && user) {
@@ -469,8 +480,10 @@ export default function App() {
     }
   };
 
-  const handleExecuteProtocol = async (newTasks: MaintenanceTask[]) => {
-    if (!user) return;
+  // Resolves true only when every task write succeeded, so the caller can
+  // mark the protocol executed only once its checklist really exists.
+  const handleExecuteProtocol = async (newTasks: MaintenanceTask[]): Promise<boolean> => {
+    if (!user) return false;
     try {
       // Delete old uncompleted AI tasks
       const staleAiTasks = tasks.filter(t => t.isAI && !t.completed);
@@ -483,9 +496,11 @@ export default function App() {
         createdAt: Timestamp.fromDate(new Date())
       })));
       markSaved(`Protocol saved (${newTasks.length} task${newTasks.length === 1 ? '' : 's'})`);
+      return true;
     } catch (err) {
       toast.error('Could not save protocol');
       handleFirestoreError(err, OperationType.WRITE, 'tasks');
+      return false;
     }
   };
 
@@ -513,8 +528,8 @@ export default function App() {
 
   const handleExecuteCurrentProtocol = async () => {
     if (!protocol || protocol.checklist.length === 0) return;
-    await handleExecuteProtocol(protocolToTasks(protocol));
-    setProtocolState('executed');
+    const saved = await handleExecuteProtocol(protocolToTasks(protocol));
+    if (saved) setProtocolState('executed');
   };
 
   const handleUpdateSchedule = async (newSchedule: MaintenanceSchedule) => {

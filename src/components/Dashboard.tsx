@@ -21,7 +21,7 @@ import {
 import { motion } from 'motion/react';
 import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE } from '../types';
 import { calculateLSI, getLsiStatus } from '../lib/lsi';
-import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp } from '../lib/readings';
+import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp, isAutoSyncBoilerplateNote } from '../lib/readings';
 import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
 import {
   describePhDrift,
@@ -152,16 +152,26 @@ export default function Dashboard({
   const lsiScore: number | null = latest ? calculateLSI(latest) : null;
   const lsiStatus: Status | null = lsiScore == null ? null : getLsiStatus(lsiScore);
 
-  // Protocol auto-run keyed on the actual LSI inputs, not latest.id: every
-  // 15-min auto-sync poll creates a new reading document, so keying on id
-  // alone would re-trigger this paid AI call on every single poll. Only a
-  // genuine change in what the analysis reads should re-run it; the
-  // assistant sheet's "Analyze readings" re-runs it on demand.
-  const lsiInputsKey = latest ? [latest.ph, latest.temperature, latest.calciumHardness, latest.alkalinity].join('|') : null;
+  // Protocol auto-run keyed on every value requestAiProtocol sends to the
+  // model, not latest.id: each 15-min auto-sync poll creates a new reading
+  // document, so keying on id would re-trigger this paid AI call on every
+  // poll even when nothing it reads has changed. A genuine change to any
+  // prompt input (chlorine, ORP, CYA, pressure, or a new maintenance note)
+  // must re-run it, or the checklist on screen goes stale. The assistant
+  // sheet's "Analyze readings" re-runs it on demand.
+  const latestManualNote = readings.find((r) => r.notes && !isAutoSyncBoilerplateNote(r.notes));
+  const protocolInputsKey = latest
+    ? [
+        latest.ph, latest.temperature, latest.calciumHardness, latest.alkalinity,
+        latest.chlorine, latest.totalChlorine, latest.cyanuricAcid, latest.differentialPressure,
+        recentOrp?.value ?? null,
+        latestManualNote ? `${latestManualNote.id}:${latestManualNote.notes}` : null,
+      ].join('|')
+    : null;
   React.useEffect(() => {
     if (latest) onRequestProtocol();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lsiInputsKey]);
+  }, [protocolInputsKey]);
 
   const combinedChlorine = latest ? combinedChlorineOf(latest.chlorine, latest.totalChlorine) : null;
 
