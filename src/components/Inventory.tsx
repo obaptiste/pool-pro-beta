@@ -21,8 +21,13 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
     uid: '',
   });
 
+  // Strength is optional, but when entered it must be above 0 and at most 100,
+  // the same limits the Firestore rule enforces.
+  const strengthInvalid = newItem.concentrationPct !== undefined
+    && !(newItem.concentrationPct > 0 && newItem.concentrationPct <= 100);
+
   const handleSave = () => {
-    if (!newItem.name) return;
+    if (!newItem.name || strengthInvalid) return;
     onUpdateItem({
       ...newItem,
       id: crypto.randomUUID(),
@@ -112,7 +117,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     <input
                       id="inventory-strength"
                       type="number"
-                      min={0}
+                      min={0.1}
                       max={100}
                       step="0.1"
                       value={newItem.concentrationPct ?? ''}
@@ -124,6 +129,9 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                       className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
                       placeholder="e.g. 10 for 10% liquid chlorine"
                     />
+                    {strengthInvalid && (
+                      <p className="text-[10px] text-red-400">Enter a strength above 0 and up to 100, or leave it blank.</p>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Min Threshold</label>
@@ -137,7 +145,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                 </div>
                 <div className="flex justify-end gap-3">
                   <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-[10px] font-bold text-ink-dim uppercase tracking-widest hover:text-white">Cancel</button>
-                  <button onClick={handleSave} className="px-6 py-2 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all">Save Item</button>
+                  <button onClick={handleSave} disabled={strengthInvalid} className="px-6 py-2 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">Save Item</button>
                 </div>
               </motion.div>
             )}
