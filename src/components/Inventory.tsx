@@ -21,8 +21,13 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
     uid: '',
   });
 
+  // Strength is optional, but when entered it must be above 0 and at most 100,
+  // the same limits the Firestore rule enforces.
+  const strengthInvalid = newItem.concentrationPct !== undefined
+    && !(newItem.concentrationPct > 0 && newItem.concentrationPct <= 100);
+
   const handleSave = () => {
-    if (!newItem.name) return;
+    if (!newItem.name || strengthInvalid) return;
     onUpdateItem({
       ...newItem,
       id: crypto.randomUUID(),
@@ -108,6 +113,27 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     />
                   </div>
                   <div className="space-y-1">
+                    <label htmlFor="inventory-strength" className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Strength (%, optional)</label>
+                    <input
+                      id="inventory-strength"
+                      type="number"
+                      min={0.1}
+                      max={100}
+                      step="0.1"
+                      value={newItem.concentrationPct ?? ''}
+                      onChange={e => setNewItem(prev => {
+                        // Omit the key when empty: Firestore rejects undefined values.
+                        const { concentrationPct: _unused, ...rest } = prev;
+                        return e.target.value === '' ? rest : { ...rest, concentrationPct: Number(e.target.value) };
+                      })}
+                      className="w-full bg-bg border border-border-dim rounded-xl px-4 py-2 text-sm focus:border-accent outline-none transition-all"
+                      placeholder="e.g. 10 for 10% liquid chlorine"
+                    />
+                    {strengthInvalid && (
+                      <p className="text-[10px] text-red-400">Enter a strength above 0 and up to 100, or leave it blank.</p>
+                    )}
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] font-bold text-ink-dim uppercase tracking-widest">Min Threshold</label>
                     <input 
                       type="number"
@@ -119,7 +145,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                 </div>
                 <div className="flex justify-end gap-3">
                   <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-[10px] font-bold text-ink-dim uppercase tracking-widest hover:text-white">Cancel</button>
-                  <button onClick={handleSave} className="px-6 py-2 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all">Save Item</button>
+                  <button onClick={handleSave} disabled={strengthInvalid} className="px-6 py-2 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">Save Item</button>
                 </div>
               </motion.div>
             )}
@@ -133,10 +159,16 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     {item.quantity <= item.minThreshold ? <AlertTriangle size={20} /> : <Package size={20} />}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">{item.name}</h3>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">
+                      {item.name}
+                      {item.concentrationPct != null && <span className="ml-2 font-mono text-[10px] text-accent normal-case tracking-normal">{item.concentrationPct}%</span>}
+                    </h3>
                     <p className="text-[10px] text-ink-dim uppercase tracking-widest">
                       {item.quantity} {item.unit} in stock
                     </p>
+                    <div className="mt-2">
+                      <StrengthEditor item={item} onSave={onUpdateItem} />
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
@@ -173,6 +205,76 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
           </div>
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+/**
+ * Inline editor for an existing item's strength, so the seeded chemicals can
+ * get their values. Blank clears the strength. Otherwise it must be above 0
+ * and at most 100, the same limits the Firestore rule enforces.
+ */
+function StrengthEditor({ item, onSave }: { item: InventoryItem; onSave: (item: InventoryItem) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const parsed = draft.trim() === '' ? null : Number(draft);
+  const invalid = parsed !== null && !(parsed > 0 && parsed <= 100);
+
+  const start = () => {
+    setDraft(item.concentrationPct != null ? String(item.concentrationPct) : '');
+    setEditing(true);
+  };
+
+  const save = () => {
+    if (invalid) return;
+    // Rebuild without the old key: Firestore rejects undefined values.
+    const { concentrationPct: _previous, ...rest } = item;
+    onSave(parsed === null ? rest : { ...rest, concentrationPct: parsed });
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={start}
+        className="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline"
+      >
+        {item.concentrationPct != null ? `Strength ${item.concentrationPct}%, edit` : 'Set strength'}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="number"
+        min={0.1}
+        max={100}
+        step="0.1"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        aria-label={`Strength for ${item.name}, percent`}
+        placeholder="%"
+        autoFocus
+        className="w-24 bg-bg border border-border-dim rounded-lg px-2 py-1 text-xs focus:border-accent outline-none"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={invalid}
+        className="px-3 py-1 rounded-lg bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white"
+      >
+        Cancel
+      </button>
+      {invalid && <span className="text-[10px] text-red-400">Enter 0.1 to 100, or leave blank to clear.</span>}
     </div>
   );
 }

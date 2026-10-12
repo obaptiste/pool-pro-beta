@@ -1,4 +1,14 @@
 export type Status = 'good' | 'warning' | 'critical';
+
+/**
+ * The one pool this deployment maintains. AGENTS.md's working context
+ * (~68,000 litres) is also hardcoded into the AI system prompt's dosing
+ * maths (src/lib/aiProtocol.ts) — keep the two in step if this changes.
+ */
+export const POOL_PROFILE = {
+  name: 'Main Pool',
+  volumeLitres: 68_000,
+} as const;
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type TaskFrequency = 'daily' | 'weekly' | 'monthly' | 'once';
 
@@ -87,6 +97,8 @@ export interface InventoryItem {
   quantity: number;
   unit: string;
   minThreshold: number;
+  /** Active-ingredient strength as a percentage, e.g. 10 for 10% liquid chlorine. Optional. */
+  concentrationPct?: number;
   uid: string;
 }
 
