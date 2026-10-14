@@ -17,6 +17,17 @@ jobs:
     steps:
       - name: Call sync endpoint
         run: |
+          # An unset repository secret expands to an empty string, which makes
+          # curl fail almost instantly (empty URL) or send "Bearer " (401/503)
+          # -- without naming the missing secret. Fail here with a clear message.
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Repository secret POOLSTATUS_DEPLOYMENT_URL is not set (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is not set. It must match the CRON_SECRET env var on Vercel."
+            exit 1
+          fi
           status=$(curl -sS -o /tmp/response.json -w "%{http_code}" \
             -X POST "${DEPLOYMENT_URL}/api/cron/sync-pool-controller" \
             -H "Authorization: Bearer ${CRON_SECRET}")
