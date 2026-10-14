@@ -10,11 +10,15 @@ import type { McpBearerToken } from './_lib/mcp/types.js';
 // MCP_READONLY_BEARER_TOKEN (read-only — hand this to a less-trusted
 // connector instead of the full token), FIREBASE_SERVICE_ACCOUNT, and
 // POOLSTATUS_OWNER_UID (or POOLSTATUS_OWNER_EMAIL).
-function configuredTokens(): McpBearerToken[] {
-  const tokens: McpBearerToken[] = [];
-  if (process.env.MCP_BEARER_TOKEN) {
-    tokens.push({ token: process.env.MCP_BEARER_TOKEN, scopes: ['read', 'write'] });
-  }
+// MCP_BEARER_TOKEN is what "enables the endpoint" per .env.example/docs — if
+// it's unset, the endpoint must 503 regardless of whether a leftover
+// MCP_READONLY_BEARER_TOKEN is still set, otherwise a deployer who removes
+// the primary token (e.g. to disable MCP entirely) would be surprised to
+// find pool data still readable through the forgotten read-only credential.
+export function configuredTokens(): McpBearerToken[] {
+  const bearer = process.env.MCP_BEARER_TOKEN;
+  if (!bearer) return [];
+  const tokens: McpBearerToken[] = [{ token: bearer, scopes: ['read', 'write'] }];
   if (process.env.MCP_READONLY_BEARER_TOKEN) {
     tokens.push({ token: process.env.MCP_READONLY_BEARER_TOKEN, scopes: ['read'] });
   }
