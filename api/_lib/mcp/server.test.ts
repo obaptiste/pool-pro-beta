@@ -7,7 +7,7 @@ import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types
 import { handleMcpRequest } from './handler.js';
 import { __resetRateLimitForTests } from '../rateLimit.js';
 import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server.js';
-import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types.js';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type McpBearerToken, type PoolDataSource } from './types.js';
 
 // Spread into every ad-hoc fixture below that only exercises read tools —
 // keeps each of those focused on the one thing it's testing rather than
@@ -20,6 +20,11 @@ const unimplementedWrites = {
 };
 
 const TOKEN = 'test-token-123';
+const READONLY_TOKEN = 'test-readonly-token-456';
+const TOKENS: McpBearerToken[] = [
+  { token: TOKEN, scopes: ['read', 'write'] },
+  { token: READONLY_TOKEN, scopes: ['read'] },
+];
 const DAY = 86_400_000;
 const now = Date.now();
 
@@ -147,7 +152,7 @@ let baseUrl: string;
 
 before(async () => {
   httpServer = createServer((req, res) => {
-    handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => memorySource }).catch((error) => {
+    handleMcpRequest(req, res, { tokens: TOKENS, getSource: () => memorySource }).catch((error) => {
       res.writeHead(500).end(String(error));
     });
   });
@@ -178,9 +183,11 @@ async function connect(token: string | undefined): Promise<Client> {
 // For tests that need a PoolDataSource other than the shared fixture above
 // (a different row count, or data crafted to hit one specific branch)
 // without perturbing the assertions that read from that shared fixture.
-async function connectToSource(source: PoolDataSource): Promise<{ client: Client; close: () => void }> {
+// Connects with the full read+write token by default; pass READONLY_TOKEN
+// to exercise scope enforcement.
+async function connectToSource(source: PoolDataSource, token: string = TOKEN): Promise<{ client: Client; close: () => void }> {
   const server = createServer((req, res) => {
-    handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => source }).catch((error) => {
+    handleMcpRequest(req, res, { tokens: TOKENS, getSource: () => source }).catch((error) => {
       res.writeHead(500).end(String(error));
     });
   });
@@ -188,7 +195,7 @@ async function connectToSource(source: PoolDataSource): Promise<{ client: Client
   const { port } = server.address() as { port: number };
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/`), {
-    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
   }));
   return { client, close: () => server.close() };
 }
@@ -213,7 +220,7 @@ describe('MCP endpoint auth', () => {
 
   it('refuses to serve when no token is configured', async () => {
     const server = createServer((req, res) => {
-      handleMcpRequest(req, res, { bearerToken: undefined, getSource: () => memorySource });
+      handleMcpRequest(req, res, { tokens: undefined, getSource: () => memorySource });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as { port: number };
@@ -229,7 +236,7 @@ describe('MCP endpoint auth', () => {
     // connect an MCP server that would only fail once a tool queries data.
     const server = createServer((req, res) => {
       handleMcpRequest(req, res, {
-        bearerToken: TOKEN,
+        tokens: TOKENS,
         getSource: () => Promise.reject(new Error('owner not configured')),
       });
     });
@@ -249,6 +256,29 @@ describe('MCP endpoint auth', () => {
   it('rejects a GET with no Accept header', async () => {
     const res = await fetch(baseUrl, { headers: { Authorization: `Bearer ${TOKEN}` } });
     assert.equal(res.status, 406);
+  });
+
+  it('a read-only token only lists the seven read-only tools — the four write tools are never registered for it', async () => {
+    const client = await connect(READONLY_TOKEN);
+    const { tools } = await client.listTools();
+    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
+    assert.deepEqual(tools.map((t) => t.name).sort(), readOnly.sort());
+    await client.close();
+  });
+
+  it('a read-only token can still call a read tool normally', async () => {
+    const client = await connect(READONLY_TOKEN);
+    const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
+    assert.equal(result.isError, undefined);
+    await client.close();
+  });
+
+  it('a read-only token cannot call a write tool — it was never registered, so the call resolves with isError, same as any unknown tool name', async () => {
+    const client = await connect(READONLY_TOKEN);
+    const result = await client.callTool({ name: 'poolstatus_add_task', arguments: { title: 'should not work' } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /not found/i);
+    await client.close();
   });
 
   it('accepts GET to open a standalone SSE stream', async () => {
@@ -634,7 +664,7 @@ describe('MCP tools', () => {
       ...unimplementedWrites,
     };
     const bigServer = createServer((req, res) => {
-      handleMcpRequest(req, res, { bearerToken: TOKEN, getSource: () => bigSource }).catch((error) => {
+      handleMcpRequest(req, res, { tokens: TOKENS, getSource: () => bigSource }).catch((error) => {
         res.writeHead(500).end(String(error));
       });
     });

@@ -121,12 +121,20 @@ Langelier Saturation Index = `pH + TF + CF + AF − 12.1`
 > summary below is the quick version.
 
 Remote MCP endpoint (Streamable HTTP, stateless) for MCP clients like Claude
-or ChatGPT — auth is one shared `MCP_BEARER_TOKEN`, checked in constant time
-in `handler.ts`. `server.ts` registers the tools against a `PoolDataSource`
-interface (`types.ts`) implemented by `firestoreSource.ts` (Admin SDK,
-bypasses `firestore.rules`, hard-pinned to `POOLSTATUS_OWNER_UID`); tests
-exercise the tools end-to-end against an in-memory fake (`server.test.ts`)
-so they don't need real Firestore credentials.
+or ChatGPT — auth is scoped bearer tokens, each checked in constant time in
+`handler.ts`: `MCP_BEARER_TOKEN` (required) grants full read+write access,
+and an optional `MCP_READONLY_BEARER_TOKEN` grants read-only access for a
+less-trusted connector (e.g. a third-party client you don't want able to
+log readings or touch inventory) without sharing the full-access secret or
+needing OAuth. `server.ts`'s `createPoolStatusMcpServer(source, scopes)`
+only registers the four write tools when `scopes` includes `'write'` — a
+read-only token's `tools/list` never shows them at all, and calling one by
+name anyway fails exactly like calling any unknown tool. `server.ts`
+registers the tools against a `PoolDataSource` interface (`types.ts`)
+implemented by `firestoreSource.ts` (Admin SDK, bypasses `firestore.rules`,
+hard-pinned to `POOLSTATUS_OWNER_UID`); tests exercise the tools end-to-end
+against an in-memory fake (`server.test.ts`) so they don't need real
+Firestore credentials.
 
 Seven read tools (get/list readings, trends, tasks, inventory, equipment,
 schedule) plus four write tools:
@@ -284,6 +292,7 @@ low ORP from an auto-synced reading doesn't pass through silently.
 | 13 | `api/_lib/aiFallback.ts` | CodeQL `js/system-prompt-injection`: `/api/ai/fallback` builds each provider's system message from the request body's `systemInstruction` | Fixed — framed as caller-supplied configuration rather than raw authority (see comment above `framedSystemInstruction`); the endpoint is an intentional generic completion proxy where the caller already controls the whole request and nothing server-side acts on the output, so there's no privilege boundary being crossed today, but framing costs nothing |
 | 14 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
 | 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix |
+| 16 | `api/_lib/mcp/server.ts`'s four write-tool `registerTool` calls | Wrapped in `if (canWrite) { ... }` without re-indenting their contents | Known — intentional; those tools' `description` fields are multi-line template-literal strings sent verbatim to MCP clients, so a blanket re-indent of the block would have added leading whitespace to the *visible tool-description text*, not just the source code (caught and reverted during development) |
 
 ## Agent Instructions
 

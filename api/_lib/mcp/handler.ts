@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isRateLimited } from '../rateLimit.js';
 import { createPoolStatusMcpServer } from './server.js';
-import type { PoolDataSource } from './types.js';
+import type { McpBearerToken, PoolDataSource } from './types.js';
 
 // Per-IP ceiling on MCP requests. One ChatGPT conversation makes a handful
 // of tool calls a minute; this only bites on scripted abuse.
@@ -19,8 +19,13 @@ export interface McpHandlerOptions {
    * once a tool actually queries Firestore.
    */
   getSource: () => PoolDataSource | Promise<PoolDataSource>;
-  /** The shared secret a client must present as `Authorization: Bearer <token>`. */
-  bearerToken: string | undefined;
+  /**
+   * Every bearer secret this deployment accepts, each with its own scopes
+   * (see McpScope) — e.g. a full read+write token for the owner's own
+   * client plus a separate read-only token handed to a less-trusted
+   * connector. Empty/undefined behaves like having none configured.
+   */
+  tokens: McpBearerToken[] | undefined;
 }
 
 type NodeRequest = IncomingMessage & { body?: unknown };
@@ -39,6 +44,18 @@ function tokenMatches(presented: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+// Checks every configured token rather than returning on the first match,
+// so the time this takes doesn't itself hint at which token (by position)
+// the presented value was compared against — the same reasoning as
+// tokenMatches' own digest comparison, just extended across a list.
+function matchToken(presented: string, tokens: McpBearerToken[]): McpBearerToken | null {
+  let match: McpBearerToken | null = null;
+  for (const candidate of tokens) {
+    if (tokenMatches(presented, candidate.token)) match = candidate;
+  }
+  return match;
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
   res.end(JSON.stringify(body));
@@ -51,15 +68,16 @@ function sendJson(res: ServerResponse, status: number, body: unknown, headers: R
  * transport itself rejects GET/DELETE (which only matter for sessions).
  */
 export async function handleMcpRequest(req: NodeRequest, res: ServerResponse, options: McpHandlerOptions): Promise<void> {
-  if (!options.bearerToken) {
-    sendJson(res, 503, { error: 'MCP endpoint is not configured: MCP_BEARER_TOKEN is not set.' });
+  if (!options.tokens || options.tokens.length === 0) {
+    sendJson(res, 503, { error: 'MCP endpoint is not configured: no bearer tokens are set (MCP_BEARER_TOKEN).' });
     return;
   }
 
   const auth = req.headers.authorization ?? '';
   const presented = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
-  if (!presented || !tokenMatches(presented, options.bearerToken)) {
-    sendJson(res, 401, { error: 'Unauthorized: send a valid MCP_BEARER_TOKEN as `Authorization: Bearer <token>`.' }, { 'WWW-Authenticate': 'Bearer' });
+  const matched = presented ? matchToken(presented, options.tokens) : null;
+  if (!matched) {
+    sendJson(res, 401, { error: 'Unauthorized: send a valid bearer token as `Authorization: Bearer <token>`.' }, { 'WWW-Authenticate': 'Bearer' });
     return;
   }
 
@@ -76,7 +94,7 @@ export async function handleMcpRequest(req: NodeRequest, res: ServerResponse, op
     return;
   }
 
-  const server = createPoolStatusMcpServer(source);
+  const server = createPoolStatusMcpServer(source, matched.scopes);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => {
     transport.close();
