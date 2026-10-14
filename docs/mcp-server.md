@@ -108,9 +108,9 @@ Three files carry the weight:
 
 | File | Responsibility |
 |---|---|
-| `api/mcp.ts` | The actual Vercel/Express entry point. Wires the shared bearer token and a cached `PoolDataSource` into the handler. |
-| `api/_lib/mcp/handler.ts` | Protocol-agnostic request handling: rejects unconfigured/unauthenticated/rate-limited requests, then hands off to the MCP SDK's transport. |
-| `api/_lib/mcp/server.ts` | Registers all 11 tools against a `PoolDataSource`. This is where the actual tool logic, validation, and response formatting live. |
+| `api/mcp.ts` | The actual Vercel/Express entry point. Builds the list of configured scoped tokens (`MCP_BEARER_TOKEN`, `MCP_READONLY_BEARER_TOKEN`) and wires them plus a cached `PoolDataSource` into the handler. |
+| `api/_lib/mcp/handler.ts` | Protocol-agnostic request handling: rejects unconfigured/unauthenticated/rate-limited requests, resolves which token matched (and its scopes), then hands off to the MCP SDK's transport. |
+| `api/_lib/mcp/server.ts` | Registers the 7 read tools always, and the 4 write tools only when the resolved scopes include `'write'`, against a `PoolDataSource`. This is where the actual tool logic, validation, and response formatting live. |
 
 Everything below `server.ts` — the actual reads and writes — goes through
 the `PoolDataSource` interface, never directly. That indirection is what
@@ -134,14 +134,15 @@ sequenceDiagram
     participant DS as PoolDataSource
 
     C->>H: POST /api/mcp\nAuthorization: Bearer <token>\nJSON-RPC tool call
-    H->>H: MCP_BEARER_TOKEN configured?
-    alt not configured
+    H->>H: any tokens configured?
+    alt none configured
         H-->>C: 503
     end
-    H->>H: constant-time compare presented vs expected token
-    alt token missing/wrong
+    H->>H: constant-time compare presented token against every configured token
+    alt no match
         H-->>C: 401 (WWW-Authenticate: Bearer)
     end
+    Note over H: matched token carries scopes, e.g. ['read'] or ['read','write']
     H->>RL: isRateLimited(client IP)?
     alt over 120 req / 15 min
         H-->>C: 429
@@ -150,8 +151,8 @@ sequenceDiagram
     alt source build fails (bad service account, no owner set)
         H-->>C: 503 with the underlying error message
     end
-    H->>S: createPoolStatusMcpServer(source)
-    S->>S: register 11 tools
+    H->>S: createPoolStatusMcpServer(source, matched.scopes)
+    S->>S: register the 7 read tools; register the 4 write tools only if scopes include 'write'
     H->>S: connect StreamableHTTPServerTransport
     C->>S: JSON-RPC tool call (routed by the transport)
     S->>DS: source.listReadings() / createReading() / etc.
@@ -160,22 +161,37 @@ sequenceDiagram
     Note over H,S: res.on('close') tears down transport + server
 ```
 
-A misconfigured deployment — no `MCP_BEARER_TOKEN`, a bad service account,
-no owner set — fails **here**, at request time, as a clean 4xx/503 with a
-message naming the problem. It never reports itself healthy and only breaks
-once a tool actually tries to touch Firestore.
+A misconfigured deployment — no bearer tokens configured, a bad service
+account, no owner set — fails **here**, at request time, as a clean 4xx/503
+with a message naming the problem. It never reports itself healthy and only
+breaks once a tool actually tries to touch Firestore.
 
 ## Auth and rate limiting
 
-- **One shared secret.** `MCP_BEARER_TOKEN` is a single bearer token every
-  client presents as `Authorization: Bearer <token>`. There's no per-client
-  identity or scoping — anyone with the token can call every tool, read and
-  write.
-- **Constant-time comparison.** The presented and expected tokens are each
+- **Scoped bearer tokens.** `MCP_BEARER_TOKEN` (required) grants full
+  `['read', 'write']` access; the optional `MCP_READONLY_BEARER_TOKEN`
+  grants `['read']` only. Each is a separate secret a client presents as
+  `Authorization: Bearer <token>` — `handler.ts` matches the presented
+  value against every configured token and carries the matched token's
+  scopes into `createPoolStatusMcpServer(source, scopes)`. A read-only
+  token's connection never has the four write tools registered on it at
+  all (`server.ts`'s `canWrite` gate around their `registerTool` calls) —
+  so a read-only client's own `tools/list` only ever shows the 7 read
+  tools, and calling a write tool by name anyway fails exactly like
+  calling any other unknown tool name (`isError: true`, "Tool ... not
+  found") rather than a scope-specific error, since as far as that
+  connection's server instance is concerned the tool simply doesn't exist.
+  Hand the read-only token to a less-trusted connector instead of the full
+  one — it can be revoked (by rotating just that env var) without
+  affecting the owner's own full-access client.
+- **Constant-time comparison.** Each presented/expected token pair is
   SHA-256 hashed, then compared with `crypto.timingSafeEqual` — a naive
   `===` comparison leaks timing information proportional to how many
   leading bytes match, which is exactly what lets an attacker brute-force a
-  secret byte by byte.
+  secret byte by byte. The presented token is checked against *every*
+  configured token (not short-circuited on the first match) so the overall
+  comparison time doesn't itself hint at which configured token, if any,
+  it was close to.
 - **Per-IP rate limit.** 120 requests per 15 minutes per client IP
   (`rateLimit.ts`). Generous enough that a normal conversation making a
   handful of tool calls never notices it; tight enough to blunt scripted
@@ -187,10 +203,13 @@ once a tool actually tries to touch Firestore.
 
 ```mermaid
 flowchart LR
-    A["Authorization header"] -->|"missing/wrong"| Reject401["401\nWWW-Authenticate: Bearer"]
-    A -->|"correct (constant-time compare)"| B["Per-IP rate limiter"]
+    A["Authorization header"] -->|"matches no configured token"| Reject401["401\nWWW-Authenticate: Bearer"]
+    A -->|"matches MCP_BEARER_TOKEN"| Full["scopes: read, write"]
+    A -->|"matches MCP_READONLY_BEARER_TOKEN"| RO["scopes: read"]
+    Full --> B["Per-IP rate limiter"]
+    RO --> B
     B -->|"over 120/15min"| Reject429["429"]
-    B -->|"under limit"| C["Tool call proceeds\nagainst the one pinned owner's data"]
+    B -->|"under limit"| C["Server built with only the tools\nthat scope allows, against the\none pinned owner's data"]
 ```
 
 ## The `PoolDataSource` abstraction
@@ -471,7 +490,8 @@ Set in `.env.local` (see `.env.example` for the authoritative list):
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `MCP_BEARER_TOKEN` | Yes | The shared secret every MCP client presents. Endpoint 503s without it. |
+| `MCP_BEARER_TOKEN` | Yes | Full read+write access secret. Endpoint 503s without at least this one token configured. |
+| `MCP_READONLY_BEARER_TOKEN` | No | A second, separately-revocable secret that only grants the read tools — see "Auth and rate limiting" above. |
 | `FIREBASE_SERVICE_ACCOUNT` | Yes | Service-account JSON (as a string) for the Admin SDK — Firestore + Storage access. |
 | `POOLSTATUS_OWNER_UID` | Yes* | The single Firebase Auth uid whose data this server exposes. |
 | `POOLSTATUS_OWNER_EMAIL` | Alternative to above | Resolved to a uid once and cached; ignored if `POOLSTATUS_OWNER_UID` is set. |

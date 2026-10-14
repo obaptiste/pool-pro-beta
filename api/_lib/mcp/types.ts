@@ -1,5 +1,21 @@
 import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Priority, Reading, TaskFrequency } from '../../../src/types.js';
 
+/**
+ * What a bearer token is allowed to do. 'write' implies 'read' — there's no
+ * write-only token, since every write tool's result includes read-shaped
+ * data (e.g. the created reading). A token without 'write' never sees the
+ * write tools at all (createPoolStatusMcpServer skips registering them),
+ * not just rejected when called — so a read-only client's tools/list
+ * accurately reflects what it can do.
+ */
+export type McpScope = 'read' | 'write';
+
+/** One accepted bearer secret and what it's allowed to do — see McpScope. */
+export interface McpBearerToken {
+  token: string;
+  scopes: McpScope[];
+}
+
 /** Thrown by completeTask/adjustInventory when `id` doesn't name an item the owner has. */
 export class NotFoundError extends Error {}
 

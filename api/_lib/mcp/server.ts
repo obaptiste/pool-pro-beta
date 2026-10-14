@@ -16,7 +16,7 @@ import {
 } from '../../../src/lib/readingValidation.js';
 import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types.js';
 import { decodeReadingCursor, encodeReadingCursor } from './cursor.js';
-import { NotFoundError, UnitMismatchError, type PoolDataSource, type ReadingCursor } from './types.js';
+import { NotFoundError, UnitMismatchError, type McpScope, type PoolDataSource, type ReadingCursor } from './types.js';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
 export const SERVER_VERSION = '1.0.0';
@@ -405,8 +405,14 @@ const PhotoEvidence = z.object({
 
 const NumericFieldInput = z.number().optional();
 
-export function createPoolStatusMcpServer(source: PoolDataSource): McpServer {
+// Every tool this server can register, read or write, for a 'write'-scoped
+// token — the default, so every existing caller (tests included) keeps
+// seeing the full tool set unless it opts into a narrower scope.
+const FULL_ACCESS: McpScope[] = ['read', 'write'];
+
+export function createPoolStatusMcpServer(source: PoolDataSource, scopes: McpScope[] = FULL_ACCESS): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const canWrite = scopes.includes('write');
 
   server.registerTool(
     'poolstatus_get_latest_reading',
@@ -803,6 +809,10 @@ Use when: "When is the next test due?", "Am I behind on testing?"`,
     },
   );
 
+  // A read-only token (scopes: ['read']) never sees any of these four tools
+  // registered at all — not registered, not rejected at call time — so its
+  // tools/list is an honest reflection of what it's actually allowed to do.
+  if (canWrite) {
   server.registerTool(
     'poolstatus_log_reading',
     {
@@ -983,6 +993,7 @@ Don't use when: the operator wants a reminder to reorder rather than a record of
       }
     },
   );
+  }
 
   return server;
 }

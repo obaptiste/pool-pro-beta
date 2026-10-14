@@ -1,17 +1,31 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleMcpRequest } from './_lib/mcp/handler.js';
 import { createFirestoreSource } from './_lib/mcp/firestoreSource.js';
+import type { McpBearerToken } from './_lib/mcp/types.js';
 
-// Remote MCP endpoint (Streamable HTTP, stateless) exposing read-only
-// PoolStatus data to MCP clients such as ChatGPT or Claude. See
-// api/_lib/mcp/ for the tools; configuration is via env vars documented
-// in .env.example: MCP_BEARER_TOKEN, FIREBASE_SERVICE_ACCOUNT, and
+// Remote MCP endpoint (Streamable HTTP, stateless) exposing PoolStatus data
+// to MCP clients such as ChatGPT or Claude. See api/_lib/mcp/ for the
+// tools; configuration is via env vars documented in .env.example:
+// MCP_BEARER_TOKEN (full read+write access), optionally
+// MCP_READONLY_BEARER_TOKEN (read-only — hand this to a less-trusted
+// connector instead of the full token), FIREBASE_SERVICE_ACCOUNT, and
 // POOLSTATUS_OWNER_UID (or POOLSTATUS_OWNER_EMAIL).
+function configuredTokens(): McpBearerToken[] {
+  const tokens: McpBearerToken[] = [];
+  if (process.env.MCP_BEARER_TOKEN) {
+    tokens.push({ token: process.env.MCP_BEARER_TOKEN, scopes: ['read', 'write'] });
+  }
+  if (process.env.MCP_READONLY_BEARER_TOKEN) {
+    tokens.push({ token: process.env.MCP_READONLY_BEARER_TOKEN, scopes: ['read'] });
+  }
+  return tokens;
+}
+
 let sourcePromise: ReturnType<typeof createFirestoreSource> | undefined;
 
 export default async function handler(req: IncomingMessage & { body?: unknown }, res: ServerResponse) {
   await handleMcpRequest(req, res, {
-    bearerToken: process.env.MCP_BEARER_TOKEN,
+    tokens: configuredTokens(),
     getSource: async () => {
       sourcePromise ??= createFirestoreSource();
       try {
