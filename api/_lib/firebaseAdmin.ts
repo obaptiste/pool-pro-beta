@@ -27,7 +27,26 @@ function loadServiceAccount(): Record<string, unknown> {
  * exists" on the second attempt instead of actually retrying.
  */
 function getOrInitApp(): App {
-  return getApps()[0] ?? initializeApp({ credential: cert(loadServiceAccount()), projectId: firebaseConfig.projectId });
+  const existing = getApps()[0];
+  if (existing) return existing;
+  try {
+    return initializeApp({ credential: cert(loadServiceAccount()), projectId: firebaseConfig.projectId });
+  } catch (error) {
+    // loadServiceAccount()'s own failures are already classified.
+    if (error instanceof FirebaseAdminConfigError) throw error;
+    // Structurally valid JSON that isn't a service account — missing
+    // project_id, client_email or private_key — makes cert() throw a Firebase
+    // credential error instead of ours. The likeliest way to land here is
+    // pasting firebase-applet-config.json (the web client config, which is
+    // valid JSON, lives in this repo, and has none of those fields) into
+    // FIREBASE_SERVICE_ACCOUNT. Callers that classify on
+    // FirebaseAdminConfigError to tell "this deployment is misconfigured"
+    // from "these credentials were rejected" would otherwise report it as the
+    // latter — see checkAuthorization in api/cron/sync-pool-controller.ts.
+    throw new FirebaseAdminConfigError(
+      `FIREBASE_SERVICE_ACCOUNT is not a usable service account: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 // Module-scoped, so it's reused across requests handled by the same warm
