@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
-import { getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin.js';
+import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin.js';
 import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters.js';
 import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source.js';
 import { syncLatestReading } from '../_lib/poolControllers/sync.js';
@@ -48,7 +48,18 @@ function secretMatches(presented: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-type AuthResult = { authorized: true; ownerUid?: string } | { authorized: false };
+// `configError` carries a FirebaseAdminConfigError's message when the request
+// failed on *this deployment's* setup rather than on the caller's credentials
+// — see checkAuthorization.
+//
+// Both members declare both optional fields rather than only their own: this
+// project's tsconfig.json sets no `strict`, so with strictNullChecks off
+// TypeScript will not narrow a discriminated union by its boolean literal
+// discriminant, and `auth.configError` inside `if (!auth.authorized)` is a
+// compile error if the field exists on only one member.
+type AuthResult =
+  | { authorized: true; ownerUid?: string; configError?: undefined }
+  | { authorized: false; ownerUid?: undefined; configError?: string };
 
 /**
  * Accepts either CRON_SECRET (the scheduled triggers above) or a Firebase
@@ -69,6 +80,23 @@ type AuthResult = { authorized: true; ownerUid?: string } | { authorized: false 
  * (POOLSTATUS_OWNER_UID, the preferred setting, is just an env read and
  * has no such cost either way). The resolved uid is returned so the
  * handler can reuse it instead of looking it up again.
+ *
+ * Failures here are deliberately split in two. A `FirebaseAdminConfigError`
+ * — an unset or malformed FIREBASE_SERVICE_ACCOUNT, or neither
+ * POOLSTATUS_OWNER_UID nor POOLSTATUS_OWNER_EMAIL set — is this
+ * deployment's own configuration, not a judgement about the caller, so its
+ * message is passed back for the handler to surface as a 503. That is the
+ * same trade-off already made for an unset CRON_SECRET below: it tells an
+ * operator which variable to go and set, and tells an attacker only that
+ * the server isn't finished being set up. Everything else — a forged,
+ * expired or wrong-project token, or a token belonging to some other
+ * signed-in Google account — stays an undifferentiated 401, because
+ * telling a caller *why* their credentials were rejected is precisely the
+ * feedback a credential-guessing attack wants.
+ *
+ * This previously was a single bare `catch`, which collapsed all four into
+ * one silent 401 and left an operator with no way to tell a missing
+ * service account from a bad token.
  */
 async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
   const token = bearerToken(req);
@@ -77,12 +105,31 @@ async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
   const secret = process.env.CRON_SECRET?.trim();
   if (secret && secretMatches(token, secret)) return { authorized: true };
 
+  let decoded: Awaited<ReturnType<ReturnType<typeof getAuth>['verifyIdToken']>>;
   try {
-    const app = getAdminApp();
-    const decoded = await getAuth(app).verifyIdToken(token);
-    const ownerUid = await resolveOwnerUid(app);
+    decoded = await getAuth(getAdminApp()).verifyIdToken(token);
+  } catch (error) {
+    if (error instanceof FirebaseAdminConfigError) {
+      return { authorized: false, configError: error.message };
+    }
+    // Not logged: an unauthenticated endpoint collects junk bearer tokens
+    // from scanners, and every one of them lands here. The operator-
+    // actionable cases are the ones above and below.
+    return { authorized: false };
+  }
+
+  try {
+    const ownerUid = await resolveOwnerUid(getAdminApp());
     return decoded.uid === ownerUid ? { authorized: true, ownerUid } : { authorized: false };
-  } catch {
+  } catch (error) {
+    if (error instanceof FirebaseAdminConfigError) {
+      return { authorized: false, configError: error.message };
+    }
+    // Reached only with an already-verified token, so this is a real
+    // Firebase Auth failure (e.g. the getUserByEmail lookup erroring), not
+    // scanner noise — worth a log line even though the caller still gets a
+    // flat 401.
+    console.error('Owner uid resolution failed for a verified token:', error);
     return { authorized: false };
   }
 }
@@ -90,6 +137,12 @@ async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {
   const auth = await checkAuthorization(req);
   if (!auth.authorized) {
+    // Admin-SDK setup that was never finished. Same 503 shape as the unset
+    // CRON_SECRET below, and the message names the variable to go and set.
+    if (auth.configError) {
+      res.status(503).json({ error: auth.configError });
+      return;
+    }
     // Distinguishes "the operator never finished setup" from "this specific
     // request's credentials were wrong" — useful for whoever's watching the
     // GitHub Actions / Vercel Cron logs, and harmless to a manual caller
