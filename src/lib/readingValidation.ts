@@ -150,23 +150,13 @@ export function getCombinedChlorineWarning(free: number | null | undefined, tota
   return null;
 }
 
-// The one ORP threshold that isn't already DEFAULT_RANGES.sanitisationMv's
-// min (650) or max (750) -- exported so callers needing this getSoftWarning
-// "truly high, not just elevated" boundary (e.g. classifyOrp's status
-// badge) don't re-derive it as a separate literal.
-export const ORP_HIGH_WARNING_MV = 850;
-
 // AGENTS.md's own literal instruction: "Above 800 mV: warn that
 // sanitisation may be high; verify before swimming or adding more
-// chlorine." That's a lower, stricter line than ORP_HIGH_WARNING_MV above
-// -- getSoftWarning's 750-850 mV "elevated, usually acceptable" band is this
-// module's own interpretive gap-filling for a range AGENTS.md leaves silent,
-// but AGENTS.md's explicit verify-before-swimming instruction still applies
-// to the whole 800+ mV range, not just its top end. Dashboard's orp_high
-// alert and WeeklyReport's weekly ORP-high advisory both key off this
-// constant rather than ORP_HIGH_WARNING_MV, so the loud "verify before
-// swimming" action banner each surfaces stays anchored to AGENTS.md's own
-// number.
+// chlorine." getSoftWarning's "too high" warning fires above this line, so
+// the 750-800 mV "elevated, usually acceptable" band sits below it. Dashboard's
+// orp_high alert and WeeklyReport's weekly ORP-high advisory both key off this
+// constant too, so the loud "verify before swimming" banner each surfaces
+// stays anchored to AGENTS.md's own number.
 export const ORP_ACTION_ALERT_MV = 800;
 
 export function getSoftWarning(field: NumericReadingField, value: number): SoftValidationWarning | null {
@@ -174,8 +164,8 @@ export function getSoftWarning(field: NumericReadingField, value: number): SoftV
   if (field === 'sanitisationMv') {
     const { min, max } = DEFAULT_RANGES.sanitisationMv;
     if (value < min) return { field, level: 'warning', message: `Sanitisation may be too low (<${min} mV).` };
-    if (value > ORP_HIGH_WARNING_MV) return { field, level: 'warning', message: `Sanitisation may be too high (>${ORP_HIGH_WARNING_MV} mV).` };
-    if (value >= max) return { field, level: 'elevated', message: `High ORP (${max}–${ORP_HIGH_WARNING_MV} mV), usually acceptable depending on context.` };
+    if (value > ORP_ACTION_ALERT_MV) return { field, level: 'warning', message: `Sanitisation may be too high (>${ORP_ACTION_ALERT_MV} mV) — verify before swimming or adding more chlorine.` };
+    if (value >= max) return { field, level: 'elevated', message: `High ORP (${max}–${ORP_ACTION_ALERT_MV} mV), usually acceptable depending on context.` };
     return null;
   }
 

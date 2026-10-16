@@ -167,10 +167,10 @@ test('classifyOrp matches getSoftWarning\'s three-tier band, not a simpler two-t
   assert.equal(classifyOrp(649), 'critical'); // below 650: too low
   assert.equal(classifyOrp(650), 'good'); // 650-750: acceptable working zone
   assert.equal(classifyOrp(700), 'good');
-  assert.equal(classifyOrp(750), 'warning'); // 750-850: "elevated, usually acceptable" -- not 'good' the way the old 650/800 split treated it
-  assert.equal(classifyOrp(800), 'warning');
-  assert.equal(classifyOrp(850), 'warning');
-  assert.equal(classifyOrp(851), 'critical'); // above 850: a real actionable extreme -- not merely 'warning' the way the old split treated it
+  assert.equal(classifyOrp(750), 'warning'); // 750-800: "elevated, usually acceptable" -- not 'good' the way the old 650/800 split treated it
+  assert.equal(classifyOrp(800), 'warning'); // AGENTS.md's verify-before-swimming line is 800: still the top of the elevated band
+  assert.equal(classifyOrp(801), 'critical'); // above 800: AGENTS.md's action threshold -- a real actionable extreme, not merely 'warning'
+  assert.equal(classifyOrp(850), 'critical');
 });
 
 test('isOrpStale is judged against wall-clock now, not against whether a value came from a fallback', () => {
