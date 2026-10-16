@@ -19,7 +19,8 @@ import {
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE } from '../types';
+import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE, ControllerLogWindow } from '../types';
+import ControllerLogCard from './ControllerLogCard';
 import { calculateLSI, getLsiStatus } from '../lib/lsi';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp, isAutoSyncBoilerplateNote } from '../lib/readings';
 import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, COMBINED_CHLORINE_OK_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
@@ -65,6 +66,9 @@ interface Props {
   onOpenReminderSettings: () => void;
   onOpenAssistant: (mode: AssistantOpenMode) => void;
   onSyncPoolController: () => Promise<{ written: boolean; outcome?: string }>;
+  /** Imported controller windows (controllerLogs); the home card only renders when there are some. */
+  controllerWindows: ControllerLogWindow[];
+  onOpenControllerLog: () => void;
 }
 
 // Status tints from the design tokens: text at the -400 Tailwind stop,
@@ -89,7 +93,7 @@ export default function Dashboard({
   readings, readingsLoaded, tasks, schedule, inventory, equipment,
   protocol, protocolState, onRequestProtocol, onExecuteProtocol,
   onLogReading, onViewHistory, onOpenTrends, onOpenTasks, onOpenEquipment, onOpenInventory, onOpenWeeklyReport,
-  onOpenReminderSettings, onOpenAssistant, onSyncPoolController,
+  onOpenReminderSettings, onOpenAssistant, onSyncPoolController, controllerWindows, onOpenControllerLog,
 }: Props) {
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   // ORP staleness and the sync pill's age are judged against wall-clock
@@ -562,6 +566,12 @@ export default function Dashboard({
               </motion.section>
 
             </div>
+
+            {controllerWindows.length > 0 && (
+              <motion.section {...sectionMotion(section++)} aria-label="Controller log">
+                <ControllerLogCard windows={controllerWindows} onOpen={onOpenControllerLog} className={CARD_SHADOW} />
+              </motion.section>
+            )}
 
             {/* ── Operations ──────────────────────────────────────────── */}
             <motion.section {...sectionMotion(section++)} aria-label="Operations" className="flex flex-col gap-3">

@@ -271,11 +271,38 @@ export interface WindowSafetyWarning {
 }
 
 /**
+ * The one place controller-log pH/ORP values are graded, shared by the
+ * import preview and the controller log view so the two never disagree.
+ * pH follows AGENTS.md: typical target 7.2–7.6 ('watch' up to 7.8), warn
+ * below 7.0, below 7.2 and above 7.8 (DEFAULT_RANGES.ph's ends). ORP uses
+ * getSoftWarning's warning tier plus ORP_ACTION_ALERT_MV's "verify before
+ * swimming" line. Returns null when the value is fine.
+ */
+export function controllerValueWarning(field: 'ph' | 'sanitisationMv', value: number): { level: 'watch' | 'warning'; message: string } | null {
+  if (!Number.isFinite(value)) return null;
+  if (field === 'ph') {
+    // getSoftWarning's pH text is written for the manual form, so word it for a log here.
+    const { min, max } = DEFAULT_RANGES.ph;
+    if (value < 7.0) return { level: 'warning', message: 'Very low pH (acidic). Retest before any heavy dosing.' };
+    if (value < min) return { level: 'warning', message: `Below the ${min}–${PH_TYPICAL_MAX} target. Retest to confirm.` };
+    if (value > max) return { level: 'warning', message: 'High pH, likely to reduce chlorine effectiveness. Retest before dosing.' };
+    if (value > PH_TYPICAL_MAX) {
+      return { level: 'watch', message: `Above the ${min}–${PH_TYPICAL_MAX} target. Chlorine works less well as pH rises, so retest and correct before it climbs further.` };
+    }
+    return null;
+  }
+  const soft = getSoftWarning(field, value);
+  if (soft?.level === 'warning') return { level: 'warning', message: soft.message };
+  if (value > ORP_ACTION_ALERT_MV) {
+    return { level: 'warning', message: `ORP above ${ORP_ACTION_ALERT_MV} mV: sanitisation may be high. Verify before swimming or adding more chlorine.` };
+  }
+  return null;
+}
+
+/**
  * pH/ORP warnings for an export, so the import preview can show dangerous
  * values before they're saved. AGENTS.md: warn clearly, never block the
- * save. pH follows AGENTS.md: typical target 7.2–7.6, warn below 7.0 and
- * above 7.8 (DEFAULT_RANGES.ph's ends). ORP uses getSoftWarning's warning
- * tier plus ORP_ACTION_ALERT_MV's "verify before swimming" line. Reports only
+ * save. Grades each value with controllerValueWarning, and reports only
  * the most extreme window per field and direction to keep the list short.
  */
 export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindows: number; worst: WindowSafetyWarning[] } {
@@ -283,26 +310,9 @@ export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindo
   const worst = new Map<string, WindowSafetyWarning>();
   const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], column: 'min' | 'max', value: number | null, other: number | null) => {
     if (value == null) return;
-    let message: string | null = null;
-    let level: WindowSafetyWarning['level'] = 'warning';
-    if (field === 'ph') {
-      // getSoftWarning's pH text is written for the manual form, so word it for a log here (AGENTS.md pH rules).
-      const { min, max } = DEFAULT_RANGES.ph;
-      if (value < 7.0) message = 'Very low pH (acidic). Retest before any heavy dosing.';
-      else if (value < min) message = `Below the ${min}–${PH_TYPICAL_MAX} target. Retest to confirm.`;
-      else if (value > max) message = `High pH, likely to reduce chlorine effectiveness. Retest before dosing.`;
-      else if (value > PH_TYPICAL_MAX) {
-        level = 'watch';
-        message = `Above the ${min}–${PH_TYPICAL_MAX} target. Chlorine works less well as pH rises, so retest and correct before it climbs further.`;
-      }
-    } else {
-      const soft = getSoftWarning(field, value);
-      if (soft?.level === 'warning') message = soft.message;
-      else if (value > ORP_ACTION_ALERT_MV) {
-        message = `ORP above ${ORP_ACTION_ALERT_MV} mV: sanitisation may be high. Verify before swimming or adding more chlorine.`;
-      }
-    }
-    if (!message) return;
+    const warning = controllerValueWarning(field, value);
+    if (!warning) return;
+    const { level, message } = warning;
     // A too-low value is normally reported from a window's min and a too-high
     // one from its max, so a steady 7.70–7.70 window is "highest pH 7.70",
     // not also "lowest". Only when that other end exists, though: with the
