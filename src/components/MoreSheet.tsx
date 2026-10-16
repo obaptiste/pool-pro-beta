@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useModalFocus } from '../lib/useModalFocus';
-import { Book, BookOpen, Bell, Download, FileText, Heart, LineChart, LogOut, Plug, Printer, Timer, Upload, Wrench, X } from 'lucide-react';
+import { Book, BookOpen, Bell, Download, FileText, Gauge, Heart, LineChart, LogOut, Plug, Printer, Timer, Upload, Wrench, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Props {
@@ -15,6 +15,7 @@ interface Props {
   onOpenCheatSheet: () => void;
   onOpenReminderSettings: () => void;
   onOpenAgents: () => void;
+  onOpenControllerImport: () => void;
   onTemplateUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onExport: () => void;
   onPrint: () => void;
@@ -26,7 +27,7 @@ type Item = { label: string; icon: React.ComponentType<{ size?: number; classNam
 /** The "More" tab: everything that isn't one of the four main tabs, anchored above the tab bar. */
 export default function MoreSheet({
   isOpen, onClose, onOpenEquipment, onOpenWeeklyReport, onOpenTrends, onOpenWishlist, onOpenWorkTracker, onOpenGlossary,
-  onOpenCheatSheet, onOpenReminderSettings, onOpenAgents, onTemplateUpload, onExport, onPrint, onSignOut,
+  onOpenCheatSheet, onOpenReminderSettings, onOpenAgents, onOpenControllerImport, onTemplateUpload, onExport, onPrint, onSignOut,
 }: Props) {
   const run = (fn: () => void) => () => { onClose(); fn(); };
   // The file input stays hidden; the focusable button opens it, so keyboard users can upload too.
@@ -43,6 +44,7 @@ export default function MoreSheet({
     { label: 'Cheat Sheet', icon: BookOpen, onClick: run(onOpenCheatSheet) },
     { label: 'Reminders', icon: Bell, onClick: run(onOpenReminderSettings) },
     { label: 'Connected Agents (MCP)', icon: Plug, onClick: run(onOpenAgents) },
+    { label: 'Import Controller Data', icon: Gauge, onClick: run(onOpenControllerImport) },
     { label: 'Export CSV', icon: Download, onClick: run(onExport) },
     { label: 'Print', icon: Printer, onClick: run(onPrint) },
     { label: 'Sign Out', icon: LogOut, onClick: run(onSignOut), tone: 'danger' },
