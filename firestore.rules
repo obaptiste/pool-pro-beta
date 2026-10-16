@@ -211,11 +211,18 @@ service cloud.firestore {
       allow delete: if isDocOwner();
     }
 
+    // Inventory items are fixed once created: no delete, and the only field a
+    // client may change is quantity (stock counting). Name, unit, threshold,
+    // strength and purchase details are set at creation and never edited.
     match /inventory/{itemId} {
       allow read: if isDocOwner();
       allow create: if isAuthenticated() && isValidInventory(request.resource.data) && uidUnchanged();
-      allow update: if isDocOwner() && isValidInventory(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner();
+      allow update: if isDocOwner()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity'])
+                    && isValidInventory(request.resource.data)
+                    && request.resource.data.quantity >= 0
+                    && uidNotModified();
+      allow delete: if false;
     }
 
     match /equipment/{equipmentId} {
