@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { controllerLogDocId, isDoseWindow, summariseSafetyWarnings, parseCell, parseHannaCsv, parseLocalDateTime, splitCsvLine, HannaCsvError } from './hannaCsv';
+import { controllerLogDocId, isDoseWindow, summariseSafetyWarnings, windowDocId, parseCell, parseHannaCsv, parseLocalDateTime, splitCsvLine, HannaCsvError } from './hannaCsv';
 
 // Trimmed from a real BL122 export, trailing tabs included.
 const HEADER = [
@@ -171,10 +171,42 @@ test('summariseSafetyWarnings flags a pH just under the 7.2 target from the real
   const out = summariseSafetyWarnings(parseHannaCsv(csv()).windows);
   assert.equal(out.affectedWindows, 1);
   assert.deepEqual(out.worst.map((x) => [x.field, x.end, x.value, x.window.rec]), [['ph', 'min', 7.18, 7]]);
-  assert.match(out.worst[0].message, /Below the 7.2/);
+  assert.match(out.worst[0].message, /Below the 7.2–7.6 target/);
+  assert.equal(out.worst[0].level, 'warning');
 });
 
 test('summariseSafetyWarnings is empty when pH and ORP are in range', () => {
   const ws = parseHannaCsv(csv(['2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.45,7.52,715,719,29.8,31.4,0,0,0,0'])).windows;
   assert.deepEqual(summariseSafetyWarnings(ws), { affectedWindows: 0, worst: [] });
+});
+
+test('summariseSafetyWarnings flags pH 7.6–7.8 as a softer watch, above 7.8 as a warning', () => {
+  const watch = summariseSafetyWarnings(parseHannaCsv(csv(['2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.70,7.70,715,719,29.8,31.4,0,0,0,0'])).windows);
+  assert.deepEqual(watch.worst.map((x) => [x.end, x.value, x.level]), [['max', 7.7, 'watch']]);
+  assert.match(watch.worst[0].message, /Above the 7.2–7.6 target/);
+  const high = summariseSafetyWarnings(parseHannaCsv(csv(['2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.70,7.95,715,719,29.8,31.4,0,0,0,0'])).windows);
+  assert.deepEqual(high.worst.map((x) => [x.end, x.value, x.level]), [['max', 7.95, 'warning']]);
+  const edge = summariseSafetyWarnings(parseHannaCsv(csv(['2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.50,7.60,715,719,29.8,31.4,0,0,0,0'])).windows);
+  assert.equal(edge.worst.length, 0);
+});
+
+test('a repeated local start time (clocks going back) keeps both windows with distinct ids', () => {
+  const out = parseHannaCsv(csv([
+    '20,2026-10-25 01:12:00,2026-10-25 01:57:00,7.4,7.5,700,710,28,29,0,0,0,0',
+    '21,2026-10-25 01:12:00,2026-10-25 01:57:00,7.5,7.6,720,730,28,29,0,120,0,0',
+  ]));
+  assert.equal(out.windows.length, 2);
+  assert.deepEqual(out.windows.map((w) => w.occurrence), [1, 2]);
+  const ids = out.windows.map((w) => windowDocId('uid1', out.deviceId, w));
+  assert.deepEqual(ids, ['uid1_BL122_7AC443_20251025T011200'.replace('2025', '2026'), 'uid1_BL122_7AC443_20261025T011200_2']);
+  // The second window keeps its own readings and dose.
+  assert.equal(out.windows[1].acidBaseMaxMl, 120);
+  // Where the local time really repeats (e.g. Europe/London), the repeat is placed an hour later; elsewhere it stays put.
+  const gap = out.windows[1].start.getTime() - out.windows[0].start.getTime();
+  assert.ok(gap === 0 || gap === 3_600_000);
+});
+
+test('windowDocId keeps the original id for a normal window', () => {
+  const w = parseHannaCsv(csv()).windows[0];
+  assert.equal(windowDocId('uid1', 'BL122_7AC443', w), controllerLogDocId('uid1', 'BL122_7AC443', w.startLocal));
 });

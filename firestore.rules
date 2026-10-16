@@ -72,7 +72,8 @@ service cloud.firestore {
     // Collection: controllerLogs
     // Document ID: "{uid}_{deviceId}_{YYYYMMDDTHHMMSS}" — deterministic
     //   (src/lib/hannaCsv.ts controllerLogDocId) so re-importing an export
-    //   never duplicates a window; must start with the writer's uid.
+    //   never duplicates a window; must start with the writer's uid. A local
+    //   start time repeated when clocks go back gets a "_2" suffix.
     // Written by the controller CSV importer (ControllerImport.tsx).
     // Fields:
     //   - id: string (required, equals the document ID)

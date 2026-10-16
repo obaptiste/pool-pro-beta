@@ -106,7 +106,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
-- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent. Deliberately separate from `readings`: a window is a range, not a point measurement, and nothing reads it yet (no dashboard, trends, or AI prompt use). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
+- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and nothing reads it yet (no dashboard, trends, or AI prompt use). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
 - `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
