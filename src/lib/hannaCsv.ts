@@ -1,4 +1,5 @@
-import { getImpossibleValueError, type NumericReadingField } from './readingValidation.js';
+import { DEFAULT_RANGES } from '../types.js';
+import { getImpossibleValueError, getSoftWarning, ORP_ACTION_ALERT_MV, type NumericReadingField } from './readingValidation.js';
 
 /**
  * Parser for the CSV a Hanna BL-series pool controller (e.g. BL122) exports:
@@ -221,3 +222,57 @@ export function controllerLogDocId(uid: string, deviceId: string, startLocal: st
 
 /** Windows where either pump ran, for the import preview. */
 export const isDoseWindow = (w: HannaWindow) => (w.acidBaseMaxMl ?? 0) > 0 || (w.chlorineMaxMl ?? 0) > 0;
+
+export interface WindowSafetyWarning {
+  field: 'ph' | 'sanitisationMv';
+  /** Which end of the window's range tripped it. */
+  end: 'min' | 'max';
+  value: number;
+  window: HannaWindow;
+  message: string;
+}
+
+/**
+ * pH/ORP warnings for an export, so the import preview can show dangerous
+ * values before they're saved. AGENTS.md: warn clearly, never block the
+ * save. Uses the app's own thresholds (DEFAULT_RANGES.ph; getSoftWarning's
+ * ORP warning tier plus ORP_ACTION_ALERT_MV's "verify before swimming" line), and reports only
+ * the most extreme window per field and direction to keep the list short.
+ */
+export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindows: number; worst: WindowSafetyWarning[] } {
+  const affected = new Set<HannaWindow>();
+  const worst = new Map<string, WindowSafetyWarning>();
+  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], end: 'min' | 'max', value: number | null) => {
+    if (value == null) return;
+    let message: string | null = null;
+    if (field === 'ph') {
+      // getSoftWarning's pH text is written for the manual form, so word it for a log here (AGENTS.md pH rules).
+      const { min, max } = DEFAULT_RANGES.ph;
+      if (value < 7.0) message = 'Very low pH (acidic). Retest before any heavy dosing.';
+      else if (value < min) message = `Below the ${min}–${max} target. Retest to confirm.`;
+      else if (value > max) message = `High pH, likely to reduce chlorine effectiveness. Retest before dosing.`;
+    } else {
+      const soft = getSoftWarning(field, value);
+      if (soft?.level === 'warning') message = soft.message;
+      else if (value > ORP_ACTION_ALERT_MV) {
+        message = `ORP above ${ORP_ACTION_ALERT_MV} mV: sanitisation may be high. Verify before swimming or adding more chlorine.`;
+      }
+    }
+    if (!message) return;
+    affected.add(w);
+    const key = `${field}:${end}`;
+    const prev = worst.get(key);
+    if (!prev || (end === 'min' ? value < prev.value : value > prev.value)) {
+      worst.set(key, { field, end, value, window: w, message });
+    }
+  };
+  for (const w of windows) {
+    consider(w, 'ph', 'min', w.phMin);
+    consider(w, 'ph', 'max', w.phMax);
+    consider(w, 'sanitisationMv', 'min', w.orpMinMv);
+    consider(w, 'sanitisationMv', 'max', w.orpMaxMv);
+  }
+  // A low and a high from the same window and field would both be listed; that's real (a big swing) and worth seeing.
+  const order = ['ph:min', 'ph:max', 'sanitisationMv:min', 'sanitisationMv:max'];
+  return { affectedWindows: affected.size, worst: order.flatMap((k) => (worst.has(k) ? [worst.get(k)!] : [])) };
+}

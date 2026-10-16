@@ -1,11 +1,11 @@
 import React, { useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileUp, Gauge, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, doc, getDocs, query, Timestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocsFromServer, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useModalFocus } from '../lib/useModalFocus';
 import { useToast } from '../lib/toast';
-import { controllerLogDocId, HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv } from '../lib/hannaCsv';
+import { controllerLogDocId, HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, summariseSafetyWarnings } from '../lib/hannaCsv';
 
 interface Props {
   isOpen: boolean;
@@ -64,14 +64,18 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
       setPhase({ kind: 'error', message: 'The export has no readings or doses in it. The controller may not have logged anything for that period.' });
       return;
     }
-    // Ids are deterministic, so re-writing one is harmless; this lookup only
-    // makes the preview honest about what's new.
-    let existing = new Set<string>();
+    // The import only writes ids this lookup didn't find, so an unknown
+    // answer must stop here rather than count as "nothing imported yet".
+    // From the server, not the local cache: offline, a cached getDocs
+    // would quietly return a partial set.
+    let existing: Set<string>;
     try {
-      const snap = await getDocs(query(collection(db, 'controllerLogs'), where('uid', '==', uid), where('deviceId', '==', data.deviceId)));
+      const snap = await getDocsFromServer(query(collection(db, 'controllerLogs'), where('uid', '==', uid), where('deviceId', '==', data.deviceId)));
       existing = new Set(snap.docs.map((d) => d.id));
     } catch (err) {
       console.error('Could not check for already-imported windows', err);
+      setPhase({ kind: 'error', message: 'Couldn\'t check what\'s already been imported. Check your connection and try again.' });
+      return;
     }
     setPhase({ kind: 'preview', file: file.name, data, existing });
   };
@@ -266,6 +270,7 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
     ? (new Date(data.requestedEnd.replace(' ', 'T')).getTime() - new Date(data.requestedStart.replace(' ', 'T')).getTime()) / 3_600_000
     : NaN;
   // Flag when the file holds far less than the header's period (e.g. 44 h of a 3-month export).
+  const safety = summariseSafetyWarnings(data.windows);
   const shortfall = Number.isFinite(requested) && requested > 0 && hours < requested * 0.5;
 
   const rows: [string, string][] = [
@@ -289,6 +294,25 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
           </div>
         ))}
       </dl>
+      {safety.worst.length > 0 && (
+        <div className="rounded-xl border border-critical/50 bg-critical/5 p-3 space-y-2 text-xs text-ink" role="alert">
+          <div className="flex gap-2 items-start font-bold">
+            <AlertTriangle size={14} className="text-critical shrink-0 mt-0.5" />
+            <span>{safety.affectedWindows} of {data.windows.length} windows have pH or ORP outside the safe range</span>
+          </div>
+          <ul className="space-y-1.5 pl-6">
+            {safety.worst.map((x) => (
+              <li key={`${x.field}:${x.end}`}>
+                <span className="font-mono">
+                  {x.end === 'min' ? 'Lowest' : 'Highest'} {x.field === 'ph' ? 'pH' : 'ORP'} {x.field === 'ph' ? x.value.toFixed(2) : `${x.value} mV`}
+                </span>
+                <span className="text-ink-muted"> · {fmt(x.window.start)}. {x.message}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-ink-muted">Importing still saves every value as recorded. If these are recent, retest by hand before dosing, and follow the product label and your pool contractor's guidance.</p>
+        </div>
+      )}
       {shortfall && (
         <div className="flex gap-2 items-start rounded-xl border border-warning/40 bg-warning/5 p-3 text-xs text-ink">
           <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />

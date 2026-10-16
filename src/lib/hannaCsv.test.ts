@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { controllerLogDocId, isDoseWindow, parseCell, parseHannaCsv, parseLocalDateTime, splitCsvLine, HannaCsvError } from './hannaCsv';
+import { controllerLogDocId, isDoseWindow, summariseSafetyWarnings, parseCell, parseHannaCsv, parseLocalDateTime, splitCsvLine, HannaCsvError } from './hannaCsv';
 
 // Trimmed from a real BL122 export, trailing tabs included.
 const HEADER = [
@@ -147,4 +147,34 @@ test('controllerLogDocId is deterministic, uid-prefixed, and path-safe', () => {
 test('isDoseWindow flags windows where either pump ran', () => {
   const ws = parseHannaCsv(csv()).windows;
   assert.deepEqual(ws.filter(isDoseWindow).map((w) => w.rec), [1, 7]);
+});
+
+test('summariseSafetyWarnings reports the most extreme low/high pH and ORP windows', () => {
+  const ws = parseHannaCsv(csv([
+    '2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.45,7.52,715,719,29.8,31.4,0,0,0,0',
+    '8,2026-10-14 20:12:06,2026-10-14 20:57:06,6.9,7.4,300,700,29,30,0,0,0,0',
+    '9,2026-10-14 21:12:07,2026-10-14 21:57:07,6.5,7.4,233,700,29,30,0,0,0,0',
+    '10,2026-10-14 22:12:07,2026-10-14 22:57:08,7.4,7.5,700,820,29,30,0,0,0,0',
+  ])).windows;
+  const out = summariseSafetyWarnings(ws);
+  assert.equal(out.affectedWindows, 3);
+  assert.deepEqual(out.worst.map((x) => [x.field, x.end, x.value, x.window.rec]), [
+    ['ph', 'min', 6.5, 9],
+    ['sanitisationMv', 'min', 233, 9],
+    ['sanitisationMv', 'max', 820, 10],
+  ]);
+  assert.match(out.worst[0].message, /Very low pH/);
+  assert.match(out.worst[2].message, /Verify before swimming/);
+});
+
+test('summariseSafetyWarnings flags a pH just under the 7.2 target from the real export', () => {
+  const out = summariseSafetyWarnings(parseHannaCsv(csv()).windows);
+  assert.equal(out.affectedWindows, 1);
+  assert.deepEqual(out.worst.map((x) => [x.field, x.end, x.value, x.window.rec]), [['ph', 'min', 7.18, 7]]);
+  assert.match(out.worst[0].message, /Below the 7.2/);
+});
+
+test('summariseSafetyWarnings is empty when pH and ORP are in range', () => {
+  const ws = parseHannaCsv(csv(['2,2026-10-14 14:09:17,2026-10-14 14:56:15,7.45,7.52,715,719,29.8,31.4,0,0,0,0'])).windows;
+  assert.deepEqual(summariseSafetyWarnings(ws), { affectedWindows: 0, worst: [] });
 });
