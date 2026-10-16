@@ -41,6 +41,7 @@ src/
     lsi.ts                  calculateLSI() — shared Langelier Saturation Index logic
     aiProtocol.ts           AI maintenance protocol request + system prompt, shared by dashboard card and assistant
     dashboardSummary.ts     Pure derivations behind dashboard surfaces (sync pill, trend glyphs, tile copy, agent activity)
+    hannaCsv.ts             parseHannaCsv() — zero-trust parser for Hanna BL-series controller CSV exports + controllerLogDocId()
   components/
     Dashboard.tsx           Home tab: sync pill, alerts, LSI hero, telemetry cards, AI protocol card, Operations tiles, agents row
     TabBar.tsx              Persistent bottom nav: Home · Readings · Tasks · Supplies · More
@@ -54,6 +55,7 @@ src/
     TrendCharts.tsx         7-day trend charts (Recharts)
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
+    ControllerImport.tsx    More → Import Controller Data: upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
   sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
   serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
 api/
@@ -104,6 +106,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
+- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent. Deliberately separate from `readings`: a window is a range, not a point measurement, and nothing reads it yet (no dashboard, trends, or AI prompt use). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
 - `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
