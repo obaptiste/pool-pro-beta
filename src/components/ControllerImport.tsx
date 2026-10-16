@@ -5,7 +5,7 @@ import { collection, doc, getDocsFromServer, query, Timestamp, where, writeBatch
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useModalFocus } from '../lib/useModalFocus';
 import { useToast } from '../lib/toast';
-import { controllerLogDocId, HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, summariseSafetyWarnings } from '../lib/hannaCsv';
+import { HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, summariseSafetyWarnings, windowDocId } from '../lib/hannaCsv';
 
 interface Props {
   isOpen: boolean;
@@ -85,7 +85,7 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
     const { data, existing } = phase;
     const importedAt = Timestamp.now();
     const fresh = data.windows
-      .map((w) => ({ w, id: controllerLogDocId(uid, data.deviceId, w.startLocal) }))
+      .map((w) => ({ w, id: windowDocId(uid, data.deviceId, w) }))
       .filter(({ id }) => !existing.has(id));
     // Field set must match isValidControllerLog in firestore.rules exactly.
     const toDoc = (w: HannaWindow, id: string) => ({
@@ -231,7 +231,7 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
                     Back
                   </button>
                   {(() => {
-                    const fresh = phase.data.windows.filter((w) => !phase.existing.has(controllerLogDocId(uid, phase.data.deviceId, w.startLocal))).length;
+                    const fresh = phase.data.windows.filter((w) => !phase.existing.has(windowDocId(uid, phase.data.deviceId, w))).length;
                     return (
                       <button
                         onClick={handleImport}
@@ -264,13 +264,14 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
   const { data, existing, file } = phase;
   const first = data.windows[0].start;
   const last = data.windows[data.windows.length - 1].end;
-  const already = data.windows.filter((w) => existing.has(controllerLogDocId(uid, data.deviceId, w.startLocal))).length;
+  const already = data.windows.filter((w) => existing.has(windowDocId(uid, data.deviceId, w))).length;
   const hours = (last.getTime() - first.getTime()) / 3_600_000;
   const requested = data.requestedStart && data.requestedEnd
     ? (new Date(data.requestedEnd.replace(' ', 'T')).getTime() - new Date(data.requestedStart.replace(' ', 'T')).getTime()) / 3_600_000
     : NaN;
   // Flag when the file holds far less than the header's period (e.g. 44 h of a 3-month export).
   const safety = summariseSafetyWarnings(data.windows);
+  const serious = safety.worst.some((x) => x.level === 'warning');
   const shortfall = Number.isFinite(requested) && requested > 0 && hours < requested * 0.5;
 
   const rows: [string, string][] = [
@@ -295,10 +296,10 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
         ))}
       </dl>
       {safety.worst.length > 0 && (
-        <div className="rounded-xl border border-critical/50 bg-critical/5 p-3 space-y-2 text-xs text-ink" role="alert">
+        <div className={`rounded-xl border p-3 space-y-2 text-xs text-ink ${serious ? 'border-critical/50 bg-critical/5' : 'border-warning/40 bg-warning/5'}`} role="alert">
           <div className="flex gap-2 items-start font-bold">
-            <AlertTriangle size={14} className="text-critical shrink-0 mt-0.5" />
-            <span>{safety.affectedWindows} of {data.windows.length} windows have pH or ORP outside the safe range</span>
+            <AlertTriangle size={14} className={`${serious ? 'text-critical' : 'text-warning'} shrink-0 mt-0.5`} />
+            <span>{safety.affectedWindows} of {data.windows.length} windows have pH or ORP {serious ? 'outside the safe range' : 'above the target range'}</span>
           </div>
           <ul className="space-y-1.5 pl-6">
             {safety.worst.map((x) => (

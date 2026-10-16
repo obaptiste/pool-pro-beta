@@ -17,6 +17,12 @@ import { getImpossibleValueError, getSoftWarning, ORP_ACTION_ALERT_MV, type Nume
 
 export interface HannaWindow {
   rec: number;
+  /**
+   * 1 normally; 2 for the second window in one file with the same local
+   * start time, which happens when clocks go back and an hour repeats.
+   * Part of the doc id so the two never overwrite each other.
+   */
+  occurrence: number;
   /** Raw "YYYY-MM-DD HH:MM:SS" from the file. Controller local time, no offset. */
   startLocal: string;
   endLocal: string;
@@ -128,6 +134,21 @@ export function parseLocalDateTime(s: string): Date | null {
   return d;
 }
 
+const sameLocalTime = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate() &&
+  a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes() && a.getSeconds() === b.getSeconds();
+
+/**
+ * When clocks go back, a local time like 01:30 happens twice and the Date
+ * constructor always picks the first. For the repeat, use the second
+ * instant: an hour later that still reads as the same local time. Outside
+ * a repeated hour the shifted time reads differently, so it's left alone.
+ */
+function laterInstantOfRepeatedTime(d: Date): Date {
+  const later = new Date(d.getTime() + 3_600_000);
+  return sameLocalTime(later, d) ? later : d;
+}
+
 export function parseHannaCsv(text: string): HannaExport {
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).map((l) => l.replace(/[\t ]+$/, ''));
   if (lines.every((l) => l.trim() === '')) throw new HannaCsvError('The file is empty.');
@@ -166,6 +187,7 @@ export function parseHannaCsv(text: string): HannaExport {
   const windows: HannaWindow[] = [];
   const invalidRows: number[] = [];
   let emptyRows = 0;
+  const startsSeen = new Map<string, number>();
   for (const line of lines.slice(headerIdx + 1)) {
     if (line.trim() === '') continue;
     const cells = splitCsvLine(line);
@@ -186,11 +208,17 @@ export function parseHannaCsv(text: string): HannaExport {
 
     const startLocal = (cells[col.start] ?? '').trim();
     const endLocal = (cells[col.end] ?? '').trim();
-    const start = parseLocalDateTime(startLocal);
-    const end = parseLocalDateTime(endLocal);
+    let start = parseLocalDateTime(startLocal);
+    let end = parseLocalDateTime(endLocal);
+    const occurrence = (startsSeen.get(startLocal) ?? 0) + 1;
+    if (start && end && occurrence > 1) {
+      start = laterInstantOfRepeatedTime(start);
+      end = laterInstantOfRepeatedTime(end);
+    }
     if (!start || !end || end < start) { invalidRows.push(rec); continue; }
+    startsSeen.set(startLocal, occurrence);
 
-    windows.push({ rec, startLocal, endLocal, start, end, ...values });
+    windows.push({ rec, occurrence, startLocal, endLocal, start, end, ...values });
   }
 
   windows.sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -212,21 +240,31 @@ export function parseHannaCsv(text: string): HannaExport {
  * the raw local timestamp, not the parsed instant, so a re-import from a
  * browser in another time zone still lands on the same document. Prefixed
  * with the owner's uid: firestore.rules requires that on create, so another
- * account can't pre-claim one of these ids.
+ * account can't pre-claim one of these ids. A repeated local start time
+ * (clocks going back) gets an "_2" suffix so it doesn't overwrite the first.
  */
-export function controllerLogDocId(uid: string, deviceId: string, startLocal: string): string {
+export function controllerLogDocId(uid: string, deviceId: string, startLocal: string, occurrence = 1): string {
   const device = deviceId.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 64);
   const stamp = startLocal.replace(/[-:]/g, '').replace(' ', 'T');
-  return `${uid}_${device}_${stamp}`;
+  return `${uid}_${device}_${stamp}${occurrence > 1 ? `_${occurrence}` : ''}`;
 }
+
+export const windowDocId = (uid: string, deviceId: string, w: Pick<HannaWindow, 'startLocal' | 'occurrence'>) =>
+  controllerLogDocId(uid, deviceId, w.startLocal, w.occurrence);
 
 /** Windows where either pump ran, for the import preview. */
 export const isDoseWindow = (w: HannaWindow) => (w.acidBaseMaxMl ?? 0) > 0 || (w.chlorineMaxMl ?? 0) > 0;
 
+// AGENTS.md's typical pH target is 7.2–7.6. DEFAULT_RANGES.ph runs to 7.8
+// (the "warn above" line), so 7.6–7.8 is flagged here as a softer watch.
+const PH_TYPICAL_MAX = 7.6;
+
 export interface WindowSafetyWarning {
   field: 'ph' | 'sanitisationMv';
-  /** Which end of the window's range tripped it. */
+  /** 'min' for a too-low value (shown as "Lowest"), 'max' for a too-high one ("Highest"). */
   end: 'min' | 'max';
+  /** 'watch': outside the typical target but not yet a warning (pH 7.6–7.8). */
+  level: 'watch' | 'warning';
   value: number;
   window: HannaWindow;
   message: string;
@@ -235,22 +273,28 @@ export interface WindowSafetyWarning {
 /**
  * pH/ORP warnings for an export, so the import preview can show dangerous
  * values before they're saved. AGENTS.md: warn clearly, never block the
- * save. Uses the app's own thresholds (DEFAULT_RANGES.ph; getSoftWarning's
- * ORP warning tier plus ORP_ACTION_ALERT_MV's "verify before swimming" line), and reports only
+ * save. pH follows AGENTS.md: typical target 7.2–7.6, warn below 7.0 and
+ * above 7.8 (DEFAULT_RANGES.ph's ends). ORP uses getSoftWarning's warning
+ * tier plus ORP_ACTION_ALERT_MV's "verify before swimming" line. Reports only
  * the most extreme window per field and direction to keep the list short.
  */
 export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindows: number; worst: WindowSafetyWarning[] } {
   const affected = new Set<HannaWindow>();
   const worst = new Map<string, WindowSafetyWarning>();
-  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], end: 'min' | 'max', value: number | null) => {
+  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], column: 'min' | 'max', value: number | null, other: number | null) => {
     if (value == null) return;
     let message: string | null = null;
+    let level: WindowSafetyWarning['level'] = 'warning';
     if (field === 'ph') {
       // getSoftWarning's pH text is written for the manual form, so word it for a log here (AGENTS.md pH rules).
       const { min, max } = DEFAULT_RANGES.ph;
       if (value < 7.0) message = 'Very low pH (acidic). Retest before any heavy dosing.';
-      else if (value < min) message = `Below the ${min}–${max} target. Retest to confirm.`;
+      else if (value < min) message = `Below the ${min}–${PH_TYPICAL_MAX} target. Retest to confirm.`;
       else if (value > max) message = `High pH, likely to reduce chlorine effectiveness. Retest before dosing.`;
+      else if (value > PH_TYPICAL_MAX) {
+        level = 'watch';
+        message = `Above the ${min}–${PH_TYPICAL_MAX} target. Chlorine works less well as pH rises, so retest and correct before it climbs further.`;
+      }
     } else {
       const soft = getSoftWarning(field, value);
       if (soft?.level === 'warning') message = soft.message;
@@ -259,18 +303,25 @@ export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindo
       }
     }
     if (!message) return;
+    // A too-low value is normally reported from a window's min and a too-high
+    // one from its max, so a steady 7.70–7.70 window is "highest pH 7.70",
+    // not also "lowest". Only when that other end exists, though: with the
+    // max missing, a high min is the only evidence and must still show.
+    const tooLow = field === 'ph' ? value < DEFAULT_RANGES.ph.min : value < DEFAULT_RANGES.sanitisationMv.min;
+    if ((column === 'min') !== tooLow && other != null) return;
+    const end = tooLow ? 'min' : 'max';
     affected.add(w);
     const key = `${field}:${end}`;
     const prev = worst.get(key);
     if (!prev || (end === 'min' ? value < prev.value : value > prev.value)) {
-      worst.set(key, { field, end, value, window: w, message });
+      worst.set(key, { field, end, level, value, window: w, message });
     }
   };
   for (const w of windows) {
-    consider(w, 'ph', 'min', w.phMin);
-    consider(w, 'ph', 'max', w.phMax);
-    consider(w, 'sanitisationMv', 'min', w.orpMinMv);
-    consider(w, 'sanitisationMv', 'max', w.orpMaxMv);
+    consider(w, 'ph', 'min', w.phMin, w.phMax);
+    consider(w, 'ph', 'max', w.phMax, w.phMin);
+    consider(w, 'sanitisationMv', 'min', w.orpMinMv, w.orpMaxMv);
+    consider(w, 'sanitisationMv', 'max', w.orpMaxMv, w.orpMinMv);
   }
   // A low and a high from the same window and field would both be listed; that's real (a big swing) and worth seeing.
   const order = ['ph:min', 'ph:max', 'sanitisationMv:min', 'sanitisationMv:max'];
