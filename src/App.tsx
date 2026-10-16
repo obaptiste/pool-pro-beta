@@ -19,6 +19,7 @@ import Equipment from './components/Equipment';
 import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
 import WorkTracker from './components/WorkTracker';
+import ControllerImport from './components/ControllerImport';
 import { useModalFocus } from './lib/useModalFocus';
 import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, storage, signIn, logout, handleFirestoreError, OperationType } from './firebase';
@@ -143,6 +144,7 @@ export default function App() {
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
+  const [isControllerImportOpen, setIsControllerImportOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
@@ -1118,6 +1120,7 @@ export default function App() {
         onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
         onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
         onOpenAgents={() => selectTab('readings')}
+        onOpenControllerImport={() => setIsControllerImportOpen(true)}
         onTemplateUpload={handleTemplateUpload}
         onExport={exportToCSV}
         onPrint={() => window.print()}
@@ -1150,6 +1153,14 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {user && (
+        <ControllerImport
+          isOpen={isControllerImportOpen}
+          onClose={() => setIsControllerImportOpen(false)}
+          uid={user.uid}
+        />
+      )}
 
       <ReminderSettings 
         isOpen={isReminderSettingsOpen}
