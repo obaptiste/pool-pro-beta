@@ -210,3 +210,17 @@ test('windowDocId keeps the original id for a normal window', () => {
   const w = parseHannaCsv(csv()).windows[0];
   assert.equal(windowDocId('uid1', 'BL122_7AC443', w), controllerLogDocId('uid1', 'BL122_7AC443', w.startLocal));
 });
+
+test('summariseSafetyWarnings still warns when only the opposite end of a range was recorded', () => {
+  const out = summariseSafetyWarnings(parseHannaCsv(csv([
+    '2,2026-10-14 14:09:17,2026-10-14 14:56:15,8.2,--,900,--,29.8,31.4,0,0,0,0',
+    '3,2026-10-14 15:09:17,2026-10-14 15:56:15,--,6.8,--,600,29.8,31.4,0,0,0,0',
+  ])).windows);
+  assert.equal(out.affectedWindows, 2);
+  assert.deepEqual(out.worst.map((x) => [x.field, x.end, x.value, x.window.rec]), [
+    ['ph', 'min', 6.8, 3],
+    ['ph', 'max', 8.2, 2],
+    ['sanitisationMv', 'min', 600, 3],
+    ['sanitisationMv', 'max', 900, 2],
+  ]);
+});

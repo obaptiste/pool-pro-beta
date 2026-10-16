@@ -261,7 +261,7 @@ const PH_TYPICAL_MAX = 7.6;
 
 export interface WindowSafetyWarning {
   field: 'ph' | 'sanitisationMv';
-  /** Which end of the window's range tripped it. */
+  /** 'min' for a too-low value (shown as "Lowest"), 'max' for a too-high one ("Highest"). */
   end: 'min' | 'max';
   /** 'watch': outside the typical target but not yet a warning (pH 7.6–7.8). */
   level: 'watch' | 'warning';
@@ -281,7 +281,7 @@ export interface WindowSafetyWarning {
 export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindows: number; worst: WindowSafetyWarning[] } {
   const affected = new Set<HannaWindow>();
   const worst = new Map<string, WindowSafetyWarning>();
-  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], end: 'min' | 'max', value: number | null) => {
+  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], column: 'min' | 'max', value: number | null, other: number | null) => {
     if (value == null) return;
     let message: string | null = null;
     let level: WindowSafetyWarning['level'] = 'warning';
@@ -303,10 +303,13 @@ export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindo
       }
     }
     if (!message) return;
-    // A too-low value is reported from a window's min, a too-high one from
-    // its max: a steady 7.70–7.70 window is "highest pH 7.70", not also "lowest".
+    // A too-low value is normally reported from a window's min and a too-high
+    // one from its max, so a steady 7.70–7.70 window is "highest pH 7.70",
+    // not also "lowest". Only when that other end exists, though: with the
+    // max missing, a high min is the only evidence and must still show.
     const tooLow = field === 'ph' ? value < DEFAULT_RANGES.ph.min : value < DEFAULT_RANGES.sanitisationMv.min;
-    if ((end === 'min') !== tooLow) return;
+    if ((column === 'min') !== tooLow && other != null) return;
+    const end = tooLow ? 'min' : 'max';
     affected.add(w);
     const key = `${field}:${end}`;
     const prev = worst.get(key);
@@ -315,10 +318,10 @@ export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindo
     }
   };
   for (const w of windows) {
-    consider(w, 'ph', 'min', w.phMin);
-    consider(w, 'ph', 'max', w.phMax);
-    consider(w, 'sanitisationMv', 'min', w.orpMinMv);
-    consider(w, 'sanitisationMv', 'max', w.orpMaxMv);
+    consider(w, 'ph', 'min', w.phMin, w.phMax);
+    consider(w, 'ph', 'max', w.phMax, w.phMin);
+    consider(w, 'sanitisationMv', 'min', w.orpMinMv, w.orpMaxMv);
+    consider(w, 'sanitisationMv', 'max', w.orpMaxMv, w.orpMinMv);
   }
   // A low and a high from the same window and field would both be listed; that's real (a big swing) and worth seeing.
   const order = ['ph:min', 'ph:max', 'sanitisationMv:min', 'sanitisationMv:max'];
