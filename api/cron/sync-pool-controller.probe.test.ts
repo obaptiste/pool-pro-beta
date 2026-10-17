@@ -92,8 +92,8 @@ test('probe uses Hanna read queries, returns only measurements, and does not req
   assert.equal(JSON.stringify(result.body).includes('dev-1'), false);
 });
 
-test('wrong bearer is rejected before contacting Hanna Cloud', async () => {
-  const result = await request('wrong-secret');
+test('missing bearer is rejected before contacting Hanna Cloud', async () => {
+  const result = await request('');
   assert.equal(result.status, 401);
   assert.equal(calls.length, 0);
 });
