@@ -41,7 +41,8 @@ src/
     lsi.ts                  calculateLSI() — shared Langelier Saturation Index logic
     aiProtocol.ts           AI maintenance protocol request + system prompt, shared by dashboard card and assistant
     dashboardSummary.ts     Pure derivations behind dashboard surfaces (sync pill, trend glyphs, tile copy, agent activity)
-    hannaCsv.ts             parseHannaCsv() — zero-trust parser for Hanna BL-series controller CSV exports + controllerLogDocId()
+    hannaCsv.ts             parseHannaCsv() — zero-trust parser for Hanna BL-series controller CSV exports + controllerLogDocId(); controllerValueWarning() grades pH/ORP for both the import preview and the log view
+    controllerLog.ts        Pure helpers behind the controller log views (doc mapping, range filter anchored to the latest window, gaps, grading)
   components/
     Dashboard.tsx           Home tab: sync pill, alerts, LSI hero, telemetry cards, AI protocol card, Operations tiles, agents row
     TabBar.tsx              Persistent bottom nav: Home · Readings · Tasks · Supplies · More
@@ -56,6 +57,9 @@ src/
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
     ControllerImport.tsx    More → Import Controller Data: upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
+    ControllerLogView.tsx   More → Controller Log (and the Home card): min–max band chart per window for pH/ORP/temp, dose strip, dose events
+    ControllerLogCard.tsx   Home card summarising the latest 24 imported windows — history, not status (no Good/Watch chips)
+    ControllerCharts.tsx    Custom SVG band chart + dose strip shared by the view and the card
   sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
   serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
 api/
@@ -106,7 +110,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
-- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and nothing reads it yet (no dashboard, trends, or AI prompt use). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
+- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and only the controller log views read it (ControllerLogView, the Home ControllerLogCard) — never alerts, LSI, readings, trends, or AI prompts, since imported windows can be days old. App.tsx's listener is equality-only (`where uid ==`, sorted client-side) to avoid needing a composite index, and is unbounded like `readings` (known issue #15). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
 - `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
@@ -306,7 +310,7 @@ low ORP from an auto-synced reading doesn't pass through silently.
 | 12 | `types.ts:57–59` | `DEFAULT_EQUIPMENT` uses `new Date()` at module load — all default items get same install date | Known — only affects first-login seed data |
 | 13 | `api/_lib/aiFallback.ts` | CodeQL `js/system-prompt-injection`: `/api/ai/fallback` builds each provider's system message from the request body's `systemInstruction` | Fixed — framed as caller-supplied configuration rather than raw authority (see comment above `framedSystemInstruction`); the endpoint is an intentional generic completion proxy where the caller already controls the whole request and nothing server-side acts on the output, so there's no privilege boundary being crossed today, but framing costs nothing |
 | 14 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
-| 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix |
+| 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix. The `controllerLogs` listener has the same shape (~24 docs/day per imported controller) |
 | 16 | `api/_lib/mcp/server.ts`'s four write-tool `registerTool` calls | Wrapped in `if (canWrite) { ... }` without re-indenting their contents | Known — intentional; those tools' `description` fields are multi-line template-literal strings sent verbatim to MCP clients, so a blanket re-indent of the block would have added leading whitespace to the *visible tool-description text*, not just the source code (caught and reverted during development) |
 
 ## Agent Instructions
