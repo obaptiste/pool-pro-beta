@@ -20,8 +20,10 @@ import Wishlist from './components/Wishlist';
 import WeeklyReport from './components/WeeklyReport';
 import WorkTracker from './components/WorkTracker';
 import ControllerImport from './components/ControllerImport';
+import ControllerLogView from './components/ControllerLogView';
+import { controllerLogFromDoc } from './lib/controllerLog';
 import { useModalFocus } from './lib/useModalFocus';
-import { Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
+import { ControllerLogWindow, Reading, MaintenanceTask, MaintenanceSchedule, Frequency, InventoryItem, EquipmentItem, WishlistItem, WorkSession } from './types';
 import { auth, db, storage, signIn, logout, handleFirestoreError, OperationType } from './firebase';
 import { deleteObject, ref as storageRef } from 'firebase/storage';
 import { useToast } from './lib/toast';
@@ -145,6 +147,8 @@ export default function App() {
   const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
   const [isControllerImportOpen, setIsControllerImportOpen] = useState(false);
+  const [isControllerLogOpen, setIsControllerLogOpen] = useState(false);
+  const [controllerWindows, setControllerWindows] = useState<ControllerLogWindow[]>([]);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
@@ -208,6 +212,7 @@ export default function App() {
       setEquipment([]);
       setWishlist([]);
       setWorkSessions([]);
+      setControllerWindows([]);
       return;
     }
 
@@ -217,6 +222,11 @@ export default function App() {
     const equipmentQuery = query(collection(db, 'equipment'), where('uid', '==', user.uid));
     const wishlistQuery = query(collection(db, 'wishlist'), where('uid', '==', user.uid));
     const sessionsQuery = query(collection(db, 'workSessions'), where('uid', '==', user.uid), orderBy('startTime', 'desc'));
+    // Equality-only on purpose: an orderBy would need a composite index, and
+    // this repo has no firestore.indexes.json (the existing ones were made in
+    // the console). Sorted client-side by controllerLog.ts. Unbounded, like
+    // readings (see CLAUDE.md known issue #15).
+    const controllerLogsQuery = query(collection(db, 'controllerLogs'), where('uid', '==', user.uid));
     const scheduleDoc = doc(db, 'schedules', user.uid);
 
     const unsubReadings = onSnapshot(readingsQuery, (snapshot) => {
@@ -346,6 +356,10 @@ export default function App() {
       }
     }, (err) => handleFirestoreError(err, OperationType.GET, `schedules/${user.uid}`));
 
+    const unsubControllerLogs = onSnapshot(controllerLogsQuery, (snapshot) => {
+      setControllerWindows(snapshot.docs.map((d) => controllerLogFromDoc(d.data())));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'controllerLogs'));
+
     return () => {
       unsubReadings();
       unsubTasks();
@@ -354,6 +368,7 @@ export default function App() {
       unsubWishlist();
       unsubSessions();
       unsubSchedule();
+      unsubControllerLogs();
     };
   }, [user]);
 
@@ -818,14 +833,26 @@ export default function App() {
     }
   };
 
-  const handleUpdateInventory = async (item: InventoryItem) => {
+  const handleAddInventory = async (item: InventoryItem) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'inventory', item.id), { ...item, uid: user.uid });
-      markSaved(`Saved ${item.name}`);
+      markSaved(`Added ${item.name}`);
     } catch (err) {
-      toast.error(`Could not save ${item.name}`);
+      toast.error(`Could not add ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `inventory/${item.id}`);
+    }
+  };
+
+  // Firestore only accepts quantity changes on existing inventory items
+  // (see firestore.rules), so this is the one write path for stock counts.
+  const handleAdjustInventoryQuantity = async (id: string, quantity: number) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'inventory', id), { quantity });
+    } catch (err) {
+      toast.error('Could not update stock');
+      handleFirestoreError(err, OperationType.WRITE, `inventory/${id}`);
     }
   };
 
@@ -842,16 +869,6 @@ export default function App() {
     } catch (err) {
       toast.error(`Could not save ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `equipment/${item.id}`);
-    }
-  };
-
-  const handleDeleteInventory = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'inventory', id));
-      markSaved('Inventory item removed');
-    } catch (err) {
-      toast.error('Could not remove inventory item');
-      handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
     }
   };
 
@@ -1023,6 +1040,7 @@ export default function App() {
     setIsInventoryOpen(false);
     setIsMoreOpen(false);
     setTrendsView(null);
+    setIsControllerLogOpen(false);
   };
 
   const activeTab: Tab = isMoreOpen ? 'more' : isHistoryOpen ? 'readings' : isTasksOpen ? 'tasks' : isInventoryOpen ? 'supplies' : 'home';
@@ -1043,6 +1061,11 @@ export default function App() {
   const openTrends = (focusMetric?: TrendMetricKey) => {
     closeTabViews();
     setTrendsView({ focusMetric });
+  };
+
+  const openControllerLog = () => {
+    closeTabViews();
+    setIsControllerLogOpen(true);
   };
 
   const openAssistant = (mode: AssistantOpenMode) => setAssistantMode(mode);
@@ -1119,6 +1142,8 @@ export default function App() {
           onOpenAssistant={openAssistant}
           onSyncPoolController={handleSyncPoolController}
           onProbePoolController={handleProbePoolController}
+          controllerWindows={controllerWindows}
+          onOpenControllerLog={openControllerLog}
         />
       </main>
 
@@ -1137,6 +1162,7 @@ export default function App() {
         onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
         onOpenAgents={() => selectTab('readings')}
         onOpenControllerImport={() => setIsControllerImportOpen(true)}
+        onOpenControllerLog={openControllerLog}
         onTemplateUpload={handleTemplateUpload}
         onExport={exportToCSV}
         onPrint={() => window.print()}
@@ -1189,8 +1215,8 @@ export default function App() {
         isOpen={isInventoryOpen}
         onClose={() => setIsInventoryOpen(false)}
         items={inventory}
-        onUpdateItem={handleUpdateInventory}
-        onDeleteItem={handleDeleteInventory}
+        onAddItem={handleAddInventory}
+        onAdjustQuantity={handleAdjustInventoryQuantity}
       />
 
       <Equipment
@@ -1216,6 +1242,14 @@ export default function App() {
             toggleTask={toggleTask}
             onAddTask={handleAddTask}
             onBack={() => setIsTasksOpen(false)}
+          />
+        )}
+
+        {isControllerLogOpen && (
+          <ControllerLogView
+            windows={controllerWindows}
+            onImport={() => setIsControllerImportOpen(true)}
+            onBack={() => setIsControllerLogOpen(false)}
           />
         )}
 

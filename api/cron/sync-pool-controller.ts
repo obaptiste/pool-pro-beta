@@ -27,7 +27,17 @@ import { syncLatestReading } from '../_lib/poolControllers/sync.js';
 interface VercelLikeRequest {
   headers?: Record<string, string | string[] | undefined>;
   method?: string;
-  query?: Record<string, string | string[] | undefined>;
+  // Deliberately `unknown` values rather than `string | string[]`: this
+  // handler has two callers with different query shapes. Vercel supplies
+  // strings and string arrays, but server.ts hands it an Express `Request`,
+  // whose `query` is qs's `ParsedQs` — values there can also be nested
+  // objects or arrays of them, which `string | string[]` rejects outright
+  // (a type error only visible once both sides are on the same branch).
+  // Widening costs nothing here: the single reader below compares `mode`
+  // against the one literal it accepts and 400s on everything else, so an
+  // array, an object or a nested qs structure all fail closed exactly as a
+  // mistyped string does.
+  query?: Record<string, unknown>;
 }
 
 interface VercelLikeResponse {

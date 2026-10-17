@@ -337,12 +337,12 @@ describe('MCP tools', () => {
     assert.equal(out.reading.fieldStatus.sanitisationMv, 'warning'); // 800 mV is the "elevated, usually acceptable" band, not critical
     assert.equal(
       (out.reading as unknown as { fieldWarnings: Record<string, string> }).fieldWarnings.sanitisationMv,
-      'High ORP (750–850 mV), usually acceptable depending on context.',
+      'High ORP (750–800 mV), usually acceptable depending on context.',
     );
     const text = (result.content as { type: string; text: string }[])[0].text;
     assert.match(text, /Combined chlorine: 2\.0 ppm \(critical\)/);
     assert.match(text, /smells of chloramine/);
-    assert.match(text, /ORP \/ sanitisation: 800 mV \(warning\) — High ORP \(750–850 mV\), usually acceptable depending on context\./);
+    assert.match(text, /ORP \/ sanitisation: 800 mV \(warning\) — High ORP \(750–800 mV\), usually acceptable depending on context\./);
     await client.close();
   });
 
@@ -370,10 +370,11 @@ describe('MCP tools', () => {
   });
 
   it('get_latest_reading escalates a dangerously high ORP reading to critical, not just warning', async () => {
-    // 800 mV (tested elsewhere) sits in the 750-850 mV "elevated, usually
-    // acceptable" band and stays 'warning'; above 850 mV is a real
-    // actionable extreme, matching classifyOrp/Dashboard's own high-side
-    // critical tier (src/lib/readings.ts) rather than the softer band.
+    // 800 mV (tested elsewhere) sits in the 750-800 mV "elevated, usually
+    // acceptable" band and stays 'warning'; above 800 mV (AGENTS.md's verify-
+    // before-swimming line) is a real actionable extreme, matching
+    // classifyOrp/Dashboard's own high-side critical tier (src/lib/readings.ts)
+    // rather than the softer band.
     const source: PoolDataSource = {
       async listReadings() { return [reading('high-orp', 0, { sanitisationMv: 900 })]; },
       async listTasks() { return []; },
@@ -386,7 +387,7 @@ describe('MCP tools', () => {
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
     const out = structured<{ reading: { fieldStatus: Record<string, string>; fieldWarnings: Record<string, string> } }>(result);
     assert.equal(out.reading.fieldStatus.sanitisationMv, 'critical');
-    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too high (>850 mV).');
+    assert.equal(out.reading.fieldWarnings.sanitisationMv, 'Sanitisation may be too high (>800 mV) — verify before swimming or adding more chlorine.');
     await client.close();
     close();
   });
@@ -994,6 +995,18 @@ describe('MCP write tools', () => {
     });
     assert.equal(result.isError, true);
     assert.match((result.content as { type: string; text: string }[])[0].text, /implausibly far in the future/);
+    await client.close();
+    close();
+  });
+
+  it('log_reading rejects a timestamp with no timezone offset, at the schema level, before any upload', async () => {
+    const { client, close } = await connectToSource(createWritableMemorySource());
+    const result = await client.callTool({
+      name: 'poolstatus_log_reading',
+      arguments: { photo: samplePhoto, ph: 7.4, timestamp: '2026-09-01T08:00:00' },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as { type: string; text: string }[])[0].text, /explicit timezone offset/);
     await client.close();
     close();
   });

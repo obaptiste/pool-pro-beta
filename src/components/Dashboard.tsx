@@ -19,7 +19,8 @@ import {
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE } from '../types';
+import { Reading, MaintenanceTask, DEFAULT_RANGES, Status, MaintenanceSchedule, InventoryItem, EquipmentItem, POOL_PROFILE, ControllerLogWindow } from '../types';
+import ControllerLogCard from './ControllerLogCard';
 import { calculateLSI, getLsiStatus } from '../lib/lsi';
 import { getLatestReadingForDisplay, getMostRecentOrp, formatAge, isOrpStale, classifyOrp, isAutoSyncBoilerplateNote } from '../lib/readings';
 import { NumericReadingField, combinedChlorineOf, getCombinedChlorineStatus, COMBINED_CHLORINE_MAX, COMBINED_CHLORINE_OK_MAX, ORP_ACTION_ALERT_MV } from '../lib/readingValidation';
@@ -70,6 +71,9 @@ interface Props {
     outcome: string;
     reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null;
   }>;
+  /** Imported controller windows (controllerLogs); the home card only renders when there are some. */
+  controllerWindows: ControllerLogWindow[];
+  onOpenControllerLog: () => void;
 }
 
 // Status tints from the design tokens: text at the -400 Tailwind stop,
@@ -95,6 +99,7 @@ export default function Dashboard({
   protocol, protocolState, onRequestProtocol, onExecuteProtocol,
   onLogReading, onViewHistory, onOpenTrends, onOpenTasks, onOpenEquipment, onOpenInventory, onOpenWeeklyReport,
   onOpenReminderSettings, onOpenAssistant, onSyncPoolController, onProbePoolController,
+  controllerWindows, onOpenControllerLog,
 }: Props) {
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   // ORP staleness and the sync pill's age are judged against wall-clock
@@ -246,7 +251,7 @@ export default function Dashboard({
     // effectiveness, not a chlorine ppm value, so an ORP-only alert must send
     // the operator to actually test chlorine rather than dose blind.
     // orp_high keys off ORP_ACTION_ALERT_MV (800 mV, AGENTS.md's own literal
-    // "verify before swimming" line), not classifyOrp's 850 mV ceiling.
+    // "verify before swimming" line), which is also classifyOrp's critical line.
     {
       id: 'orp_low',
       condition: recentOrp != null && recentOrp.value < DEFAULT_RANGES.sanitisationMv.min,
@@ -530,7 +535,7 @@ export default function Dashboard({
                   <TelemetryCard
                     label="ORP" field="sanitisationMv" unit="mV"
                     value={recentOrp?.value ?? null} decimals={0}
-                    // ORP has its own three-tier band (650/750/850 mV, see
+                    // ORP has its own three-tier band (650/750/800 mV, see
                     // classifyOrp) rather than the generic 10 % buffer, and the
                     // ideal shown is DEFAULT_RANGES' 650–750 per AGENTS.md — not
                     // the 700–780 the design mock-up happened to use.
@@ -607,6 +612,12 @@ export default function Dashboard({
               </motion.section>
 
             </div>
+
+            {controllerWindows.length > 0 && (
+              <motion.section {...sectionMotion(section++)} aria-label="Controller log">
+                <ControllerLogCard windows={controllerWindows} onOpen={onOpenControllerLog} className={CARD_SHADOW} />
+              </motion.section>
+            )}
 
             {/* ── Operations ──────────────────────────────────────────── */}
             <motion.section {...sectionMotion(section++)} aria-label="Operations" className="flex flex-col gap-3">

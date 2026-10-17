@@ -146,7 +146,7 @@ function isoWeekYear(d: Date): number {
 }
 
 // ORP doesn't fit the generic min/max-with-a-buffer classifier every other
-// metric below uses: it has its own three-tier band (650/750/850 mV, see
+// metric below uses: it has its own three-tier band (650/750/800 mV, see
 // classifyOrp's own doc comment) rather than a single critical ceiling.
 // Delegates to lib/readings.ts's classifyOrp (shared with Dashboard's
 // getOrpStatus and the MCP server's fieldStatus) so all three stay on one
@@ -156,8 +156,8 @@ function isoWeekYear(d: Date): number {
 // Checks min and max independently against both severity tiers, rather than
 // assuming "low" only ever comes from min and "high" only ever comes from
 // max: classifyOrp's critical tier now fires on either end (a sub-650 mV
-// low or a >850 mV high are both critical), so a range whose max alone
-// spikes above 850 mV needs to escalate too, not just one whose min drops
+// low or a >800 mV high are both critical), so a range whose max alone
+// spikes above 800 mV needs to escalate too, not just one whose min drops
 // below 650 mV.
 function classifyOrpRange(min: number, max: number): TelemetryMetric['status'] {
   const minStatus = classifyOrp(min);
