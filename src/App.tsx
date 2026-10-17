@@ -803,14 +803,26 @@ export default function App() {
     }
   };
 
-  const handleUpdateInventory = async (item: InventoryItem) => {
+  const handleAddInventory = async (item: InventoryItem) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'inventory', item.id), { ...item, uid: user.uid });
-      markSaved(`Saved ${item.name}`);
+      markSaved(`Added ${item.name}`);
     } catch (err) {
-      toast.error(`Could not save ${item.name}`);
+      toast.error(`Could not add ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `inventory/${item.id}`);
+    }
+  };
+
+  // Firestore only accepts quantity changes on existing inventory items
+  // (see firestore.rules), so this is the one write path for stock counts.
+  const handleAdjustInventoryQuantity = async (id: string, quantity: number) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'inventory', id), { quantity });
+    } catch (err) {
+      toast.error('Could not update stock');
+      handleFirestoreError(err, OperationType.WRITE, `inventory/${id}`);
     }
   };
 
@@ -827,16 +839,6 @@ export default function App() {
     } catch (err) {
       toast.error(`Could not save ${item.name}`);
       handleFirestoreError(err, OperationType.WRITE, `equipment/${item.id}`);
-    }
-  };
-
-  const handleDeleteInventory = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'inventory', id));
-      markSaved('Inventory item removed');
-    } catch (err) {
-      toast.error('Could not remove inventory item');
-      handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
     }
   };
 
@@ -1173,8 +1175,8 @@ export default function App() {
         isOpen={isInventoryOpen}
         onClose={() => setIsInventoryOpen(false)}
         items={inventory}
-        onUpdateItem={handleUpdateInventory}
-        onDeleteItem={handleDeleteInventory}
+        onAddItem={handleAddInventory}
+        onAdjustQuantity={handleAdjustInventoryQuantity}
       />
 
       <Equipment
