@@ -66,6 +66,11 @@ interface Props {
   onOpenReminderSettings: () => void;
   onOpenAssistant: (mode: AssistantOpenMode) => void;
   onSyncPoolController: () => Promise<{ written: boolean; outcome?: string }>;
+  onProbePoolController: () => Promise<{
+    written: false;
+    outcome: string;
+    reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null;
+  }>;
   /** Imported controller windows (controllerLogs); the home card only renders when there are some. */
   controllerWindows: ControllerLogWindow[];
   onOpenControllerLog: () => void;
@@ -93,7 +98,8 @@ export default function Dashboard({
   readings, readingsLoaded, tasks, schedule, inventory, equipment,
   protocol, protocolState, onRequestProtocol, onExecuteProtocol,
   onLogReading, onViewHistory, onOpenTrends, onOpenTasks, onOpenEquipment, onOpenInventory, onOpenWeeklyReport,
-  onOpenReminderSettings, onOpenAssistant, onSyncPoolController, controllerWindows, onOpenControllerLog,
+  onOpenReminderSettings, onOpenAssistant, onSyncPoolController, onProbePoolController,
+  controllerWindows, onOpenControllerLog,
 }: Props) {
   const [dismissedAlerts, setDismissedAlerts] = React.useState<string[]>([]);
   // ORP staleness and the sync pill's age are judged against wall-clock
@@ -114,6 +120,25 @@ export default function Dashboard({
   // fades back to idle so it never looks like a permanent status.
   const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
   const toast = useToast();
+  const [probePending, setProbePending] = React.useState(false);
+  const [probeResult, setProbeResult] = React.useState<{
+    outcome: string;
+    reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null;
+  } | null>(null);
+  const handleProbeClick = async () => {
+    if (probePending) return;
+    setProbePending(true);
+    setProbeResult(null);
+    try {
+      const result = await onProbePoolController();
+      setProbeResult(result);
+      if (!result.reading) toast.info('Connected, but no usable controller measurements are available');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Hanna Cloud connection test failed');
+    } finally {
+      setProbePending(false);
+    }
+  };
   const syncResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => () => {
     if (syncResetTimer.current) clearTimeout(syncResetTimer.current);
@@ -456,6 +481,27 @@ export default function Dashboard({
                   )}
                 </div>
               </motion.section>
+
+              {/* Read-only Hanna Cloud connection test: never writes a reading. */}
+              <section aria-label="Hanna Cloud connection test" className="rounded-2xl border border-border-dim bg-surface px-4 py-3 md:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className={LABEL}>Hanna Cloud · Connection test</p>
+                    <p className="text-xs text-ink-muted mt-1">Fetch latest controller measurements without saving or changing anything.</p>
+                  </div>
+                  <button type="button" onClick={handleProbeClick} disabled={probePending}
+                    className="shrink-0 rounded-lg bg-surface-2 border border-border-dim px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">
+                    {probePending ? 'Testing…' : 'Test connection'}
+                  </button>
+                </div>
+                {probeResult && (
+                  <div role="status" className="mt-3 text-xs text-ink-muted">
+                    {probeResult.reading
+                      ? `Read-only success · pH ${probeResult.reading.ph ?? '—'} · ORP ${probeResult.reading.sanitisationMv ?? '—'} mV · ${probeResult.reading.temperature ?? '—'} °C · Recorded ${new Date(probeResult.reading.recordedAt).toLocaleString()}. Nothing saved.`
+                      : 'Hanna Cloud connected, but no usable measurement was returned. Nothing saved.'}
+                  </div>
+                )}
+              </section>
 
               {/* ── Live telemetry ────────────────────────────────────── */}
               <motion.section {...sectionMotion(section++)} aria-label="Live telemetry" className="flex flex-col gap-3 md:col-span-2 md:row-start-2">

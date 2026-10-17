@@ -26,11 +26,24 @@ import { syncLatestReading } from '../_lib/poolControllers/sync.js';
 // doesn't depend on @vercel/node purely for these.
 interface VercelLikeRequest {
   headers?: Record<string, string | string[] | undefined>;
+  method?: string;
+  // Deliberately `unknown` values rather than `string | string[]`: this
+  // handler has two callers with different query shapes. Vercel supplies
+  // strings and string arrays, but server.ts hands it an Express `Request`,
+  // whose `query` is qs's `ParsedQs` — values there can also be nested
+  // objects or arrays of them, which `string | string[]` rejects outright
+  // (a type error only visible once both sides are on the same branch).
+  // Widening costs nothing here: the single reader below compares `mode`
+  // against the one literal it accepts and 400s on everything else, so an
+  // array, an object or a nested qs structure all fail closed exactly as a
+  // mistyped string does.
+  query?: Record<string, unknown>;
 }
 
 interface VercelLikeResponse {
   status(code: number): VercelLikeResponse;
   json(body: unknown): void;
+  setHeader?(name: string, value: string): void;
 }
 
 function bearerToken(req: VercelLikeRequest): string | undefined {
@@ -135,6 +148,10 @@ async function checkAuthorization(req: VercelLikeRequest): Promise<AuthResult> {
 }
 
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {
+  // Device measurements and connection errors must not be cached by shared
+  // proxies or browsers. This applies to both the probe and normal sync.
+  res.setHeader?.('Cache-Control', 'no-store');
+
   const auth = await checkAuthorization(req);
   if (!auth.authorized) {
     // Admin-SDK setup that was never finished. Same 503 shape as the unset
@@ -156,6 +173,18 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     return;
   }
 
+  // The probe is deliberately opt-in. An unknown or mistyped mode MUST
+  // fail closed rather than falling through to the Firestore-writing sync.
+  const mode = req.query?.mode;
+  if (mode !== undefined && mode !== 'probe') {
+    res.status(400).json({ error: 'Unsupported pool controller mode.' });
+    return;
+  }
+  if (mode === 'probe' && req.method !== 'POST') {
+    res.status(405).json({ error: 'Connection probes require POST.' });
+    return;
+  }
+
   const email = process.env.HANNA_CLOUD_EMAIL?.trim();
   const password = process.env.HANNA_CLOUD_PASSWORD;
   if (!email || !password) {
@@ -165,6 +194,25 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
   try {
     const source = new HannaCloudSource({ email, password, deviceId: process.env.HANNA_CLOUD_DEVICE_ID });
+    if (mode === 'probe') {
+      // A read-only connection test: only Hanna's login, device list and last
+      // reading queries are called. Crucially: no Firestore instance, sync
+      // store, dedupe watermark or persistence path is ever constructed.
+      const reading = await source.getLatestReading();
+      res.status(200).json({
+        mode: 'probe',
+        written: false,
+        outcome: reading ? 'reading-available' : 'no-reading-available',
+        reading: reading ? {
+          recordedAt: reading.recordedAt.toISOString(),
+          ph: reading.ph,
+          sanitisationMv: reading.sanitisationMv,
+          temperature: reading.temperature,
+        } : null,
+      });
+      return;
+    }
+
     // Reuse the uid resolved during auth (the manual-sync path) rather than
     // looking it up again; the CRON_SECRET path doesn't derive one, so it
     // still needs this one call.
@@ -179,6 +227,13 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
     res.status(200).json(result);
   } catch (error) {
+    if (mode === 'probe') {
+      // Do not send unpredictable upstream error text (or device identifiers)
+      // to the client. Credentials and auth tokens are never logged.
+      console.error('Pool controller connection probe failed:', error instanceof Error ? error.name : 'unknown error');
+      res.status(502).json({ error: 'Hanna Cloud connection test failed. Check server-side credentials and device selection.' });
+      return;
+    }
     console.error('Pool controller sync failed:', error);
     res.status(502).json({ error: error instanceof Error ? error.message : 'Pool controller sync failed.' });
   }
