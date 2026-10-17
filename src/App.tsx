@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { parsePoolControllerProbeResponse } from './lib/poolControllerProbe';
 import { motion, AnimatePresence } from 'motion/react';
 import Dashboard, { AssistantOpenMode } from './components/Dashboard';
 import Tasks from './components/Tasks';
@@ -811,9 +812,7 @@ export default function App() {
       headers: { Authorization: `Bearer ${idToken}` },
       cache: 'no-store',
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body?.error || `Connection test failed (${response.status})`);
-    return body as { written: false; outcome: string; reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null };
+    return parsePoolControllerProbeResponse(response);
   };
 
   const handleAddTask = async (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => {
@@ -1359,3 +1358,4 @@ export default function App() {
     </div>
   );
 }
+
