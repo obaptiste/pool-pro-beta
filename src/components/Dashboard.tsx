@@ -121,6 +121,7 @@ export default function Dashboard({
   const [syncLight, setSyncLight] = React.useState<'idle' | 'syncing' | 'success' | 'neutral' | 'error'>('idle');
   const toast = useToast();
   const [probePending, setProbePending] = React.useState(false);
+  const [probeError, setProbeError] = React.useState<string | null>(null);
   const [probeResult, setProbeResult] = React.useState<{
     outcome: string;
     reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null;
@@ -129,12 +130,15 @@ export default function Dashboard({
     if (probePending) return;
     setProbePending(true);
     setProbeResult(null);
+    setProbeError(null);
     try {
       const result = await onProbePoolController();
       setProbeResult(result);
       if (!result.reading) toast.info('Connected, but no usable controller measurements are available');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Hanna Cloud connection test failed');
+      const message = error instanceof Error ? error.message : 'Hanna Cloud connection test failed';
+      setProbeError(message);
+      toast.error(message);
     } finally {
       setProbePending(false);
     }
@@ -494,6 +498,11 @@ export default function Dashboard({
                     {probePending ? 'Testing…' : 'Test connection'}
                   </button>
                 </div>
+                {probeError && (
+                  <p role="alert" className="mt-3 text-xs text-critical-text">
+                    {probeError} No readings were saved by this test.
+                  </p>
+                )}
                 {probeResult && (
                   <div role="status" className="mt-3 text-xs text-ink-muted">
                     {probeResult.reading
@@ -851,3 +860,4 @@ function DashboardSkeleton() {
     </div>
   );
 }
+
