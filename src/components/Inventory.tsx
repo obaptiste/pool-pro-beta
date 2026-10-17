@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Package, Plus, Trash2, AlertTriangle, Save, X } from 'lucide-react';
+import { Package, Plus, AlertTriangle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InventoryItem } from '../types';
 
@@ -7,11 +7,12 @@ interface InventoryProps {
   isOpen: boolean;
   onClose: () => void;
   items: InventoryItem[];
-  onUpdateItem: (item: InventoryItem) => void;
-  onDeleteItem: (id: string) => void;
+  onAddItem: (item: InventoryItem) => void;
+  // Stock counts are the only thing that can change on an existing item.
+  onAdjustQuantity: (id: string, quantity: number) => void;
 }
 
-export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDeleteItem }: InventoryProps) {
+export default function Inventory({ isOpen, onClose, items, onAddItem, onAdjustQuantity }: InventoryProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newItem, setNewItem] = useState<Omit<InventoryItem, 'id'>>({
     name: '',
@@ -28,7 +29,7 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
 
   const handleSave = () => {
     if (!newItem.name || strengthInvalid) return;
-    onUpdateItem({
+    onAddItem({
       ...newItem,
       id: crypto.randomUUID(),
     });
@@ -166,33 +167,24 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
                     <p className="text-[10px] text-ink-dim uppercase tracking-widest">
                       {item.quantity} {item.unit} in stock
                     </p>
-                    <div className="mt-2">
-                      <StrengthEditor item={item} onSave={onUpdateItem} />
-                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2 bg-bg rounded-xl border border-border-dim p-1">
-                    <button 
-                      onClick={() => onUpdateItem({ ...item, quantity: Math.max(0, item.quantity - 1) })}
+                    <button
+                      onClick={() => onAdjustQuantity(item.id, Math.max(0, item.quantity - 1))}
                       className="w-8 h-8 rounded-lg hover:bg-surface flex items-center justify-center text-ink-dim hover:text-white transition-all"
                     >
                       -
                     </button>
                     <span className="w-8 text-center text-xs font-mono font-bold text-accent">{item.quantity}</span>
-                    <button 
-                      onClick={() => onUpdateItem({ ...item, quantity: item.quantity + 1 })}
+                    <button
+                      onClick={() => onAdjustQuantity(item.id, item.quantity + 1)}
                       className="w-8 h-8 rounded-lg hover:bg-surface flex items-center justify-center text-ink-dim hover:text-white transition-all"
                     >
                       +
                     </button>
                   </div>
-                  <button 
-                    onClick={() => onDeleteItem(item.id)}
-                    className="p-2 text-ink-dim hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 size={18} />
-                  </button>
                 </div>
               </div>
             ))}
@@ -205,76 +197,6 @@ export default function Inventory({ isOpen, onClose, items, onUpdateItem, onDele
           </div>
         </div>
       </motion.div>
-    </div>
-  );
-}
-
-/**
- * Inline editor for an existing item's strength, so the seeded chemicals can
- * get their values. Blank clears the strength. Otherwise it must be above 0
- * and at most 100, the same limits the Firestore rule enforces.
- */
-function StrengthEditor({ item, onSave }: { item: InventoryItem; onSave: (item: InventoryItem) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const parsed = draft.trim() === '' ? null : Number(draft);
-  const invalid = parsed !== null && !(parsed > 0 && parsed <= 100);
-
-  const start = () => {
-    setDraft(item.concentrationPct != null ? String(item.concentrationPct) : '');
-    setEditing(true);
-  };
-
-  const save = () => {
-    if (invalid) return;
-    // Rebuild without the old key: Firestore rejects undefined values.
-    const { concentrationPct: _previous, ...rest } = item;
-    onSave(parsed === null ? rest : { ...rest, concentrationPct: parsed });
-    setEditing(false);
-  };
-
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        onClick={start}
-        className="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline"
-      >
-        {item.concentrationPct != null ? `Strength ${item.concentrationPct}%, edit` : 'Set strength'}
-      </button>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <input
-        type="number"
-        min={0.1}
-        max={100}
-        step="0.1"
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        aria-label={`Strength for ${item.name}, percent`}
-        placeholder="%"
-        autoFocus
-        className="w-24 bg-bg border border-border-dim rounded-lg px-2 py-1 text-xs focus:border-accent outline-none"
-      />
-      <button
-        type="button"
-        onClick={save}
-        disabled={invalid}
-        className="px-3 py-1 rounded-lg bg-accent text-primary text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        Save
-      </button>
-      <button
-        type="button"
-        onClick={() => setEditing(false)}
-        className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-ink-dim hover:text-white"
-      >
-        Cancel
-      </button>
-      {invalid && <span className="text-[10px] text-red-400">Enter 0.1 to 100, or leave blank to clear.</span>}
     </div>
   );
 }

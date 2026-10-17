@@ -226,7 +226,7 @@ export default function Dashboard({
     // effectiveness, not a chlorine ppm value, so an ORP-only alert must send
     // the operator to actually test chlorine rather than dose blind.
     // orp_high keys off ORP_ACTION_ALERT_MV (800 mV, AGENTS.md's own literal
-    // "verify before swimming" line), not classifyOrp's 850 mV ceiling.
+    // "verify before swimming" line), which is also classifyOrp's critical line.
     {
       id: 'orp_low',
       condition: recentOrp != null && recentOrp.value < DEFAULT_RANGES.sanitisationMv.min,
@@ -489,7 +489,7 @@ export default function Dashboard({
                   <TelemetryCard
                     label="ORP" field="sanitisationMv" unit="mV"
                     value={recentOrp?.value ?? null} decimals={0}
-                    // ORP has its own three-tier band (650/750/850 mV, see
+                    // ORP has its own three-tier band (650/750/800 mV, see
                     // classifyOrp) rather than the generic 10 % buffer, and the
                     // ideal shown is DEFAULT_RANGES' 650–750 per AGENTS.md — not
                     // the 700–780 the design mock-up happened to use.
