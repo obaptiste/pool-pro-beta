@@ -786,6 +786,21 @@ export default function App() {
     return body;
   };
 
+  // Query Hanna Cloud without saving anything to Firestore. Unlike the
+  // existing manual sync button, this is safe for initial connection tests.
+  const handleProbePoolController = async () => {
+    if (!user) throw new Error('Not signed in');
+    const idToken = await user.getIdToken();
+    const response = await fetch('/api/cron/sync-pool-controller?mode=probe', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idToken}` },
+      cache: 'no-store',
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body?.error || `Connection test failed (${response.status})`);
+    return body as { written: false; outcome: string; reading: { ph: number | null; sanitisationMv: number | null; temperature: number | null; recordedAt: string } | null };
+  };
+
   const handleAddTask = async (task: Omit<MaintenanceTask, 'id' | 'uid' | 'createdAt'>) => {
     if (!user) return;
     try {
@@ -1103,6 +1118,7 @@ export default function App() {
           onOpenReminderSettings={() => setIsReminderSettingsOpen(true)}
           onOpenAssistant={openAssistant}
           onSyncPoolController={handleSyncPoolController}
+          onProbePoolController={handleProbePoolController}
         />
       </main>
 
