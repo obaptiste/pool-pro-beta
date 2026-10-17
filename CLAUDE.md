@@ -198,6 +198,28 @@ schedule) plus four write tools:
   server-side delete path); accepted for now rather than a rushed partial
   fix, same reasoning as the unbounded `readings` growth limitation below.
 
+### Hanna Cloud read-only connection probe
+The dashboard's **Test connection** action uses the signed-in owner's Firebase ID
+token to POST to `/api/cron/sync-pool-controller?mode=probe`. The endpoint
+reuses the same HannaCloudSource used by scheduled sync, but calls only
+`getLatestReading()` and returns the timestamp, pH, ORP and temperature.
+The probe does not instantiate the Firestore store, save a Reading or
+advance the sync watermark; successful results always say `written: false`.
+The probe requires authentication, rejects GET and unknown `mode` values,
+uses `Cache-Control: no-store`, and redacts Hanna errors to a generic
+message. No Hanna password or token enters the browser. Do not confuse
+this with the existing manual **sync now** pill or background schedules,
+which still **write to Firestore** when configured.
+
+Before testing against an actual device, set `HANNA_CLOUD_EMAIL` and
+`HANNA_CLOUD_PASSWORD` only as server-side Vercel environment variables,
+optionally `HANNA_CLOUD_DEVICE_ID` if there is more than one device,
+and configure the server-side Firebase Admin account and
+`POOLSTATUS_OWNER_UID`. Never put these secrets into a public repo,
+frontend `VITE_*` variable, message, or client-side configuration.
+The Hanna connection uses an unofficial API; this proof of connectivity
+does not imply a supported Hanna API or guarantee future availability.
+
 ### Pool controller telemetry (Hanna Cloud)
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
 controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`
