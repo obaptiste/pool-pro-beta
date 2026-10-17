@@ -1,0 +1,329 @@
+import { DEFAULT_RANGES } from '../types.js';
+import { getImpossibleValueError, getSoftWarning, ORP_ACTION_ALERT_MV, type NumericReadingField } from './readingValidation.js';
+
+/**
+ * Parser for the CSV a Hanna BL-series pool controller (e.g. BL122) exports:
+ * a block of "Key, Value" header lines, calibration tables, then one row per
+ * logging window with the min/max pH, ORP and temperature the controller saw
+ * in that window plus how much its acid/base and chlorine pumps dosed.
+ *
+ * The format isn't documented anywhere public, so this gets the same
+ * zero-trust treatment as the Hanna Cloud API (see the pool-controller-sync
+ * skill): columns are located by header text, never by position, "--" and
+ * blank cells become null (never Number('') === 0), timestamps must be a
+ * real calendar date-time, and a row with nothing in it is skipped rather
+ * than stored as an all-null window.
+ */
+
+export interface HannaWindow {
+  rec: number;
+  /**
+   * 1 normally; 2 for the second window in one file with the same local
+   * start time, which happens when clocks go back and an hour repeats.
+   * Part of the doc id so the two never overwrite each other.
+   */
+  occurrence: number;
+  /** Raw "YYYY-MM-DD HH:MM:SS" from the file. Controller local time, no offset. */
+  startLocal: string;
+  endLocal: string;
+  /** startLocal/endLocal read in the importing browser's own time zone. */
+  start: Date;
+  end: Date;
+  phMin: number | null;
+  phMax: number | null;
+  orpMinMv: number | null;
+  orpMaxMv: number | null;
+  temperatureMinC: number | null;
+  temperatureMaxC: number | null;
+  acidBaseMinMl: number | null;
+  acidBaseMaxMl: number | null;
+  chlorineMinMl: number | null;
+  chlorineMaxMl: number | null;
+}
+
+export interface HannaExport {
+  deviceId: string;
+  model: string | null;
+  location: string | null;
+  /** The period the export was asked for, from the header. The rows can cover far less. */
+  requestedStart: string | null;
+  requestedEnd: string | null;
+  windows: HannaWindow[];
+  /** Rows with no probe value and no dose at all, e.g. while the controller was offline. */
+  emptyRows: number;
+  /** #Rec numbers of rows whose timestamps couldn't be read. */
+  invalidRows: number[];
+}
+
+export class HannaCsvError extends Error {}
+
+const COLUMNS = {
+  rec: '#rec',
+  start: 'start date & time',
+  end: 'end date & time',
+  phMin: 'min ph',
+  phMax: 'max ph',
+  orpMinMv: 'min orp(mv)',
+  orpMaxMv: 'max orp(mv)',
+  temperatureMinC: 'min temp (°c)',
+  temperatureMaxC: 'max temp (°c)',
+  acidBaseMinMl: 'min acid/base (ml)',
+  acidBaseMaxMl: 'max acid/base (ml)',
+  chlorineMinMl: 'min cl2 (ml)',
+  chlorineMaxMl: 'max cl2 (ml)',
+} as const;
+type Column = keyof typeof COLUMNS;
+
+// Plausibility checks reuse the MCP/sync bounds table (getImpossibleValueError),
+// not the manual form's typo ceiling: AGENTS.md says abnormal-but-possible
+// pH/ORP must never be dropped.
+const PROBE_FIELD: Partial<Record<ValueColumn, NumericReadingField>> = {
+  phMin: 'ph', phMax: 'ph',
+  orpMinMv: 'sanitisationMv', orpMaxMv: 'sanitisationMv',
+  temperatureMinC: 'temperature', temperatureMaxC: 'temperature',
+};
+const PROBE_COLUMNS = ['phMin', 'phMax', 'orpMinMv', 'orpMaxMv', 'temperatureMinC', 'temperatureMaxC'] as const;
+const DOSE_COLUMNS = ['acidBaseMinMl', 'acidBaseMaxMl', 'chlorineMinMl', 'chlorineMaxMl'] as const;
+type ValueColumn = typeof PROBE_COLUMNS[number] | typeof DOSE_COLUMNS[number];
+const isDoseColumn = (k: ValueColumn) => (DOSE_COLUMNS as readonly string[]).includes(k);
+
+const normaliseHeader = (h: string) => h.trim().toLowerCase().replace(/₂/g, '2').replace(/\s+/g, ' ');
+
+/** Splits one CSV line, honouring double-quoted cells (the calibration rows quote commas). */
+export function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"' && line[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { out.push(cell.trim()); cell = ''; }
+    else cell += c;
+  }
+  out.push(cell.trim());
+  return out;
+}
+
+const NUMBER = /^-?\d+(?:\.\d+)?$/;
+/** "--", blank, or anything non-numeric is "not measured", never 0. */
+export function parseCell(raw: string | undefined): number | null {
+  const s = (raw ?? '').trim();
+  if (!NUMBER.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
+/**
+ * Reads "YYYY-MM-DD HH:MM:SS" as local time via the Date constructor (never
+ * string parsing, which Safari rejects for this format), then checks the
+ * result still has the same components, so 2026-02-30 or a time skipped by
+ * a DST change is rejected instead of silently shifted.
+ */
+export function parseLocalDateTime(s: string): Date | null {
+  const m = DATE_TIME.exec(s.trim());
+  if (!m) return null;
+  const [Y, M, D, h, min, sec] = m.slice(1).map(Number);
+  const d = new Date(Y, M - 1, D, h, min, sec);
+  if (d.getFullYear() !== Y || d.getMonth() !== M - 1 || d.getDate() !== D ||
+      d.getHours() !== h || d.getMinutes() !== min || d.getSeconds() !== sec) return null;
+  return d;
+}
+
+const sameLocalTime = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate() &&
+  a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes() && a.getSeconds() === b.getSeconds();
+
+/**
+ * When clocks go back, a local time like 01:30 happens twice and the Date
+ * constructor always picks the first. For the repeat, use the second
+ * instant: an hour later that still reads as the same local time. Outside
+ * a repeated hour the shifted time reads differently, so it's left alone.
+ */
+function laterInstantOfRepeatedTime(d: Date): Date {
+  const later = new Date(d.getTime() + 3_600_000);
+  return sameLocalTime(later, d) ? later : d;
+}
+
+export function parseHannaCsv(text: string): HannaExport {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).map((l) => l.replace(/[\t ]+$/, ''));
+  if (lines.every((l) => l.trim() === '')) throw new HannaCsvError('The file is empty.');
+
+  const headerIdx = lines.findIndex((l) => splitCsvLine(l).some((c) => normaliseHeader(c) === COLUMNS.rec));
+  if (headerIdx === -1) {
+    throw new HannaCsvError('This doesn\'t look like a Hanna controller export: no "#Rec" data table was found.');
+  }
+
+  // "Key, Value" lines before the data table. The first occurrence of a key
+  // wins: "Serial No." appears for both the controller and the pH probe.
+  const meta = new Map<string, string>();
+  for (const line of lines.slice(0, headerIdx)) {
+    const comma = line.indexOf(',');
+    if (comma === -1) continue;
+    const key = line.slice(0, comma).trim().toLowerCase();
+    if (!meta.has(key)) meta.set(key, line.slice(comma + 1).trim());
+  }
+  const deviceId = meta.get('device id') ?? '';
+  if (!deviceId) throw new HannaCsvError('The export has no "Device ID" line, so it can\'t be matched to a controller.');
+
+  const header = splitCsvLine(lines[headerIdx]).map(normaliseHeader);
+  if (header.some((h) => h.includes('°f'))) {
+    throw new HannaCsvError('This export uses °F. Switch the controller to °C and export again.');
+  }
+  const col = {} as Record<Column, number>;
+  const missing: string[] = [];
+  for (const [key, name] of Object.entries(COLUMNS) as [Column, string][]) {
+    col[key] = header.indexOf(name);
+    if (col[key] === -1) missing.push(name);
+  }
+  if (missing.length) {
+    throw new HannaCsvError(`The export is missing expected columns: ${missing.join(', ')}. The controller's file format may have changed.`);
+  }
+
+  const windows: HannaWindow[] = [];
+  const invalidRows: number[] = [];
+  let emptyRows = 0;
+  const startsSeen = new Map<string, number>();
+  for (const line of lines.slice(headerIdx + 1)) {
+    if (line.trim() === '') continue;
+    const cells = splitCsvLine(line);
+    const rec = parseCell(cells[col.rec]);
+    if (rec == null) continue; // a trailing note or a second table, not a data row
+
+    const values = {} as Record<ValueColumn, number | null>;
+    for (const key of [...PROBE_COLUMNS, ...DOSE_COLUMNS]) {
+      let v = parseCell(cells[col[key]]);
+      const field = PROBE_FIELD[key];
+      if (v != null && field && getImpossibleValueError(field, v) !== '') v = null;
+      if (v != null && isDoseColumn(key) && v < 0) v = null;
+      values[key] = v;
+    }
+    const hasProbe = PROBE_COLUMNS.some((k) => values[k] != null);
+    const hasDose = DOSE_COLUMNS.some((k) => (values[k] ?? 0) > 0);
+    if (!hasProbe && !hasDose) { emptyRows++; continue; }
+
+    const startLocal = (cells[col.start] ?? '').trim();
+    const endLocal = (cells[col.end] ?? '').trim();
+    let start = parseLocalDateTime(startLocal);
+    let end = parseLocalDateTime(endLocal);
+    const occurrence = (startsSeen.get(startLocal) ?? 0) + 1;
+    if (start && end && occurrence > 1) {
+      start = laterInstantOfRepeatedTime(start);
+      end = laterInstantOfRepeatedTime(end);
+    }
+    if (!start || !end || end < start) { invalidRows.push(rec); continue; }
+    startsSeen.set(startLocal, occurrence);
+
+    windows.push({ rec, occurrence, startLocal, endLocal, start, end, ...values });
+  }
+
+  windows.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return {
+    deviceId,
+    model: meta.get('device model no.') ?? meta.get('model') ?? null,
+    location: meta.get('location') ?? null,
+    requestedStart: meta.get('start date') ?? null,
+    requestedEnd: meta.get('end date') ?? null,
+    windows,
+    emptyRows,
+    invalidRows,
+  };
+}
+
+/**
+ * Deterministic Firestore doc id for one window, so importing the same file
+ * twice (or an overlapping later export) can never duplicate it. Built from
+ * the raw local timestamp, not the parsed instant, so a re-import from a
+ * browser in another time zone still lands on the same document. Prefixed
+ * with the owner's uid: firestore.rules requires that on create, so another
+ * account can't pre-claim one of these ids. A repeated local start time
+ * (clocks going back) gets an "_2" suffix so it doesn't overwrite the first.
+ */
+export function controllerLogDocId(uid: string, deviceId: string, startLocal: string, occurrence = 1): string {
+  const device = deviceId.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 64);
+  const stamp = startLocal.replace(/[-:]/g, '').replace(' ', 'T');
+  return `${uid}_${device}_${stamp}${occurrence > 1 ? `_${occurrence}` : ''}`;
+}
+
+export const windowDocId = (uid: string, deviceId: string, w: Pick<HannaWindow, 'startLocal' | 'occurrence'>) =>
+  controllerLogDocId(uid, deviceId, w.startLocal, w.occurrence);
+
+/** Windows where either pump ran, for the import preview. */
+export const isDoseWindow = (w: HannaWindow) => (w.acidBaseMaxMl ?? 0) > 0 || (w.chlorineMaxMl ?? 0) > 0;
+
+// AGENTS.md's typical pH target is 7.2–7.6. DEFAULT_RANGES.ph runs to 7.8
+// (the "warn above" line), so 7.6–7.8 is flagged here as a softer watch.
+const PH_TYPICAL_MAX = 7.6;
+
+export interface WindowSafetyWarning {
+  field: 'ph' | 'sanitisationMv';
+  /** 'min' for a too-low value (shown as "Lowest"), 'max' for a too-high one ("Highest"). */
+  end: 'min' | 'max';
+  /** 'watch': outside the typical target but not yet a warning (pH 7.6–7.8). */
+  level: 'watch' | 'warning';
+  value: number;
+  window: HannaWindow;
+  message: string;
+}
+
+/**
+ * pH/ORP warnings for an export, so the import preview can show dangerous
+ * values before they're saved. AGENTS.md: warn clearly, never block the
+ * save. pH follows AGENTS.md: typical target 7.2–7.6, warn below 7.0 and
+ * above 7.8 (DEFAULT_RANGES.ph's ends). ORP uses getSoftWarning's warning
+ * tier plus ORP_ACTION_ALERT_MV's "verify before swimming" line. Reports only
+ * the most extreme window per field and direction to keep the list short.
+ */
+export function summariseSafetyWarnings(windows: HannaWindow[]): { affectedWindows: number; worst: WindowSafetyWarning[] } {
+  const affected = new Set<HannaWindow>();
+  const worst = new Map<string, WindowSafetyWarning>();
+  const consider = (w: HannaWindow, field: WindowSafetyWarning['field'], column: 'min' | 'max', value: number | null, other: number | null) => {
+    if (value == null) return;
+    let message: string | null = null;
+    let level: WindowSafetyWarning['level'] = 'warning';
+    if (field === 'ph') {
+      // getSoftWarning's pH text is written for the manual form, so word it for a log here (AGENTS.md pH rules).
+      const { min, max } = DEFAULT_RANGES.ph;
+      if (value < 7.0) message = 'Very low pH (acidic). Retest before any heavy dosing.';
+      else if (value < min) message = `Below the ${min}–${PH_TYPICAL_MAX} target. Retest to confirm.`;
+      else if (value > max) message = `High pH, likely to reduce chlorine effectiveness. Retest before dosing.`;
+      else if (value > PH_TYPICAL_MAX) {
+        level = 'watch';
+        message = `Above the ${min}–${PH_TYPICAL_MAX} target. Chlorine works less well as pH rises, so retest and correct before it climbs further.`;
+      }
+    } else {
+      const soft = getSoftWarning(field, value);
+      if (soft?.level === 'warning') message = soft.message;
+      else if (value > ORP_ACTION_ALERT_MV) {
+        message = `ORP above ${ORP_ACTION_ALERT_MV} mV: sanitisation may be high. Verify before swimming or adding more chlorine.`;
+      }
+    }
+    if (!message) return;
+    // A too-low value is normally reported from a window's min and a too-high
+    // one from its max, so a steady 7.70–7.70 window is "highest pH 7.70",
+    // not also "lowest". Only when that other end exists, though: with the
+    // max missing, a high min is the only evidence and must still show.
+    const tooLow = field === 'ph' ? value < DEFAULT_RANGES.ph.min : value < DEFAULT_RANGES.sanitisationMv.min;
+    if ((column === 'min') !== tooLow && other != null) return;
+    const end = tooLow ? 'min' : 'max';
+    affected.add(w);
+    const key = `${field}:${end}`;
+    const prev = worst.get(key);
+    if (!prev || (end === 'min' ? value < prev.value : value > prev.value)) {
+      worst.set(key, { field, end, level, value, window: w, message });
+    }
+  };
+  for (const w of windows) {
+    consider(w, 'ph', 'min', w.phMin, w.phMax);
+    consider(w, 'ph', 'max', w.phMax, w.phMin);
+    consider(w, 'sanitisationMv', 'min', w.orpMinMv, w.orpMaxMv);
+    consider(w, 'sanitisationMv', 'max', w.orpMaxMv, w.orpMinMv);
+  }
+  // A low and a high from the same window and field would both be listed; that's real (a big swing) and worth seeing.
+  const order = ['ph:min', 'ph:max', 'sanitisationMv:min', 'sanitisationMv:max'];
+  return { affectedWindows: affected.size, worst: order.flatMap((k) => (worst.has(k) ? [worst.get(k)!] : [])) };
+}

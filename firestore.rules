@@ -69,6 +69,25 @@ service cloud.firestore {
     //   - nextTestDate: timestamp (optional)
     //   - remindersEnabled: bool (required)
     //
+    // Collection: controllerLogs
+    // Document ID: "{uid}_{deviceId}_{YYYYMMDDTHHMMSS}" — deterministic
+    //   (src/lib/hannaCsv.ts controllerLogDocId) so re-importing an export
+    //   never duplicates a window; must start with the writer's uid. A local
+    //   start time repeated when clocks go back gets a "_2" suffix.
+    // Written by the controller CSV importer (ControllerImport.tsx).
+    // Fields:
+    //   - id: string (required, equals the document ID)
+    //   - uid: string (required)
+    //   - source: string (required, enum: hanna-csv)
+    //   - deviceId: string (required, max 64 chars)
+    //   - location: string | null (required, max 100 chars)
+    //   - startLocal / endLocal: string (required, "YYYY-MM-DD HH:MM:SS")
+    //   - start / end: timestamp (required)
+    //   - phMin, phMax, orpMinMv, orpMaxMv, temperatureMinC, temperatureMaxC,
+    //     acidBaseMinMl, acidBaseMaxMl, chlorineMinMl, chlorineMaxMl:
+    //     number | null (required — null means "not reported")
+    //   - importedAt: timestamp (required)
+    //
     // Collection: poolControllerSyncState
     // Document ID: "{ownerUid}_{sourceId}" (e.g. "abc123_hanna-cloud")
     // Server-only — written exclusively by api/cron/sync-pool-controller.ts
@@ -193,6 +212,32 @@ service cloud.firestore {
              data.remindersEnabled is bool;
     }
 
+    function isNumberOrNull(data, field) {
+      return data[field] == null || data[field] is number;
+    }
+
+    function isValidControllerLog(data, docId) {
+      let fields = ['id', 'uid', 'source', 'deviceId', 'location', 'startLocal', 'endLocal', 'start', 'end',
+                    'phMin', 'phMax', 'orpMinMv', 'orpMaxMv', 'temperatureMinC', 'temperatureMaxC',
+                    'acidBaseMinMl', 'acidBaseMaxMl', 'chlorineMinMl', 'chlorineMaxMl', 'importedAt'];
+      return hasRequiredFields(fields) && hasOnlyAllowedFields(fields) &&
+             data.id == docId &&
+             docId.matches(request.auth.uid + '_.+') &&
+             data.uid == request.auth.uid &&
+             data.source == 'hanna-csv' &&
+             data.deviceId is string && data.deviceId.size() > 0 && data.deviceId.size() <= 64 &&
+             (data.location == null || (data.location is string && data.location.size() <= 100)) &&
+             data.startLocal is string && data.startLocal.size() == 19 &&
+             data.endLocal is string && data.endLocal.size() == 19 &&
+             data.start is timestamp && data.end is timestamp && data.end >= data.start &&
+             isNumberOrNull(data, 'phMin') && isNumberOrNull(data, 'phMax') &&
+             isNumberOrNull(data, 'orpMinMv') && isNumberOrNull(data, 'orpMaxMv') &&
+             isNumberOrNull(data, 'temperatureMinC') && isNumberOrNull(data, 'temperatureMaxC') &&
+             isNumberOrNull(data, 'acidBaseMinMl') && isNumberOrNull(data, 'acidBaseMaxMl') &&
+             isNumberOrNull(data, 'chlorineMinMl') && isNumberOrNull(data, 'chlorineMaxMl') &&
+             data.importedAt is timestamp;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -244,6 +289,13 @@ service cloud.firestore {
       allow create: if isOwner(uid) && isValidSchedule(request.resource.data);
       allow update: if isOwner(uid) && isValidSchedule(request.resource.data);
       allow delete: if isOwner(uid);
+    }
+
+    match /controllerLogs/{logId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidControllerLog(request.resource.data, logId);
+      allow update: if isDocOwner() && isValidControllerLog(request.resource.data, logId) && uidNotModified();
+      allow delete: if isDocOwner();
     }
 
     match /users/{userId} {

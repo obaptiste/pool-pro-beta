@@ -41,6 +41,7 @@ src/
     lsi.ts                  calculateLSI() — shared Langelier Saturation Index logic
     aiProtocol.ts           AI maintenance protocol request + system prompt, shared by dashboard card and assistant
     dashboardSummary.ts     Pure derivations behind dashboard surfaces (sync pill, trend glyphs, tile copy, agent activity)
+    hannaCsv.ts             parseHannaCsv() — zero-trust parser for Hanna BL-series controller CSV exports + controllerLogDocId()
   components/
     Dashboard.tsx           Home tab: sync pill, alerts, LSI hero, telemetry cards, AI protocol card, Operations tiles, agents row
     TabBar.tsx              Persistent bottom nav: Home · Readings · Tasks · Supplies · More
@@ -54,6 +55,7 @@ src/
     TrendCharts.tsx         7-day trend charts (Recharts)
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
+    ControllerImport.tsx    More → Import Controller Data: upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
   sw.ts                     Service worker source (Workbox; vite-plugin-pwa injects the precache manifest at build)
   serviceWorkerRegistration.ts  Registers the worker via virtual:pwa-register (autoUpdate)
 api/
@@ -104,6 +106,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
+- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and nothing reads it yet (no dashboard, trends, or AI prompt use). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
 - `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
@@ -154,13 +157,25 @@ schedule) plus four write tools:
   attempted, so e.g. "2 gallons" against a litres-tracked item is rejected
   rather than silently recorded as 2 of whatever unit the item tracks.
 - `poolstatus_log_reading` — logs a real `Reading` from numbers discussed
-  in a conversation. **Requires a photo** (`photo.data_base64` +
-  `content_type`) of the strip/meter/report the numbers came from: unlike a
-  manual test or a controller's own sensor, a conversation has no other way
-  to back a number with evidence, so the tool rejects a call with no photo
-  (`data_base64` is validated against the base64 alphabet before decoding
-  — `Buffer.from(str, 'base64')` silently drops invalid characters rather
-  than throwing, so decoding alone can't catch malformed input). Values are
+  in a conversation. Annotated `WRITE_DESTRUCTIVE` (it overwrites
+  `schedules/{ownerUid}`, not just adds a document — see below). **Requires
+  a photo** (`photo.data_base64` + `content_type`) of the strip/meter/report
+  the numbers came from: unlike a manual test or a controller's own sensor,
+  a conversation has no other way to back a number with evidence, so the
+  tool rejects a call with no photo (`data_base64` is validated against the
+  base64 alphabet before decoding — `Buffer.from(str, 'base64')` silently
+  drops invalid characters rather than throwing, so decoding alone can't
+  catch malformed input). `notes` is capped at `MAX_NOTES_LENGTH` (4000
+  characters) in the tool's own Zod schema — enforced before any upload
+  runs, since an unbounded note could otherwise push the Firestore write
+  past its 1 MiB document limit only *after* the photo already landed. An
+  optional `timestamp` must be a complete ISO-8601 date-time with an
+  explicit timezone offset (e.g. `2026-09-01T08:00:00Z`) — a bare date or an
+  offset-less time is rejected, since `new Date(value)` would otherwise
+  parse it in the server's local timezone, an environment-dependent
+  ambiguity for a persisted write (read-side `since`/`until` filters stay
+  permissive about this, since a filter window edge isn't a durability
+  claim the way a stored reading's timestamp is). Values are
   checked against `getImpossibleValueError` (`readingValidation.ts`) —
   non-finite or below a field's physical minimum only (ORP/`sanitisationMv`
   and `ph` have no minimum at all: ORP is a signed electrode potential, not

@@ -137,6 +137,39 @@ export interface WishlistItem {
 
 export type Frequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
 
+/**
+ * One logging window from an imported pool-controller export (see
+ * src/lib/hannaCsv.ts). Kept apart from `readings` on purpose: a window is a
+ * min/max range plus pump doses over roughly an hour, not a point
+ * measurement, and folding hourly windows into `readings` would add to its
+ * unbounded growth (CLAUDE.md known issue #15). Doc id is deterministic
+ * (controllerLogDocId) so re-imports never duplicate a window.
+ */
+export interface ControllerLogWindow {
+  id: string;
+  uid: string;
+  source: 'hanna-csv';
+  deviceId: string;
+  location: string | null;
+  /** Raw controller-local "YYYY-MM-DD HH:MM:SS", as written in the export. */
+  startLocal: string;
+  endLocal: string;
+  start: Date;
+  end: Date;
+  phMin: number | null;
+  phMax: number | null;
+  orpMinMv: number | null;
+  orpMaxMv: number | null;
+  temperatureMinC: number | null;
+  temperatureMaxC: number | null;
+  /** Pump volumes exactly as the export reports them (min and max per window). */
+  acidBaseMinMl: number | null;
+  acidBaseMaxMl: number | null;
+  chlorineMinMl: number | null;
+  chlorineMaxMl: number | null;
+  importedAt: Date;
+}
+
 export interface MaintenanceSchedule {
   uid: string;
   testFrequency: Frequency;

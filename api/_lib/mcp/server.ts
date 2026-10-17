@@ -65,6 +65,28 @@ function isValidIsoDate(value: string): boolean {
 const IsoDate = z.string()
   .refine(isValidIsoDate, 'Must be a valid ISO-8601 date or date-time, e.g. 2026-09-01 or 2026-09-01T08:00:00Z');
 
+// Unlike IsoDate (read-side since/until filters, where a bare date or an
+// offset-less time is an acceptable window edge), a *persisted* reading's
+// timestamp is a claim about the exact instant it was measured. An
+// offset-less date-time is parsed by `new Date(value)` in whatever timezone
+// the server process runs in, so require a complete date-time with an
+// explicit offset (including bare "Z"). Matches the Hanna sync's stored-
+// timestamp rule in api/_lib/poolControllers/hannaCloud/source.ts.
+const PRECISE_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+function isValidPreciseTimestamp(value: string): boolean {
+  const match = PRECISE_DATETIME_PATTERN.exec(value);
+  if (!match) return false;
+  const [, y, m, d, hh, mm, ss] = match;
+  if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(value));
+}
+
+const PreciseTimestamp = z.string()
+  .refine(isValidPreciseTimestamp, 'Must be a complete ISO-8601 date-time with an explicit timezone offset, e.g. 2026-09-01T08:00:00Z — a bare date or an offset-less time is ambiguous for a persisted reading.');
+
 const parseDate = (value?: string): Date | undefined => (value == null ? undefined : new Date(value));
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -843,7 +865,7 @@ Don't use when: no photo is available, or the operator is just describing what t
         calcium_hardness: NumericFieldInput,
         cyanuric_acid: NumericFieldInput,
         notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-        timestamp: IsoDate.optional(),
+        timestamp: PreciseTimestamp.optional(),
       },
       annotations: WRITE_DESTRUCTIVE,
     },
