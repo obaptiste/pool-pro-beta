@@ -48,6 +48,20 @@ test('decodes raw BL122 RD values and uses its UTC measurement timestamp', async
   });
 });
 
+test('an empty named parameters array does not hide raw RD telemetry', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{
+      DID: 'BL122_TEST', DT: '2026-10-17T12:00:00Z', messages: { parameters: [], RD: '7.30,680,29.1', EV: '0,0,0' },
+    }] } } },
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual((await client.getLastDeviceReading('BL122_TEST')).parameters, [
+    { name: 'ph', value: '7.30' }, { name: 'orp', value: '680' }, { name: 'temp', value: '29.1' },
+  ]);
+});
+
 test('does not decode raw values for an unknown controller layout', async () => {
   responses = [
     { status: 200, body: LOGIN_TOKENS },
