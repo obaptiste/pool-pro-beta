@@ -98,6 +98,27 @@ test('missing bearer is rejected before contacting Hanna Cloud', async () => {
   assert.equal(calls.length, 0);
 });
 
+test('probe uses dashboard fallback measurements and remains read-only', async () => {
+  process.env.HANNA_CLOUD_DEVICE_ID = 'BL122_TEST';
+  const recordedAt = new Date(Date.now() - 60_000).toISOString();
+  answers = [
+    { status: 200, body: AUTH_OK },
+    { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'BL122_TEST', messages: { parameters: [] } }] } } },
+    { status: 200, body: { data: { getDashboardData: { data: { readingsData: [{
+      DID: 'BL122_TEST', messages: { lastUpdate: recordedAt, parameters: [
+        { name: 'ph', value: '7.51' }, { name: 'orp', value: '718' }, { name: 'temp', value: '28.9' },
+      ] },
+    }] } } } } },
+  ];
+  const result = await request();
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.reading, { recordedAt, ph: 7.51, sanitisationMv: 718, temperature: 28.9 });
+  assert.equal(result.body.written, false);
+  assert.deepEqual(calls.map((call) => call.body.operationName), ['Login', 'GetLastDeviceReading', 'GetDashboardData']);
+  assert.equal(JSON.stringify(result.body).includes('fake-access-token'), false);
+  assert.equal(JSON.stringify(result.body).includes('BL122_TEST'), false);
+});
+
 test('probe decodes raw BL122 RD telemetry without invoking the Firestore write path', async () => {
   process.env.HANNA_CLOUD_DEVICE_ID = 'BL122_TEST';
   answers = [

@@ -237,6 +237,17 @@ The Hanna connection uses an unofficial API; this proof of connectivity
 does not imply a supported Hanna API or guarantee future availability.
 
 ### Pool controller telemetry (Hanna Cloud)
+If the legacy `lastDeviceReadings` query has no usable pH/ORP/temperature,
+the client also reads the `getDashboardData` feed used by Hanna's current web
+dashboard (`modelGroup: BL`). It selects the exact configured/resolved DID,
+rejects ambiguous or missing matches, and prefers `messages.lastUpdate` as
+the dashboard measurement timestamp. It never substitutes another controller,
+CSV export time, or the server clock. Usable legacy responses still need only
+the original query. Empty dashboard responses emit schema-only diagnostics
+(message type, parameter count, raw-field presence and offline flag), never
+payloads, values, device IDs, or credentials. GraphQL errors are failures even
+when the HTTP status is 200; upstream error text is not exposed.
+
 The client accepts both named `messages.parameters` and raw BL122/BL123/BL132
 `messages.RD` telemetry. Hanna's public web bundle (observed 2026-10-18,
 `https://www.hannacloud.com/static/js/main.3aa1b267.js`) decodes the first three

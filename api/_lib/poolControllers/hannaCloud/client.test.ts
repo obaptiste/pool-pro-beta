@@ -32,6 +32,61 @@ afterEach(() => {
 
 const LOGIN_TOKENS = { data: { login: [{ tokenType: 'accessToken', token: 'access-123' }, { tokenType: 'refreshToken', token: 'refresh-456' }] } };
 
+const DASHBOARD_PARAMETERS = [{ name: 'ph', value: '7.51' }, { name: 'orp', value: '718' }, { name: 'temp', value: '28.9' }];
+function dashboardData(readingsData: unknown[]) {
+  return { status: 200, body: { data: { getDashboardData: { data: { readingsData } } } } };
+}
+
+test('falls back to the current dashboard query and selects the exact DID, not the first device', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'BL122_TEST', messages: { parameters: [] } }] } } },
+    dashboardData([
+      { DID: 'BL122_OTHER', DT: '2026-10-17T11:00:00Z', messages: { parameters: [{ name: 'ph', value: 1 }] } },
+      { DID: 'BL122_TEST', DT: '2026-10-17T11:00:00Z', messages: {
+        lastUpdate: '2026-10-17T12:00:00Z', parameters: DASHBOARD_PARAMETERS,
+      } },
+    ]),
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual(await client.getLastDeviceReading('BL122_TEST'), {
+    did: 'BL122_TEST', dt: '2026-10-17T12:00:00Z', parameters: DASHBOARD_PARAMETERS,
+  });
+  assert.deepEqual(calls.map((call) => call.body.operationName), ['Login', 'GetLastDeviceReading', 'GetDashboardData']);
+  assert.equal(calls[2].headers.authorization, 'Bearer access-123');
+  assert.match(String(calls[2].body.query), /query GetDashboardData/);
+});
+
+test('never substitutes a different device or an ambiguous matching snapshot', async () => {
+  for (const snapshots of [
+    [{ DID: 'BL122_OTHER', messages: { parameters: DASHBOARD_PARAMETERS } }],
+    [{ DID: 'BL122_TEST' }, { DID: 'BL122_TEST' }],
+  ]) {
+    responses = [
+      { status: 200, body: LOGIN_TOKENS }, { status: 200, body: { data: { lastDeviceReadings: [] } } },
+      dashboardData(snapshots),
+    ];
+    const client = new HannaCloudClient('me@example.com', 'pw');
+    await client.authenticate();
+    await assert.rejects(() => client.getLastDeviceReading('BL122_TEST'));
+  }
+});
+
+test('does not hide GraphQL failures in an HTTP 200 response or expose upstream text', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { errors: [{ message: 'private-upstream-details' }] } },
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  await assert.rejects(() => client.getLastDeviceReading('BL122_TEST'), (error: Error) => {
+    assert.match(error.message, /GraphQL error/);
+    assert.equal(error.message.includes('private-upstream-details'), false);
+    return true;
+  });
+});
+
 test('decodes raw BL122 RD values and uses its UTC measurement timestamp', async () => {
   responses = [
     { status: 200, body: LOGIN_TOKENS },
@@ -66,6 +121,9 @@ test('does not decode raw values for an unknown controller layout', async () => 
   responses = [
     { status: 200, body: LOGIN_TOKENS },
     { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'BL136_TEST', messages: { RD: '7.3,1.2,28' } }] } } },
+    { status: 200, body: { data: { getDashboardData: { data: { readingsData: [
+      { DID: 'BL136_TEST', messages: { RD: '7.3,1.2,28' } },
+    ] } } } } },
   ];
   const client = new HannaCloudClient('me@example.com', 'pw');
   await client.authenticate();
