@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin.js';
 import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters.js';
 import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source.js';
+import { HannaCloudError } from '../_lib/poolControllers/hannaCloud/client.js';
 import { syncLatestReading } from '../_lib/poolControllers/sync.js';
 
 // Pulls the latest telemetry (pH, ORP, temperature) from a Hanna Cloud
@@ -45,6 +46,13 @@ interface VercelLikeResponse {
   json(body: unknown): void;
   setHeader?(name: string, value: string): void;
 }
+
+const PROBE_DIAGNOSTIC_CODES = new Set([
+  ...['LOGIN', 'DEVICES', 'LATEST', 'DASHBOARD', 'QUERY'].flatMap((stage) =>
+    ['NETWORK', 'NOT_FOUND', 'AUTH', 'HTTP', 'JSON', 'GRAPHQL'].map((kind) => `HC_${stage}_${kind}`)),
+  'HC_LOGIN_TOKEN', 'HC_DASHBOARD_FORMAT', 'HC_DASHBOARD_AMBIGUOUS', 'HC_DASHBOARD_DEVICE',
+  'HC_TIMESTAMP_FORMAT', 'HC_TIMESTAMP_FUTURE', 'HC_TIMESTAMP_PAST', 'HC_DEVICE_NONE', 'HC_DEVICE_MULTIPLE',
+]);
 
 function bearerToken(req: VercelLikeRequest): string | undefined {
   const header = req.headers?.authorization;
@@ -230,8 +238,13 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     if (mode === 'probe') {
       // Do not send unpredictable upstream error text (or device identifiers)
       // to the client. Credentials and auth tokens are never logged.
-      console.error('Pool controller connection probe failed:', error instanceof Error ? error.name : 'unknown error');
-      res.status(502).json({ error: 'Hanna Cloud connection test failed. Check server-side credentials and device selection.' });
+      const diagnosticCode = error instanceof HannaCloudError && PROBE_DIAGNOSTIC_CODES.has(error.diagnosticCode)
+        ? error.diagnosticCode : 'HC_UNEXPECTED';
+      console.error('Pool controller connection probe failed:', diagnosticCode);
+      res.status(502).json({
+        error: `Hanna Cloud connection test failed. Diagnostic: ${diagnosticCode}.`,
+        diagnosticCode,
+      });
       return;
     }
     console.error('Pool controller sync failed:', error);
