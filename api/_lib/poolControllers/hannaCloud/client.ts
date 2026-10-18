@@ -90,6 +90,30 @@ const LAST_DEVICE_READING_QUERY = `
   }
 `;
 
+// Hanna's current dashboard uses this query rather than lastDeviceReadings.
+// Request only its data envelope and select the exact DID below; never expose
+// other devices, account preferences, or the rest of the dashboard response.
+const DASHBOARD_READING_QUERY = `
+  query GetDashboardData($modelGroup: String, $modelsList: [String], $isWebview: Boolean) {
+    getDashboardData(modelGroup: $modelGroup, modelsList: $modelsList, isWebview: $isWebview) {
+      data
+    }
+  }
+`;
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasMeasurements(reading: HannaDeviceReading): boolean {
+  return reading.parameters.some((parameter) => {
+    if (!parameter || !['ph', 'orp', 'temp'].includes(parameter.name)) return false;
+    const value = parameter.value;
+    return (typeof value === 'number' && Number.isFinite(value)) ||
+      (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)));
+  });
+}
+
 interface GraphQlRequestBody {
   operationName: string;
   variables: Record<string, unknown>;
@@ -164,6 +188,11 @@ export class HannaCloudClient {
     } catch (error) {
       throw new HannaApiError(`Hanna Cloud returned a non-JSON response: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (record(json) && Array.isArray(json.errors) && json.errors.length > 0) {
+      // GraphQL can fail with HTTP 200. Do not turn that into an apparently
+      // connected-but-empty result or include upstream messages/tokens in errors.
+      throw new HannaApiError('Hanna Cloud returned a GraphQL error.');
+    }
     const data = (json as { data?: Record<string, unknown> })?.data;
     return data ?? {};
   }
@@ -230,9 +259,47 @@ export class HannaCloudClient {
       query: LAST_DEVICE_READING_QUERY,
     });
     const readings = Array.isArray(data.lastDeviceReadings) ? data.lastDeviceReadings : [];
-    const reading = readings[0] as Record<string, unknown> | undefined;
-    if (!reading) throw new HannaDeviceNotFoundError(`No readings found for device ${deviceId}`);
+    const reading = readings.find((item) => record(item) && item.DID === deviceId) as Record<string, unknown> | undefined;
+    const legacy = reading ? this.decodeReading(reading, deviceId) : undefined;
+    if (legacy && hasMeasurements(legacy)) return legacy;
 
+    // Some controller/account responses from the legacy query have no usable
+    // parameters even while the current Hanna dashboard shows live values.
+    // Query that same read-only dashboard feed before concluding there is none.
+    const dashboard = await this.request('graphql', {
+      operationName: 'GetDashboardData',
+      variables: { modelGroup: 'BL', modelsList: ['BL122', 'BL123', 'BL132', 'BL136'], isWebview: false },
+      query: DASHBOARD_READING_QUERY,
+    });
+    const envelope = record(dashboard.getDashboardData) ? dashboard.getDashboardData.data : undefined;
+    if (!record(envelope) || !Array.isArray(envelope.readingsData)) {
+      throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.');
+    }
+    const matches = envelope.readingsData.filter((item) => record(item) && item.DID === deviceId) as Record<string, unknown>[];
+    if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.');
+    if (matches.length === 0) {
+      throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.');
+    }
+    const current = matches[0];
+    const messages = record(current.messages) ? current.messages : {};
+    const result = this.decodeReading(current, deviceId);
+    // This is the timestamp Hanna's dashboard displays for this measurement.
+    // Do not substitute the server clock or a CSV export time.
+    result.dt = messages.lastUpdate ?? result.dt;
+    if (!hasMeasurements(result)) {
+      // Schema-only diagnostics for the operator: no device IDs, measurement
+      // values, arbitrary field names, tokens, credentials, or response bodies.
+      console.info('Hanna dashboard returned no usable measurements', {
+        messagesShape: Array.isArray(current.messages) ? 'array' : typeof current.messages,
+        namedParameterCount: Array.isArray(messages.parameters) ? messages.parameters.length : 0,
+        rawReadingPresent: typeof messages.RD === 'string',
+        offline: messages.connectionState === 'offline',
+      });
+    }
+    return result;
+  }
+
+  private decodeReading(reading: Record<string, unknown>, deviceId: string): HannaDeviceReading {
     const messages = (reading.messages ?? {}) as Record<string, unknown>;
     const did = String(reading.DID ?? deviceId);
     // An empty `parameters` array carries no measurements, so it must not

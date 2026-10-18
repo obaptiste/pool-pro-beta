@@ -55,13 +55,19 @@ test('offline, missing-probe, malformed, and empty raw snapshots remain unavaila
     { RD: '7.3,680,29', EV: '100000,0,0' },
     { RD: '--,--,--' }, { RD: '7.3,680' }, { RD: ',, ' },
   ]) {
-    responses = [LOGIN_OK, rawReading(messages)];
+    responses = [LOGIN_OK, rawReading(messages), dashboardReading(messages, 'BL122_TEST')];
     const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'BL122_TEST' });
     assert.equal(await source.getLatestReading(), null);
   }
 });
-function lastReading(parameters: Array<{ name: string; value: unknown }>, dt: unknown) {
-  return { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'dev-1', DT: dt, messages: { parameters } }] } } };
+function lastReading(parameters: Array<{ name: string; value: unknown }>, dt: unknown, did = 'dev-1') {
+  return { status: 200, body: { data: { lastDeviceReadings: [{ DID: did, DT: dt, messages: { parameters } }] } } };
+}
+
+function dashboardReading(messages: Record<string, unknown>, did = 'dev-1') {
+  return { status: 200, body: { data: { getDashboardData: { data: { readingsData: [{
+    DID: did, DT: '2026-10-17T12:00:00Z', messages,
+  }] } } } } };
 }
 
 test('maps ph/orp/temp parameters onto ph/sanitisationMv/temperature', async () => {
@@ -161,6 +167,7 @@ test('returns null (not an all-null reading) when every measurement is blank, no
   responses = [
     LOGIN_OK,
     lastReading([{ name: 'ph', value: '' }, { name: 'orp', value: '   ' }, { name: 'temp', value: false }], '2026-09-19T12:00:00.000Z'),
+    dashboardReading({ parameters: [] }),
   ];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
   const reading = await source.getLatestReading();
@@ -244,7 +251,7 @@ test('auto-selects the device when exactly one is registered and no HANNA_CLOUD_
   responses = [
     LOGIN_OK,
     { status: 200, body: { data: { devices: [{ DID: 'only-device', modelGroup: 'BL12x', DINFO: { deviceName: 'Backyard Pool' } }] } } },
-    lastReading([{ name: 'ph', value: 7.5 }], '2026-09-19T12:00:00.000Z'),
+    lastReading([{ name: 'ph', value: 7.5 }], '2026-09-19T12:00:00.000Z', 'only-device'),
   ];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw' });
   const reading = await source.getLatestReading();
