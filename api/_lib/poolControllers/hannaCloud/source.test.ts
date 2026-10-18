@@ -23,6 +23,43 @@ afterEach(() => {
 });
 
 const LOGIN_OK = { status: 200, body: { data: { login: [{ tokenType: 'accessToken', token: 'tok' }] } } };
+
+function rawReading(messages: Record<string, unknown>, did = 'BL122_TEST') {
+  return { status: 200, body: { data: { lastDeviceReadings: [{
+    DID: did, DT: '2026-10-17T12:00:00Z', messages,
+  }] } } };
+}
+
+test('raw BL122 telemetry reaches the source as real measurements, including abnormal values', async () => {
+  for (const [ph, orp] of [[7.3, 680], [6.8, 233], [8.2, 850]]) {
+    responses = [LOGIN_OK, rawReading({ RD: `${ph},${orp},29.1`, EV: '0,0,0' })];
+    const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'BL122_TEST' });
+    assert.deepEqual(await source.getLatestReading(), {
+      ph, sanitisationMv: orp, temperature: 29.1, recordedAt: new Date('2026-10-17T12:00:00Z'),
+    });
+  }
+});
+
+test('raw placeholders do not invent zeroes and partial measurements remain usable', async () => {
+  responses = [LOGIN_OK, rawReading({ RD: '--,680, ' })];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'BL122_TEST' });
+  const reading = await source.getLatestReading();
+  assert.equal(reading?.ph, null);
+  assert.equal(reading?.sanitisationMv, 680);
+  assert.equal(reading?.temperature, null);
+});
+
+test('offline, missing-probe, malformed, and empty raw snapshots remain unavailable', async () => {
+  for (const messages of [
+    { RD: '7.3,680,29', connectionState: 'offline' },
+    { RD: '7.3,680,29', EV: '100000,0,0' },
+    { RD: '--,--,--' }, { RD: '7.3,680' }, { RD: ',, ' },
+  ]) {
+    responses = [LOGIN_OK, rawReading(messages)];
+    const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'BL122_TEST' });
+    assert.equal(await source.getLatestReading(), null);
+  }
+});
 function lastReading(parameters: Array<{ name: string; value: unknown }>, dt: unknown) {
   return { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'dev-1', DT: dt, messages: { parameters } }] } } };
 }

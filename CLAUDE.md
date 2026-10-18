@@ -237,6 +237,17 @@ The Hanna connection uses an unofficial API; this proof of connectivity
 does not imply a supported Hanna API or guarantee future availability.
 
 ### Pool controller telemetry (Hanna Cloud)
+The client accepts both named `messages.parameters` and raw BL122/BL123/BL132
+`messages.RD` telemetry. Hanna's public web bundle (observed 2026-10-18,
+`https://www.hannacloud.com/static/js/main.3aa1b267.js`) decodes the first three
+comma-separated RD fields as pH, ORP mV, and temperature C. The adapter follows
+that mapping only for those device models; it does not interpret dosing-volume
+fields as chemistry readings. Raw snapshots marked offline or with the
+`no_probe_connected` alarm bit yield no measurements. Blank/`--` values stay
+unavailable. Named parameters retain precedence. For raw messages only, an
+offset-less ISO DT is interpreted as UTC, matching Hanna's own `dayjs.utc`
+decoder; normal calendar and clock-skew validation still runs in the source.
+
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
 controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`
 (`sanitisationMv` is ORP in mV). The controller doesn't measure
