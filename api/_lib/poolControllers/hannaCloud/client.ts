@@ -279,9 +279,12 @@ export class HannaCloudClient {
     // Some controller/account responses from the legacy query have no usable
     // parameters even while the current Hanna dashboard shows live values.
     // Query that same read-only dashboard feed before concluding there is none.
+    // modelGroup must be Hanna's own BL12x group name (the same one the device
+    // list reports). Hanna's web app has no 'BL' group, so a wrong value makes
+    // the feed omit the controller and fail with HC_DASHBOARD_DEVICE.
     const dashboard = await this.request('graphql', {
       operationName: 'GetDashboardData',
-      variables: { modelGroup: 'BL', modelsList: ['BL122', 'BL123', 'BL132', 'BL136'], isWebview: false },
+      variables: { modelGroup: 'BL12x', modelsList: ['BL122', 'BL123', 'BL132', 'BL136'], isWebview: false },
       query: DASHBOARD_READING_QUERY,
     });
     const envelope = record(dashboard.getDashboardData) ? dashboard.getDashboardData.data : undefined;

@@ -58,6 +58,8 @@ test('falls back to the current dashboard query and selects the exact DID, not t
   assert.deepEqual(calls.map((call) => call.body.operationName), ['Login', 'GetLastDeviceReading', 'GetDashboardData']);
   assert.equal(calls[2].headers.authorization, 'Bearer access-123');
   assert.match(String(calls[2].body.query), /query GetDashboardData/);
+  // Must match Hanna's own group name for BL12x controllers, not a made-up 'BL'.
+  assert.equal((calls[2].body.variables as Record<string, unknown>).modelGroup, 'BL12x');
 });
 
 test('never substitutes a different device or an ambiguous matching snapshot', async () => {
