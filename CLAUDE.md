@@ -215,6 +215,14 @@ schedule) plus four write tools:
   fix, same reasoning as the unbounded `readings` growth limitation below.
 
 ### Hanna Cloud read-only connection probe
+Failed probes include a fixed, non-sensitive `diagnosticCode` in both the
+server log and the displayed error. Codes identify the request stage (`LOGIN`,
+`DEVICES`, `LATEST`, `DASHBOARD`) and failure category (`NETWORK`, `AUTH`,
+`HTTP`, `JSON`, `GRAPHQL`), or a local response-format/device/timestamp check.
+They are allowlisted before returning to the browser; unknown failures become
+`HC_UNEXPECTED`. Do not log upstream exception text or assume all failures
+mean bad credentials. A failed probe still performs no Firestore writes.
+
 The dashboard's **Test connection** action uses the signed-in owner's Firebase ID
 token to POST to `/api/cron/sync-pool-controller?mode=probe`. The endpoint
 reuses the same HannaCloudSource used by scheduled sync, but calls only

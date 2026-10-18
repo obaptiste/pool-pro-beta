@@ -110,14 +110,14 @@ function parseHannaTimestamp(dt: unknown): Date {
     const ms = dt < 1e12 ? dt * 1000 : dt;
     parsed = new Date(ms);
   }
-  if (!parsed) {
-    throw new HannaCloudError(`Unrecognized Hanna Cloud reading timestamp: ${JSON.stringify(dt)}`);
+  if (!parsed || !Number.isFinite(parsed.getTime())) {
+    throw new HannaCloudError('Unrecognized Hanna Cloud reading timestamp.', 'HC_TIMESTAMP_FORMAT');
   }
   if (parsed.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
-    throw new HannaCloudError(`Hanna Cloud reading timestamp is implausibly far in the future: ${parsed.toISOString()}`);
+    throw new HannaCloudError('Hanna Cloud reading timestamp is implausibly far in the future.', 'HC_TIMESTAMP_FUTURE');
   }
   if (parsed.getTime() < MIN_PLAUSIBLE_MS) {
-    throw new HannaCloudError(`Hanna Cloud reading timestamp is implausibly far in the past: ${parsed.toISOString()}`);
+    throw new HannaCloudError('Hanna Cloud reading timestamp is implausibly far in the past.', 'HC_TIMESTAMP_PAST');
   }
   return parsed;
 }
@@ -154,11 +154,11 @@ export class HannaCloudSource implements PoolControllerSource {
 
     const devices = await this.client.getDevices();
     if (devices.length === 0) {
-      throw new HannaCloudError('This Hanna Cloud account has no BL12x/BL13x devices registered.');
+      throw new HannaCloudError('This Hanna Cloud account has no BL12x/BL13x devices registered.', 'HC_DEVICE_NONE');
     }
     if (devices.length > 1) {
       const names = devices.map((d) => `${d.deviceName} (${d.did})`).join(', ');
-      throw new HannaCloudError(`Multiple Hanna Cloud devices found (${names}) — set HANNA_CLOUD_DEVICE_ID to pick one.`);
+      throw new HannaCloudError(`Multiple Hanna Cloud devices found (${names}) — set HANNA_CLOUD_DEVICE_ID to pick one.`, 'HC_DEVICE_MULTIPLE');
     }
     this.resolvedDeviceId = devices[0].did;
     return this.resolvedDeviceId;

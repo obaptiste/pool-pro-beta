@@ -21,21 +21,17 @@ const ENCRYPTION_KEY_BASE64 = 'MzJmODBmMDU0ZTAyNDFjYWM0YTVhOGQxY2ZlZTkwMDM=';
 
 const IV_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-// Each class sets its own `name`: the probe logs only error.name, and without
-// this every Hanna failure would log as a plain "Error".
 export class HannaCloudError extends Error {
-  name = 'HannaCloudError';
-}
-export class HannaAuthenticationError extends HannaCloudError {
-  name = 'HannaAuthenticationError';
-}
-export class HannaDeviceNotFoundError extends HannaCloudError {
-  name = 'HannaDeviceNotFoundError';
-}
-export class HannaApiError extends HannaCloudError {
-  name = 'HannaApiError';
-  constructor(message: string, readonly statusCode?: number) {
+  constructor(message: string, readonly diagnosticCode = 'HC_UNEXPECTED') {
     super(message);
+    this.name = new.target.name;
+  }
+}
+export class HannaAuthenticationError extends HannaCloudError {}
+export class HannaDeviceNotFoundError extends HannaCloudError {}
+export class HannaApiError extends HannaCloudError {
+  constructor(message: string, readonly statusCode?: number, diagnosticCode = 'HC_API') {
+    super(message, diagnosticCode);
   }
 }
 
@@ -165,15 +161,23 @@ export class HannaCloudClient {
   }
 
   private async request(endpoint: 'auth' | 'graphql', body: GraphQlRequestBody, isRetry = false): Promise<Record<string, unknown>> {
-    const response = await fetch(`${BASE_URL}/${endpoint}`, {
-      method: 'POST',
-      headers: {
-        Accept: '*/*',
-        'content-type': 'application/json',
-        ...(this.accessToken ? { authorization: `Bearer ${this.accessToken}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    // Only this fixed, local allowlist enters diagnostic codes. Never include
+    // query text, upstream error messages, IDs, credentials, or response bodies.
+    const stage = ({ Login: 'LOGIN', Devices: 'DEVICES', GetLastDeviceReading: 'LATEST', GetDashboardData: 'DASHBOARD' } as Record<string, string>)[body.operationName] ?? 'QUERY';
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          Accept: '*/*',
+          'content-type': 'application/json',
+          ...(this.accessToken ? { authorization: `Bearer ${this.accessToken}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new HannaApiError('Hanna Cloud could not be reached.', undefined, `HC_${stage}_NETWORK`);
+    }
 
     // Re-auth-and-retry-once only applies to authenticated GraphQL calls
     // whose token has expired. A 403 on the auth/login call itself means
@@ -186,21 +190,21 @@ export class HannaCloudClient {
     }
 
     if (!response.ok) {
-      if (response.status === 404) throw new HannaDeviceNotFoundError(`Resource not found: ${endpoint}`);
-      if (response.status === 401 || response.status === 403) throw new HannaAuthenticationError('Invalid Hanna Cloud credentials or expired token.');
-      throw new HannaApiError(`Hanna Cloud request failed: HTTP ${response.status}`, response.status);
+      if (response.status === 404) throw new HannaDeviceNotFoundError(`Resource not found: ${endpoint}`, `HC_${stage}_NOT_FOUND`);
+      if (response.status === 401 || response.status === 403) throw new HannaAuthenticationError('Invalid Hanna Cloud credentials or expired token.', `HC_${stage}_AUTH`);
+      throw new HannaApiError(`Hanna Cloud request failed: HTTP ${response.status}`, response.status, `HC_${stage}_HTTP`);
     }
 
     let json: unknown;
     try {
       json = await response.json();
-    } catch (error) {
-      throw new HannaApiError(`Hanna Cloud returned a non-JSON response: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
+      throw new HannaApiError('Hanna Cloud returned a non-JSON response.', undefined, `HC_${stage}_JSON`);
     }
     if (record(json) && Array.isArray(json.errors) && json.errors.length > 0) {
       // GraphQL can fail with HTTP 200. Do not turn that into an apparently
       // connected-but-empty result or include upstream messages/tokens in errors.
-      throw new HannaApiError('Hanna Cloud returned a GraphQL error.');
+      throw new HannaApiError('Hanna Cloud returned a GraphQL error.', undefined, `HC_${stage}_GRAPHQL`);
     }
     const data = (json as { data?: Record<string, unknown> })?.data;
     return data ?? {};
@@ -231,11 +235,11 @@ export class HannaCloudClient {
     }
 
     if (!Array.isArray(tokens) || tokens.length === 0) {
-      throw new HannaAuthenticationError('Hanna Cloud login did not return an access token — check HANNA_CLOUD_EMAIL/HANNA_CLOUD_PASSWORD.');
+      throw new HannaAuthenticationError('Hanna Cloud login did not return an access token — check HANNA_CLOUD_EMAIL/HANNA_CLOUD_PASSWORD.', 'HC_LOGIN_TOKEN');
     }
     const accessToken = (tokens as Array<{ tokenType?: string; token?: string }>).find((t) => t.tokenType === 'accessToken')?.token;
     if (!accessToken) {
-      throw new HannaAuthenticationError('Hanna Cloud login response did not include an accessToken.');
+      throw new HannaAuthenticationError('Hanna Cloud login response did not include an accessToken.', 'HC_LOGIN_TOKEN');
     }
     this.accessToken = accessToken;
   }
@@ -282,12 +286,12 @@ export class HannaCloudClient {
     });
     const envelope = record(dashboard.getDashboardData) ? dashboard.getDashboardData.data : undefined;
     if (!record(envelope) || !Array.isArray(envelope.readingsData)) {
-      throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.');
+      throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.', undefined, 'HC_DASHBOARD_FORMAT');
     }
     const matches = envelope.readingsData.filter((item) => record(item) && item.DID === deviceId) as Record<string, unknown>[];
-    if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.');
+    if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.', undefined, 'HC_DASHBOARD_AMBIGUOUS');
     if (matches.length === 0) {
-      throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.');
+      throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
     }
     const current = matches[0];
     const messages = record(current.messages) ? current.messages : {};

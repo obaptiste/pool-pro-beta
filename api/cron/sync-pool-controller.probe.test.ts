@@ -156,4 +156,55 @@ test('probe returns a generic failure rather than Hanna upstream error text', as
   assert.equal(result.status, 502);
   assert.equal(result.body.error.includes('secret-value'), false);
   assert.equal(calls.length, 1);
+  assert.equal(result.body.diagnosticCode, 'HC_LOGIN_AUTH');
+});
+
+test('probe distinguishes query failures and dashboard format errors without upstream details', async () => {
+  process.env.HANNA_CLOUD_DEVICE_ID = 'dev-1';
+  const empty = { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'dev-1', messages: { parameters: [] } }] } } };
+  const graphQlError = { status: 200, body: { errors: [{ message: 'private-token-and-device-details' }] } };
+  for (const scenario of [
+    { replies: [graphQlError], code: 'HC_LATEST_GRAPHQL' },
+    { replies: [empty, graphQlError], code: 'HC_DASHBOARD_GRAPHQL' },
+    { replies: [empty, { status: 200, body: { data: {} } }], code: 'HC_DASHBOARD_FORMAT' },
+    { replies: [empty, { status: 200, body: { data: { getDashboardData: { data: { readingsData: [] } } } } }], code: 'HC_DASHBOARD_DEVICE' },
+  ]) {
+    answers = [{ status: 200, body: AUTH_OK }, ...scenario.replies];
+    const result = await request();
+    assert.equal(result.status, 502);
+    assert.equal(result.body.diagnosticCode, scenario.code);
+    assert.match(result.body.error, new RegExp(scenario.code));
+    for (const privateText of ['private-token', 'dev-1', 'fake-access-token', 'test-password']) {
+      assert.equal(JSON.stringify(result.body).includes(privateText), false);
+    }
+  }
+});
+
+test('probe identifies measurement timestamp validation separately from credentials', async () => {
+  process.env.HANNA_CLOUD_DEVICE_ID = 'dev-1';
+  for (const [dt, code] of [
+    ['not-a-timestamp', 'HC_TIMESTAMP_FORMAT'],
+    [new Date(Date.now() + 86_400_000).toISOString(), 'HC_TIMESTAMP_FUTURE'],
+    ['1970-01-01T00:00:00Z', 'HC_TIMESTAMP_PAST'],
+  ]) {
+    answers = [
+      { status: 200, body: AUTH_OK },
+      { status: 200, body: { data: { lastDeviceReadings: [{
+        DID: 'dev-1', DT: dt, messages: { parameters: [{ name: 'ph', value: 7.51 }] },
+      }] } } },
+    ];
+    const result = await request();
+    assert.equal(result.status, 502);
+    assert.equal(result.body.diagnosticCode, code);
+    assert.equal(result.body.error.includes('credentials'), false);
+    assert.equal(result.body.error.includes(dt), false);
+  }
+});
+
+test('network errors do not expose their original text in the probe result', async () => {
+  globalThis.fetch = async () => { throw new Error('password-secret upstream-url'); };
+  const result = await request();
+  assert.equal(result.status, 502);
+  assert.equal(result.body.diagnosticCode, 'HC_LOGIN_NETWORK');
+  assert.equal(JSON.stringify(result.body).includes('password-secret'), false);
 });
