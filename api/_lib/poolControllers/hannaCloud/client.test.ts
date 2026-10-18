@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { HannaAuthenticationError, HannaCloudClient } from './client.js';
+import {
+  HannaApiError, HannaAuthenticationError, HannaCloudClient, HannaCloudError, HannaDeviceNotFoundError,
+} from './client.js';
 
 type Call = { url: string; body: Record<string, unknown>; headers: Record<string, string> };
 
@@ -128,6 +130,15 @@ test('does not decode raw values for an unknown controller layout', async () => 
   const client = new HannaCloudClient('me@example.com', 'pw');
   await client.authenticate();
   assert.deepEqual((await client.getLastDeviceReading('BL136_TEST')).parameters, []);
+});
+
+test('each Hanna error class reports its own name, so probe logs say what failed', () => {
+  assert.equal(new HannaCloudError('x').name, 'HannaCloudError');
+  assert.equal(new HannaAuthenticationError('x').name, 'HannaAuthenticationError');
+  assert.equal(new HannaDeviceNotFoundError('x').name, 'HannaDeviceNotFoundError');
+  assert.equal(new HannaApiError('x', 500).name, 'HannaApiError');
+  assert.equal(new HannaApiError('x', 500).statusCode, 500);
+  assert.ok(new HannaAuthenticationError('x') instanceof HannaCloudError);
 });
 
 test('authenticate() AES-encrypts email/password as "<16-char iv>:<hex>" rather than sending them in the clear', async () => {
