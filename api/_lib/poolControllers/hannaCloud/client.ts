@@ -106,6 +106,12 @@ const DASHBOARD_READING_QUERY = `
   }
 `;
 
+// Model-group names Hanna's web bundle defines for BL controllers (BL12x,
+// BL13x, BL13xs). The dashboard feed only returns a controller under its own
+// group, and this integration doesn't know which group a device is in.
+const DASHBOARD_MODEL_GROUPS = ['BL12x', 'BL13x', 'BL13xs'] as const;
+const DASHBOARD_MODELS = ['BL122', 'BL123', 'BL132', 'BL136'];
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -279,24 +285,7 @@ export class HannaCloudClient {
     // Some controller/account responses from the legacy query have no usable
     // parameters even while the current Hanna dashboard shows live values.
     // Query that same read-only dashboard feed before concluding there is none.
-    // modelGroup must be Hanna's own BL12x group name (the same one the device
-    // list reports). Hanna's web app has no 'BL' group, so a wrong value makes
-    // the feed omit the controller and fail with HC_DASHBOARD_DEVICE.
-    const dashboard = await this.request('graphql', {
-      operationName: 'GetDashboardData',
-      variables: { modelGroup: 'BL12x', modelsList: ['BL122', 'BL123', 'BL132', 'BL136'], isWebview: false },
-      query: DASHBOARD_READING_QUERY,
-    });
-    const envelope = record(dashboard.getDashboardData) ? dashboard.getDashboardData.data : undefined;
-    if (!record(envelope) || !Array.isArray(envelope.readingsData)) {
-      throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.', undefined, 'HC_DASHBOARD_FORMAT');
-    }
-    const matches = envelope.readingsData.filter((item) => record(item) && item.DID === deviceId) as Record<string, unknown>[];
-    if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.', undefined, 'HC_DASHBOARD_AMBIGUOUS');
-    if (matches.length === 0) {
-      throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
-    }
-    const current = matches[0];
+    const current = await this.findDashboardReading(deviceId);
     const messages = record(current.messages) ? current.messages : {};
     const result = this.decodeReading(current, deviceId);
     // This is the timestamp Hanna's dashboard displays for this measurement.
@@ -313,6 +302,30 @@ export class HannaCloudClient {
       });
     }
     return result;
+  }
+
+  /**
+   * Finds the exact configured device in Hanna's dashboard feed. The feed is
+   * filtered by model group, so each group Hanna's web app defines is tried in
+   * turn (the first one that contains the device wins). Only the dashboard
+   * feed is read here; nothing is written and no other device is substituted.
+   */
+  private async findDashboardReading(deviceId: string): Promise<Record<string, unknown>> {
+    for (const modelGroup of DASHBOARD_MODEL_GROUPS) {
+      const dashboard = await this.request('graphql', {
+        operationName: 'GetDashboardData',
+        variables: { modelGroup, modelsList: DASHBOARD_MODELS, isWebview: false },
+        query: DASHBOARD_READING_QUERY,
+      });
+      const envelope = record(dashboard.getDashboardData) ? dashboard.getDashboardData.data : undefined;
+      if (!record(envelope) || !Array.isArray(envelope.readingsData)) {
+        throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.', undefined, 'HC_DASHBOARD_FORMAT');
+      }
+      const matches = envelope.readingsData.filter((item) => record(item) && item.DID === deviceId) as Record<string, unknown>[];
+      if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.', undefined, 'HC_DASHBOARD_AMBIGUOUS');
+      if (matches.length === 1) return matches[0];
+    }
+    throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
   }
 
   private decodeReading(reading: Record<string, unknown>, deviceId: string): HannaDeviceReading {

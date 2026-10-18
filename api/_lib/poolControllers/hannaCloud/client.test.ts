@@ -62,6 +62,23 @@ test('falls back to the current dashboard query and selects the exact DID, not t
   assert.equal((calls[2].body.variables as Record<string, unknown>).modelGroup, 'BL12x');
 });
 
+test('finds a BL13x controller that only appears under its own dashboard group', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'BL132_TEST', messages: { parameters: [] } }] } } },
+    dashboardData([{ DID: 'BL122_OTHER', messages: { parameters: DASHBOARD_PARAMETERS } }]),
+    dashboardData([{ DID: 'BL132_TEST', DT: '2026-10-17T11:00:00Z', messages: {
+      lastUpdate: '2026-10-17T12:00:00Z', parameters: DASHBOARD_PARAMETERS,
+    } }]),
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual((await client.getLastDeviceReading('BL132_TEST')).parameters, DASHBOARD_PARAMETERS);
+  const groups = calls.filter((call) => call.body.operationName === 'GetDashboardData')
+    .map((call) => (call.body.variables as Record<string, unknown>).modelGroup);
+  assert.deepEqual(groups, ['BL12x', 'BL13x']);
+});
+
 test('never substitutes a different device or an ambiguous matching snapshot', async () => {
   for (const snapshots of [
     [{ DID: 'BL122_OTHER', messages: { parameters: DASHBOARD_PARAMETERS } }],
@@ -69,7 +86,7 @@ test('never substitutes a different device or an ambiguous matching snapshot', a
   ]) {
     responses = [
       { status: 200, body: LOGIN_TOKENS }, { status: 200, body: { data: { lastDeviceReadings: [] } } },
-      dashboardData(snapshots),
+      dashboardData(snapshots), dashboardData(snapshots), dashboardData(snapshots),
     ];
     const client = new HannaCloudClient('me@example.com', 'pw');
     await client.authenticate();

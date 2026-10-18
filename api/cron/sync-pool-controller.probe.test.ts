@@ -167,7 +167,7 @@ test('probe distinguishes query failures and dashboard format errors without ups
     { replies: [graphQlError], code: 'HC_LATEST_GRAPHQL' },
     { replies: [empty, graphQlError], code: 'HC_DASHBOARD_GRAPHQL' },
     { replies: [empty, { status: 200, body: { data: {} } }], code: 'HC_DASHBOARD_FORMAT' },
-    { replies: [empty, { status: 200, body: { data: { getDashboardData: { data: { readingsData: [] } } } } }], code: 'HC_DASHBOARD_DEVICE' },
+    { replies: [empty, ...Array(3).fill({ status: 200, body: { data: { getDashboardData: { data: { readingsData: [] } } } } })], code: 'HC_DASHBOARD_DEVICE' },
   ]) {
     answers = [{ status: 200, body: AUTH_OK }, ...scenario.replies];
     const result = await request();
