@@ -98,6 +98,25 @@ test('missing bearer is rejected before contacting Hanna Cloud', async () => {
   assert.equal(calls.length, 0);
 });
 
+test('probe decodes raw BL122 RD telemetry without invoking the Firestore write path', async () => {
+  process.env.HANNA_CLOUD_DEVICE_ID = 'BL122_TEST';
+  answers = [
+    { status: 200, body: AUTH_OK },
+    { status: 200, body: { data: { lastDeviceReadings: [{
+      DID: 'BL122_TEST', DT: new Date(Date.now() - 60_000).toISOString(),
+      messages: { RD: '7.3,680,29.1', EV: '0,0,0' },
+    }] } } },
+  ];
+  const result = await request();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.written, false);
+  assert.equal(result.body.outcome, 'reading-available');
+  assert.equal(result.body.reading.ph, 7.3);
+  assert.equal(result.body.reading.sanitisationMv, 680);
+  assert.equal(result.body.reading.temperature, 29.1);
+  assert.deepEqual(calls.map((call) => call.body.operationName), ['Login', 'GetLastDeviceReading']);
+});
+
 test('invalid mode fails closed before contacting Hanna Cloud', async () => {
   const result = await request('probe-test-secret', 'proeb');
   assert.equal(result.status, 400);

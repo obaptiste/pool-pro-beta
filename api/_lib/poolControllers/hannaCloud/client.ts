@@ -96,6 +96,31 @@ interface GraphQlRequestBody {
   query: string;
 }
 
+/** Hanna's BL12x/BL132 web decoder maps RD to pH, ORP mV, temperature C.
+ * Verified against https://www.hannacloud.com/static/js/main.3aa1b267.js
+ * (2026-10-18). Other model layouts must not be guessed from array positions.
+ */
+function decodeRawPoolParameters(did: string, messages: Record<string, unknown>): HannaReadingParameter[] {
+  if (!/^BL(?:122|123|132)_/.test(did) || typeof messages.RD !== 'string') return [];
+  // The vendor suppresses RD when connectionState is present or EV bit 20
+  // signals no_probe_connected. Numeric-looking cached values are not evidence
+  // of a working probe in either case.
+  if (Object.prototype.hasOwnProperty.call(messages, 'connectionState')) return [];
+  const alarm = typeof messages.EV === 'string' ? messages.EV.split(',')[0] : undefined;
+  if (alarm && /^[0-9a-f]{1,64}$/i.test(alarm) && (BigInt(`0x${alarm}`) & (1n << 20n)) !== 0n) return [];
+  const values = messages.RD.split(',');
+  if (values.length !== 3 && values.length !== 4) return [];
+  return ['ph', 'orp', 'temp'].map((name, index) => ({ name, value: values[index] }));
+}
+
+function rawPoolTimestamp(value: unknown): unknown {
+  // Hanna's raw decoder explicitly interprets DT as UTC (dayjs.utc), including
+  // timestamps without a timezone. Only add the zone for that raw format;
+  // source.ts still validates the calendar and checks clock skew.
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+    ? `${value}Z` : value;
+}
+
 export class HannaCloudClient {
   private accessToken: string | undefined;
   private readonly email: string;
@@ -209,7 +234,15 @@ export class HannaCloudClient {
     if (!reading) throw new HannaDeviceNotFoundError(`No readings found for device ${deviceId}`);
 
     const messages = (reading.messages ?? {}) as Record<string, unknown>;
-    const parameters = Array.isArray(messages.parameters) ? (messages.parameters as HannaReadingParameter[]) : [];
-    return { did: String(reading.DID ?? deviceId), dt: reading.DT, parameters };
+    const did = String(reading.DID ?? deviceId);
+    // An empty `parameters` array carries no measurements, so it must not
+    // shadow raw RD telemetry on the same snapshot.
+    const hasNamedParameters = Array.isArray(messages.parameters) && messages.parameters.length > 0;
+    const parameters = hasNamedParameters
+      ? (messages.parameters as HannaReadingParameter[])
+      : decodeRawPoolParameters(did, messages);
+    const rawPoolFormat = !hasNamedParameters && /^BL(?:122|123|132)_/.test(did) && typeof messages.RD === 'string';
+    const dt = rawPoolFormat ? rawPoolTimestamp(reading.DT ?? messages.DT) : reading.DT;
+    return { did, dt, parameters };
   }
 }

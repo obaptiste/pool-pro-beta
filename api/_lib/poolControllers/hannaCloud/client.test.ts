@@ -32,6 +32,46 @@ afterEach(() => {
 
 const LOGIN_TOKENS = { data: { login: [{ tokenType: 'accessToken', token: 'access-123' }, { tokenType: 'refreshToken', token: 'refresh-456' }] } };
 
+test('decodes raw BL122 RD values and uses its UTC measurement timestamp', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{
+      DID: 'BL122_TEST', messages: { RD: '7.30,680,29.1', DT: '2026-10-17T12:00:00', EV: '0,0,0', DV: '100,200' },
+    }] } } },
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual(await client.getLastDeviceReading('BL122_TEST'), {
+    did: 'BL122_TEST', dt: '2026-10-17T12:00:00Z', parameters: [
+      { name: 'ph', value: '7.30' }, { name: 'orp', value: '680' }, { name: 'temp', value: '29.1' },
+    ],
+  });
+});
+
+test('an empty named parameters array does not hide raw RD telemetry', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{
+      DID: 'BL122_TEST', DT: '2026-10-17T12:00:00Z', messages: { parameters: [], RD: '7.30,680,29.1', EV: '0,0,0' },
+    }] } } },
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual((await client.getLastDeviceReading('BL122_TEST')).parameters, [
+    { name: 'ph', value: '7.30' }, { name: 'orp', value: '680' }, { name: 'temp', value: '29.1' },
+  ]);
+});
+
+test('does not decode raw values for an unknown controller layout', async () => {
+  responses = [
+    { status: 200, body: LOGIN_TOKENS },
+    { status: 200, body: { data: { lastDeviceReadings: [{ DID: 'BL136_TEST', messages: { RD: '7.3,1.2,28' } }] } } },
+  ];
+  const client = new HannaCloudClient('me@example.com', 'pw');
+  await client.authenticate();
+  assert.deepEqual((await client.getLastDeviceReading('BL136_TEST')).parameters, []);
+});
+
 test('authenticate() AES-encrypts email/password as "<16-char iv>:<hex>" rather than sending them in the clear', async () => {
   responses = [{ status: 200, body: LOGIN_TOKENS }];
   const client = new HannaCloudClient('me@example.com', 'hunter2');
