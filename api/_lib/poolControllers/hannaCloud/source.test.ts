@@ -212,6 +212,22 @@ test('rejects a non-ISO but JS-parseable timestamp string instead of accepting a
   await assert.rejects(() => source.getLatestReading(), HannaCloudError);
 });
 
+test('reads an offset-less timestamp as UTC, not the server time zone', async () => {
+  // Hanna sends offset-less times; Hanna's decoder reads them as UTC. Pinning
+  // the Z explicitly keeps the result independent of the process TZ.
+  const recent = new Date(Date.now() - 60_000).toISOString().slice(0, 19);
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], recent)];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  const reading = await source.getLatestReading();
+  assert.equal(reading?.recordedAt.getTime(), Date.parse(`${recent}Z`));
+});
+
+test('still rejects a calendar-invalid offset-less timestamp', async () => {
+  responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], '2026-02-30T12:00:00')];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'dev-1' });
+  await assert.rejects(() => source.getLatestReading(), HannaCloudError);
+});
+
 test('accepts a numeric epoch-seconds timestamp', async () => {
   const epochSeconds = Math.floor((Date.now() - 60_000) / 1000); // one minute ago
   responses = [LOGIN_OK, lastReading([{ name: 'ph', value: 7.2 }], epochSeconds)];

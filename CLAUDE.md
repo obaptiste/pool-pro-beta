@@ -255,9 +255,13 @@ comma-separated RD fields as pH, ORP mV, and temperature C. The adapter follows
 that mapping only for those device models; it does not interpret dosing-volume
 fields as chemistry readings. Raw snapshots marked offline or with the
 `no_probe_connected` alarm bit yield no measurements. Blank/`--` values stay
-unavailable. Named parameters retain precedence. For raw messages only, an
-offset-less ISO DT is interpreted as UTC, matching Hanna's own `dayjs.utc`
-decoder; normal calendar and clock-skew validation still runs in the source.
+unavailable. Named parameters retain precedence. Every Hanna timestamp
+(legacy `DT`, raw `DT`, dashboard `lastUpdate`) may be offset-less ISO; source.ts
+reads it as UTC, matching Hanna's own `dayjs.utc` decoder, and pins the Z
+explicitly rather than letting Date parse local time. This is an assumption for
+the named-parameter and dashboard paths; the raw path is the one the bundle
+confirms. Calendar and clock-skew validation still runs in the source.
+Hanna error classes set `name`, and the probe logs that name server-side.
 
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
 controller via Hanna Cloud and logs its pH/ORP/temperature as a `Reading`

@@ -21,10 +21,19 @@ const ENCRYPTION_KEY_BASE64 = 'MzJmODBmMDU0ZTAyNDFjYWM0YTVhOGQxY2ZlZTkwMDM=';
 
 const IV_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-export class HannaCloudError extends Error {}
-export class HannaAuthenticationError extends HannaCloudError {}
-export class HannaDeviceNotFoundError extends HannaCloudError {}
+// Each class sets its own `name`: the probe logs only error.name, and without
+// this every Hanna failure would log as a plain "Error".
+export class HannaCloudError extends Error {
+  name = 'HannaCloudError';
+}
+export class HannaAuthenticationError extends HannaCloudError {
+  name = 'HannaAuthenticationError';
+}
+export class HannaDeviceNotFoundError extends HannaCloudError {
+  name = 'HannaDeviceNotFoundError';
+}
 export class HannaApiError extends HannaCloudError {
+  name = 'HannaApiError';
   constructor(message: string, readonly statusCode?: number) {
     super(message);
   }
