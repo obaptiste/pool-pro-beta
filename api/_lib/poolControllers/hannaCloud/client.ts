@@ -235,7 +235,9 @@ export class HannaCloudClient {
 
     const messages = (reading.messages ?? {}) as Record<string, unknown>;
     const did = String(reading.DID ?? deviceId);
-    const hasNamedParameters = Array.isArray(messages.parameters);
+    // An empty `parameters` array carries no measurements, so it must not
+    // shadow raw RD telemetry on the same snapshot.
+    const hasNamedParameters = Array.isArray(messages.parameters) && messages.parameters.length > 0;
     const parameters = hasNamedParameters
       ? (messages.parameters as HannaReadingParameter[])
       : decodeRawPoolParameters(did, messages);
