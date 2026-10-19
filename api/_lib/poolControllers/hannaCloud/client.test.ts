@@ -79,6 +79,33 @@ test('finds a BL13x controller that only appears under its own dashboard group',
   assert.deepEqual(groups, ['BL12x', 'BL13x']);
 });
 
+test('logs a schema-only summary, without device IDs, when the device is missing from every group', async () => {
+  const logged: unknown[][] = [];
+  const originalInfo = console.info;
+  console.info = (...args: unknown[]) => { logged.push(args); };
+  try {
+    responses = [
+      { status: 200, body: LOGIN_TOKENS }, { status: 200, body: { data: { lastDeviceReadings: [] } } },
+      dashboardData([{ DID: 'BL122_OTHER', modelGroup: 'BL12x', DM: 'BL122' }]),
+      dashboardData([]), dashboardData([]),
+    ];
+    const client = new HannaCloudClient('me@example.com', 'pw');
+    await client.authenticate();
+    await assert.rejects(() => client.getLastDeviceReading('BL122_TEST'), (error: Error) => {
+      assert.equal((error as HannaDeviceNotFoundError).diagnosticCode, 'HC_DASHBOARD_DEVICE');
+      return true;
+    });
+  } finally {
+    console.info = originalInfo;
+  }
+  // Check the text a console would print, not the raw arguments.
+  const summary = logged.map((args) => args.map(String).join(' ')).join('\n');
+  assert.match(summary, /"modelGroups":\["BL12x"\]/);
+  assert.match(summary, /"models":\["BL122"\]/);
+  assert.equal(summary.includes('BL122_OTHER'), false);
+  assert.equal(summary.includes('BL122_TEST'), false);
+});
+
 test('never substitutes a different device or an ambiguous matching snapshot', async () => {
   for (const snapshots of [
     [{ DID: 'BL122_OTHER', messages: { parameters: DASHBOARD_PARAMETERS } }],
