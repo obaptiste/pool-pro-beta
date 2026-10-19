@@ -314,6 +314,7 @@ export class HannaCloudClient {
     // Schema-only summary of what each group returned, for diagnosing a miss:
     // counts and model/group labels, never device IDs or values.
     const groupSummaries: Array<{ modelGroup: string; entries: number; modelGroups: string[]; models: string[] }> = [];
+    const feedDeviceIds = new Set<string>();
     for (const modelGroup of DASHBOARD_MODEL_GROUPS) {
       const dashboard = await this.request('graphql', {
         operationName: 'GetDashboardData',
@@ -334,10 +335,15 @@ export class HannaCloudClient {
         modelGroups: [...new Set(entries.map((item) => String(item.modelGroup ?? 'unset')))].slice(0, 10),
         models: [...new Set(entries.map((item) => String(item.DM ?? 'unset')))].slice(0, 10),
       });
+      for (const item of entries) feedDeviceIds.add(String(item.DID));
     }
     // Serialised: console.info stops at depth 2, so nested label arrays would
     // otherwise print as [Array] in the Vercel log.
     console.info('Hanna dashboard feed has no entry for the selected device', JSON.stringify({ groups: groupSummaries }));
+    // TEMPORARY diagnostic (approved by the account owner): prints the ID the
+    // server selected and the IDs the dashboard feed returned, to find the
+    // mismatch. Remove once HANNA_CLOUD_DEVICE_ID is set and confirmed.
+    console.info('TEMP Hanna ID comparison', JSON.stringify({ selected: deviceId, feed: [...feedDeviceIds].slice(0, 10) }));
     throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
   }
 
