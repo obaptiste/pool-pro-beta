@@ -335,7 +335,9 @@ export class HannaCloudClient {
         models: [...new Set(entries.map((item) => String(item.DM ?? 'unset')))].slice(0, 10),
       });
     }
-    console.info('Hanna dashboard feed has no entry for the selected device', { groups: groupSummaries });
+    // Serialised: console.info stops at depth 2, so nested label arrays would
+    // otherwise print as [Array] in the Vercel log.
+    console.info('Hanna dashboard feed has no entry for the selected device', JSON.stringify({ groups: groupSummaries }));
     throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
   }
 

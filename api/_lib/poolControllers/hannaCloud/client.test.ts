@@ -98,7 +98,8 @@ test('logs a schema-only summary, without device IDs, when the device is missing
   } finally {
     console.info = originalInfo;
   }
-  const summary = JSON.stringify(logged);
+  // Check the text a console would print, not the raw arguments.
+  const summary = logged.map((args) => args.map(String).join(' ')).join('\n');
   assert.match(summary, /"modelGroups":\["BL12x"\]/);
   assert.match(summary, /"models":\["BL122"\]/);
   assert.equal(summary.includes('BL122_OTHER'), false);
