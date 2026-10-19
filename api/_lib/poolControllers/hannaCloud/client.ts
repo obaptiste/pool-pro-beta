@@ -311,6 +311,9 @@ export class HannaCloudClient {
    * feed is read here; nothing is written and no other device is substituted.
    */
   private async findDashboardReading(deviceId: string): Promise<Record<string, unknown>> {
+    // Schema-only summary of what each group returned, for diagnosing a miss:
+    // counts and model/group labels, never device IDs or values.
+    const groupSummaries: Array<{ modelGroup: string; entries: number; modelGroups: string[]; models: string[] }> = [];
     for (const modelGroup of DASHBOARD_MODEL_GROUPS) {
       const dashboard = await this.request('graphql', {
         operationName: 'GetDashboardData',
@@ -321,10 +324,20 @@ export class HannaCloudClient {
       if (!record(envelope) || !Array.isArray(envelope.readingsData)) {
         throw new HannaApiError('Hanna Cloud dashboard response has an unrecognized format.', undefined, 'HC_DASHBOARD_FORMAT');
       }
-      const matches = envelope.readingsData.filter((item) => record(item) && item.DID === deviceId) as Record<string, unknown>[];
+      const entries = envelope.readingsData.filter(record);
+      const matches = entries.filter((item) => item.DID === deviceId);
       if (matches.length > 1) throw new HannaApiError('Hanna Cloud returned ambiguous dashboard readings.', undefined, 'HC_DASHBOARD_AMBIGUOUS');
       if (matches.length === 1) return matches[0];
+      groupSummaries.push({
+        modelGroup,
+        entries: entries.length,
+        modelGroups: [...new Set(entries.map((item) => String(item.modelGroup ?? 'unset')))].slice(0, 10),
+        models: [...new Set(entries.map((item) => String(item.DM ?? 'unset')))].slice(0, 10),
+      });
     }
+    // Serialised: console.info stops at depth 2, so nested label arrays would
+    // otherwise print as [Array] in the Vercel log.
+    console.info('Hanna dashboard feed has no entry for the selected device', JSON.stringify({ groups: groupSummaries }));
     throw new HannaDeviceNotFoundError('The selected device is not present in the Hanna Cloud dashboard feed.', 'HC_DASHBOARD_DEVICE');
   }
 
