@@ -7,6 +7,7 @@ import {
   isDose, metricRange, sortWindows, windowGrade, windowsInRange,
 } from '../lib/controllerLog';
 import { ControllerBandChart, ControllerDoseStrip, DoseLegend } from './ControllerCharts';
+import ControllerAiAnalysis from './ControllerAiAnalysis';
 
 interface Props {
   windows: ControllerLogWindow[];
@@ -175,6 +176,8 @@ export default function ControllerLogView({ windows, onImport, onBack }: Props) 
               </div>
               <ControllerDoseStrip windows={shown} height={56} t0={t0} t1={t1} selectedId={selected?.id} onSelect={setSelectedId} />
             </section>
+
+            <ControllerAiAnalysis key={`${activeDevice}:${range}`} windows={shown} label={range === 'all' ? 'all-time' : range} />
 
             <section className="space-y-2">
               <h2 className={LABEL}>Dose events in this range ({doses.length})</h2>
