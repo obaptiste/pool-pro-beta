@@ -114,6 +114,19 @@ function parseHannaTimestamp(dt: unknown): Date {
     throw new HannaCloudError('Unrecognized Hanna Cloud reading timestamp.', 'HC_TIMESTAMP_FORMAT');
   }
   if (parsed.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+    // How far ahead, as a duration only -- never the timestamp itself, the
+    // payload it came from, or the device it came from (diagnostics policy
+    // above). HC_TIMESTAMP_FUTURE on its own can't distinguish the two
+    // causes, and they have completely different fixes: a whole number of
+    // hours means the controller is on the wrong timezone (it sends an
+    // offset-less wall clock that normaliseHannaTimestampString pins as
+    // UTC), while minutes mean genuine clock drift on the device. Without
+    // this the only way to tell them apart is to add a temporary log line
+    // and redeploy, which is exactly what this saves.
+    console.warn('Hanna reading timestamp is ahead of the server clock', JSON.stringify({
+      aheadMinutes: Math.round((parsed.getTime() - Date.now()) / 60000),
+      skewAllowanceMinutes: MAX_CLOCK_SKEW_MS / 60000,
+    }));
     throw new HannaCloudError('Hanna Cloud reading timestamp is implausibly far in the future.', 'HC_TIMESTAMP_FUTURE');
   }
   if (parsed.getTime() < MIN_PLAUSIBLE_MS) {
