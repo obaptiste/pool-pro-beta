@@ -113,7 +113,11 @@ function parseHannaTimestamp(dt: unknown): Date {
   if (!parsed || !Number.isFinite(parsed.getTime())) {
     throw new HannaCloudError('Unrecognized Hanna Cloud reading timestamp.', 'HC_TIMESTAMP_FORMAT');
   }
-  if (parsed.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+  // Read once and reused by both the comparison and the diagnostic below:
+  // two separate Date.now() calls can straddle the boundary, so a reading
+  // rejected as 1ms past the allowance could be reported as inside it.
+  const now = Date.now();
+  if (parsed.getTime() > now + MAX_CLOCK_SKEW_MS) {
     // How far ahead, as a duration only -- never the timestamp itself, the
     // payload it came from, or the device it came from (diagnostics policy
     // above). HC_TIMESTAMP_FUTURE on its own can't distinguish the two
@@ -123,9 +127,17 @@ function parseHannaTimestamp(dt: unknown): Date {
     // UTC), while minutes mean genuine clock drift on the device. Without
     // this the only way to tell them apart is to add a temporary log line
     // and redeploy, which is exactly what this saves.
+    //
+    // Seconds rounded *up*, not minutes rounded to nearest: a rejected skew
+    // is by definition greater than the allowance, and rounding hid that
+    // for the marginal-drift case this is meant to identify -- 5m01s ahead
+    // printed as "5" beside an allowance of "5", a rejection that reads as
+    // though it should have passed. Ceil keeps the reported figure strictly
+    // above the reported allowance for every value that can reach this
+    // line, and seconds still show a timezone at a glance (~3600 is an hour).
     console.warn('Hanna reading timestamp is ahead of the server clock', JSON.stringify({
-      aheadMinutes: Math.round((parsed.getTime() - Date.now()) / 60000),
-      skewAllowanceMinutes: MAX_CLOCK_SKEW_MS / 60000,
+      aheadSeconds: Math.ceil((parsed.getTime() - now) / 1000),
+      skewAllowanceSeconds: MAX_CLOCK_SKEW_MS / 1000,
     }));
     throw new HannaCloudError('Hanna Cloud reading timestamp is implausibly far in the future.', 'HC_TIMESTAMP_FUTURE');
   }
