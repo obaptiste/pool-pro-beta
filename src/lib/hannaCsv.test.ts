@@ -164,7 +164,12 @@ test('summariseSafetyWarnings reports the most extreme low/high pH and ORP windo
     ['sanitisationMv', 'max', 820, 10],
   ]);
   assert.match(out.worst[0].message, /Very low pH/);
-  assert.match(out.worst[2].message, /Verify before swimming/);
+  // Lower-case: the phrase sits mid-sentence in controllerValueWarning's own
+  // message. Asserted in full rather than as two words, since AGENTS.md
+  // mandates this exact guidance above 800 mV ("verify before swimming or
+  // adding more chlorine") — the wording is the contract, not just a hint
+  // that some warning fired.
+  assert.match(out.worst[2].message, /verify before swimming or adding more chlorine/);
 });
 
 test('summariseSafetyWarnings flags a pH just under the 7.2 target from the real export', () => {
