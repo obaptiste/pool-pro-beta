@@ -370,3 +370,62 @@ test('resolveDeviceClock throws on a bad value rather than silently reverting to
       e instanceof HannaCloudError && e.diagnosticCode === 'HC_DEVICE_CLOCK_CONFIG');
   }
 });
+
+// --- DST transitions: the two moments the zone form has to earn its name ---
+
+async function recordedAtFrozen(dt: string, nowIso: string, deviceClock: DeviceClock) {
+  const realNow = Date.now;
+  // Only Date.now is faked: the fetch mock and node:test's own timers stay real.
+  Date.now = () => Date.parse(nowIso);
+  try {
+    return await recordedAtWith(dt, deviceClock);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+const LONDON: DeviceClock = { kind: 'zone', timeZone: 'Europe/London' };
+
+test('autumn fall-back: the repeated hour resolves to whichever occurrence the server clock says it is', async () => {
+  // UK DST ends 2026-10-25 at 02:00 BST -> 01:00 GMT, so local 01:30 happens
+  // twice: 00:30Z (BST) and 01:30Z (GMT). Picking blindly sent the first
+  // occurrence an hour into the future, where the skew guard rejected it --
+  // the controller going dark for an hour every single year.
+  assert.deepEqual(
+    await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T00:35:00Z', LONDON),
+    new Date('2026-10-25T00:30:00Z'),
+  );
+  assert.deepEqual(
+    await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T01:35:00Z', LONDON),
+    new Date('2026-10-25T01:30:00Z'),
+  );
+});
+
+test('autumn fall-back: a reading from the first occurrence is no longer rejected as future-dated', async () => {
+  // The regression this guards: the resolved instant must not land beyond
+  // MAX_CLOCK_SKEW_MS of the server clock. Previously this threw
+  // HC_TIMESTAMP_FUTURE at 3300s ahead.
+  const recordedAt = await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T00:35:00Z', LONDON);
+  assert.ok(recordedAt);
+  assert.ok(recordedAt.getTime() <= Date.parse('2026-10-25T00:35:00Z'),
+    `resolved instant ${recordedAt.toISOString()} should not be in the future`);
+});
+
+test('spring forward: a local time that never existed still yields a reading rather than dropping it', async () => {
+  // UK DST starts 2026-03-29 at 01:00 GMT -> 02:00 BST, so local 01:30 never
+  // happens. Nothing can be correct; keeping the reading beats losing it.
+  const recordedAt = await recordedAtFrozen('2026-03-29T01:30:00', '2026-03-29T01:35:00Z', LONDON);
+  assert.ok(recordedAt instanceof Date);
+  assert.ok(Number.isFinite(recordedAt.getTime()));
+});
+
+test('an unambiguous zoned time ignores the server clock entirely', async () => {
+  // Outside a transition there is only one real offset, so a wrong-looking
+  // "now" must not drag the answer around.
+  for (const now of ['2026-07-15T11:05:00Z', '2026-07-20T00:00:00Z']) {
+    assert.deepEqual(
+      await recordedAtFrozen('2026-07-15T12:00:00', now, LONDON),
+      new Date('2026-07-15T11:00:00Z'),
+    );
+  }
+});

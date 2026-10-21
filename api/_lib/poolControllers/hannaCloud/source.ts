@@ -121,21 +121,48 @@ function zoneOffsetMinutesAt(instantMs: number, timeZone: string): number {
 
 /**
  * The offset to stamp on a wall clock reading of `wallClockAsUtcMs` (the
- * bare timestamp parsed as though it were UTC).
+ * bare timestamp parsed as though it were UTC), disambiguated against
+ * `nowMs`.
  *
- * Resolved against the zone twice: the first lookup uses an instant that is
- * off by the offset itself, which straddles a DST boundary for readings
- * within an hour of one. The second lookup, from the corrected instant,
- * settles it. Inside a spring-forward gap the local time never existed and
- * inside an autumn repeat it happened twice; both land on one of the two
- * plausible instants rather than failing, which is the right trade for a
- * telemetry timestamp -- an hour's ambiguity twice a year beats dropping
- * the reading.
+ * Most of the year one offset is possible and this is a lookup. Twice a year
+ * it isn't, and the DST-aware mode has to earn its name at exactly those two
+ * moments:
+ *
+ * - **Autumn fall-back** repeats an hour of local time. In Europe/London on
+ *   2026-10-25, local 01:30 is both 00:30Z (BST) and 01:30Z (GMT). Picking
+ *   blindly is not a harmless coin flip: choose the later instant for a
+ *   reading that came from the earlier one and it lands an hour in the
+ *   future, where MAX_CLOCK_SKEW_MS rejects it -- so the controller goes
+ *   dark for that hour every year. Choose the earlier one in a zone where
+ *   that's the wrong guess and the hour instead falls behind sync.ts's
+ *   watermark and is silently skipped.
+ * - **Spring forward** skips an hour, so the local time never existed at
+ *   all. Nothing can be correct here; taking the zone's offset at the naive
+ *   instant keeps the reading rather than dropping it, which is the right
+ *   trade for telemetry.
+ *
+ * The disambiguator is the server clock. Controller telemetry is read
+ * minutes after it is measured, so of the two candidate instants the one
+ * nearer `nowMs` is the one that actually happened. That is the fact a
+ * timestamp alone cannot supply.
  */
-function zoneOffsetMinutesForWallClock(wallClockAsUtcMs: number, timeZone: string): number {
-  const first = zoneOffsetMinutesAt(wallClockAsUtcMs, timeZone);
-  const corrected = zoneOffsetMinutesAt(wallClockAsUtcMs - first * 60_000, timeZone);
-  return corrected;
+function zoneOffsetMinutesForWallClock(wallClockAsUtcMs: number, timeZone: string, nowMs: number): number {
+  // Sample a day either side so both sides of any transition are seen.
+  const candidates = new Set<number>();
+  for (const probe of [wallClockAsUtcMs - 86_400_000, wallClockAsUtcMs, wallClockAsUtcMs + 86_400_000]) {
+    candidates.add(zoneOffsetMinutesAt(probe, timeZone));
+  }
+  // An offset is only real if it round-trips: the instant it implies must
+  // itself sit at that offset in the zone. In the spring gap none do; in the
+  // autumn overlap two do.
+  const real = [...candidates].filter(
+    (offset) => zoneOffsetMinutesAt(wallClockAsUtcMs - offset * 60_000, timeZone) === offset,
+  );
+  if (real.length === 0) return zoneOffsetMinutesAt(wallClockAsUtcMs, timeZone);
+  if (real.length === 1) return real[0];
+  return real.reduce((best, offset) =>
+    Math.abs(wallClockAsUtcMs - offset * 60_000 - nowMs) < Math.abs(wallClockAsUtcMs - best * 60_000 - nowMs)
+      ? offset : best);
 }
 
 function offsetSuffix(minutes: number): string {
@@ -144,7 +171,7 @@ function offsetSuffix(minutes: number): string {
   return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
 }
 
-function normaliseHannaTimestampString(value: string, clock: DeviceClock = UTC_DEVICE_CLOCK): string | null {
+function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs: number): string | null {
   const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
   if (!match) return null;
   const [, y, m, d, hh, mm, ss, offset] = match;
@@ -163,7 +190,7 @@ function normaliseHannaTimestampString(value: string, clock: DeviceClock = UTC_D
   if (Number.isNaN(wallClockAsUtcMs)) return null;
   const minutes = clock.kind === 'offset'
     ? clock.minutes
-    : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone);
+    : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone, nowMs);
   const normalised = `${value}${offsetSuffix(minutes)}`;
   return Number.isNaN(Date.parse(normalised)) ? null : normalised;
 }
@@ -252,9 +279,14 @@ const MIN_PLAUSIBLE_MS = Date.now() - MAX_PAST_YEARS * 365 * 24 * 60 * 60 * 1000
  * look "not newer" and get silently skipped, potentially for months.
  */
 function parseHannaTimestamp(dt: unknown, clock: DeviceClock = UTC_DEVICE_CLOCK): Date {
+  // Read once and reused throughout: by the DST disambiguation below, and by
+  // both the skew comparison and its diagnostic -- two separate Date.now()
+  // calls can straddle the boundary, so a reading rejected as 1ms past the
+  // allowance could be reported as inside it.
+  const now = Date.now();
   let parsed: Date | null = null;
   if (typeof dt === 'string') {
-    const normalised = normaliseHannaTimestampString(dt, clock);
+    const normalised = normaliseHannaTimestampString(dt, clock, now);
     if (normalised) parsed = new Date(normalised);
   } else if (typeof dt === 'number' && Number.isFinite(dt)) {
     // Sub-second-precision epochs (seconds) are ~10 digits today; ms epochs are ~13.
@@ -264,10 +296,6 @@ function parseHannaTimestamp(dt: unknown, clock: DeviceClock = UTC_DEVICE_CLOCK)
   if (!parsed || !Number.isFinite(parsed.getTime())) {
     throw new HannaCloudError('Unrecognized Hanna Cloud reading timestamp.', 'HC_TIMESTAMP_FORMAT');
   }
-  // Read once and reused by both the comparison and the diagnostic below:
-  // two separate Date.now() calls can straddle the boundary, so a reading
-  // rejected as 1ms past the allowance could be reported as inside it.
-  const now = Date.now();
   if (parsed.getTime() > now + MAX_CLOCK_SKEW_MS) {
     // How far ahead, as a duration only -- never the timestamp itself, the
     // payload it came from, or the device it came from (diagnostics policy

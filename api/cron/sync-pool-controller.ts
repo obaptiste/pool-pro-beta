@@ -52,6 +52,11 @@ const PROBE_DIAGNOSTIC_CODES = new Set([
     ['NETWORK', 'NOT_FOUND', 'AUTH', 'HTTP', 'JSON', 'GRAPHQL'].map((kind) => `HC_${stage}_${kind}`)),
   'HC_LOGIN_TOKEN', 'HC_DASHBOARD_FORMAT', 'HC_DASHBOARD_AMBIGUOUS', 'HC_DASHBOARD_DEVICE',
   'HC_TIMESTAMP_FORMAT', 'HC_TIMESTAMP_FUTURE', 'HC_TIMESTAMP_PAST', 'HC_DEVICE_NONE', 'HC_DEVICE_MULTIPLE',
+  // A malformed HANNA_CLOUD_DEVICE_TIMEZONE / _UTC_OFFSET_MINUTES. The whole
+  // point of throwing it is to name the variable rather than blame the
+  // controller's clock, so it has to survive the probe's redaction -- without
+  // this the dashboard would report HC_UNEXPECTED for a plain config typo.
+  'HC_DEVICE_CLOCK_CONFIG',
 ]);
 
 function bearerToken(req: VercelLikeRequest): string | undefined {
