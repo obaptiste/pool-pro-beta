@@ -618,7 +618,9 @@ describe('MCP tools', () => {
     const text = (result.content as Array<{ text: string }>)[0].text;
     assert.match(text, /pH 7\.52–7\.54/);
     assert.match(text, /ORP 668–671 mV/);
-    assert.match(text, /dosed acid 297\.69 mL/);
+    // The pump's own reported endpoints, rendered as a band like every other
+    // metric — not a derived "total dosed", which the export doesn't state.
+    assert.match(text, /dosed acid\/base 0–297\.69 mL/);
     // The all-null window shows an em dash, not a zero.
     assert.match(text, /pH — · ORP —/);
     await client.close();
@@ -660,6 +662,62 @@ describe('MCP tools', () => {
     });
     const text = (empty.content as Array<{ text: string }>)[0].text;
     assert.deepEqual(JSON.parse(text).windows, []);
+    await client.close();
+  });
+
+  it('list_controller_windows renders a dose recorded on only one endpoint', async () => {
+    // The importer accepts each endpoint independently, so a window can carry
+    // a positive min with a blank max. Reading only .max reported "nothing
+    // dosed" for a window that records a dose.
+    const source: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [window_('w-min-only', 9, { acidBaseMinMl: 42.5, acidBaseMaxMl: null })];
+      },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} });
+    assert.match((result.content as Array<{ text: string }>)[0].text, /dosed acid\/base 42\.5 mL/);
+    await client.close();
+    close();
+  });
+
+  it('list_controller_windows names the controller in each row only when a page spans more than one', async () => {
+    // One device: an id on every row is noise. Two: a row that doesn't say
+    // which pool it came from lets a client read one controller's chemistry
+    // as another's.
+    const twoDevices: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [
+          window_('a', 14),
+          window_('b', 13, { deviceId: 'BL122_OTHER', location: 'Second pool' }),
+        ];
+      },
+    };
+    const two = await connectToSource(twoDevices);
+    const mixed = (await two.client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.match(mixed, /Joy Lane/);
+    assert.match(mixed, /Second pool/);
+    await two.client.close();
+    two.close();
+
+    // The shared single-device fixture must stay clean.
+    const client = await connect(TOKEN);
+    const single = (await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.doesNotMatch(single, /Joy Lane/);
     await client.close();
   });
 

@@ -357,7 +357,11 @@ function serializeControllerWindow(w: ControllerLogWindow) {
     ph: { min: w.phMin, max: w.phMax },
     orp_mv: { min: w.orpMinMv, max: w.orpMaxMv },
     temperature_c: { min: w.temperatureMinC, max: w.temperatureMaxC },
-    acid_ml: { min: w.acidBaseMinMl, max: w.acidBaseMaxMl },
+    // Named for the CSV's own "Acid/Base" column, not "acid". The pH pump
+    // doses whichever the controller is configured for, and the export
+    // doesn't say which — calling it acid would report a base addition as
+    // the opposite chemical intervention.
+    acid_base_ml: { min: w.acidBaseMinMl, max: w.acidBaseMaxMl },
     chlorine_ml: { min: w.chlorineMinMl, max: w.chlorineMaxMl },
     imported_at: w.importedAt.toISOString(),
   };
@@ -373,12 +377,25 @@ function band(range: { min: number | null; max: number | null }, unit = ''): str
   return min === max ? `${min}${unit}` : `${min}–${max}${unit}`;
 }
 
-function controllerWindowToMarkdown(w: ReturnType<typeof serializeControllerWindow>): string {
-  const dosed = [
-    w.acid_ml.max ? `acid ${w.acid_ml.max} mL` : null,
-    w.chlorine_ml.max ? `chlorine ${w.chlorine_ml.max} mL` : null,
-  ].filter(Boolean).join(', ');
-  return `- **${w.start_local} – ${w.end_local}** · pH ${band(w.ph)} · ORP ${band(w.orp_mv, ' mV')} · ${band(w.temperature_c, ' °C')}${dosed ? ` · dosed ${dosed}` : ''}`;
+// A dose is present if EITHER endpoint is, for the same reason band() reads
+// both: the importer accepts each endpoint independently, so a window can
+// carry a positive min with a blank max. Checking only max would report
+// "nothing dosed" for a window that records a dose.
+function dose(range: { min: number | null; max: number | null }, label: string): string | null {
+  const amount = range.max ?? range.min;
+  return amount ? `${label} ${band(range, ' mL')}` : null;
+}
+
+/**
+ * `showDevice` is set only when a page spans more than one controller. With
+ * one device — the normal case — an id on every row is noise; with two, a
+ * row that doesn't say which pool it came from invites a client to read one
+ * controller's chemistry as another's.
+ */
+function controllerWindowToMarkdown(w: ReturnType<typeof serializeControllerWindow>, showDevice: boolean): string {
+  const dosed = [dose(w.acid_base_ml, 'acid/base'), dose(w.chlorine_ml, 'chlorine')].filter(Boolean).join(', ');
+  const who = showDevice ? ` · ${w.location ?? w.device_id}` : '';
+  return `- **${w.start_local} – ${w.end_local}**${who} · pH ${band(w.ph)} · ORP ${band(w.orp_mv, ' mV')} · ${band(w.temperature_c, ' °C')}${dosed ? ` · dosed ${dosed}` : ''}`;
 }
 
 function toolResult(structured: Record<string, unknown>, text: string) {
@@ -593,13 +610,13 @@ Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
 Each window is a RANGE over roughly an hour (the lowest and highest value the controller saw), not a point measurement like a reading. These come from the controller's internal log, so they are far denser than manual tests — typically 24 windows a day — and show what the water did between tests rather than at one instant.
 
 Args:
-  - since (ISO date, optional): only windows starting at or after this instant
-  - until (ISO date, optional): only windows starting at or before this instant; a date with no time (e.g. "2026-10-20") includes that entire day
+  - since (ISO date, optional): only windows starting at or after this instant, interpreted as UTC when no offset is given
+  - until (ISO date, optional): only windows starting at or before this instant; a bare date (e.g. "2026-10-20") means that whole UTC day, which is NOT the controller's own calendar day unless the controller keeps UTC — pass an offset-bearing instant (e.g. "2026-10-20T23:59:59+01:00") to select a local day exactly
   - before (opaque string, optional): pagination cursor — pass the next_before value from a previous page, unmodified
   - limit (1–${MAX_LIST_LIMIT}, default 24)
   - response_format ('markdown' | 'json'): default 'markdown'
 
-Returns: { count, windows: [{ id, device_id, location, start, end, start_local, end_local, ph: {min,max}, orp_mv: {min,max}, temperature_c: {min,max}, acid_ml: {min,max}, chlorine_ml: {min,max}, imported_at }], has_more, next_before }. A metric is null when the controller logged no value for it in that window (a blank or "--" in the export) — null means not measured, never zero. acid_ml/chlorine_ml are dosing-pump volumes exactly as the export reports them, not chemistry. start/end are instants; start_local/end_local are the controller's own clock text, kept verbatim.
+Returns: { count, windows: [{ id, device_id, location, start, end, start_local, end_local, ph: {min,max}, orp_mv: {min,max}, temperature_c: {min,max}, acid_base_ml: {min,max}, chlorine_ml: {min,max}, imported_at }], has_more, next_before }. A metric is null when the controller logged no value for it in that window (a blank or "--" in the export) — null means not measured, never zero. acid_base_ml/chlorine_ml are dosing-pump volumes exactly as the export reports them — the pH pump doses acid OR base depending on how the controller is configured and the export does not say which, so never label it as acid exactly as the export reports them, not chemistry. start/end are instants; start_local/end_local are the controller's own clock text, kept verbatim.
 
 Use when: "What did pH do overnight?", "Show me the controller log for Tuesday", "When did the acid pump last dose?"
 Don't use when: you want the numbers from a manual test (use poolstatus_list_readings) — these windows never feed alerts, LSI or trends, and an imported window can be days old.`,
@@ -647,7 +664,7 @@ Don't use when: you want the numbers from a manual test (use poolstatus_list_rea
         : [
             `## ${page.length} controller window${page.length === 1 ? '' : 's'}${hasMore ? ` (more available — pass before="${output.next_before}")` : ''}`,
             '',
-            ...page.map(controllerWindowToMarkdown),
+            ...page.map((w) => controllerWindowToMarkdown(w, new Set(page.map((p) => p.device_id)).size > 1)),
           ].join('\n');
       return toolResult(output, text);
     },
