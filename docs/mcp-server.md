@@ -71,7 +71,7 @@ flowchart LR
         LLM["The model"]
     end
     subgraph Server["PoolStatus MCP Server"]
-        Tools["11 tools:\n7 read + 4 write"]
+        Tools["12 tools:\n8 read + 4 write"]
     end
     LLM -- "1. list tools" --> Server
     Server -- "2. tool names + schemas + descriptions" --> LLM
@@ -110,7 +110,7 @@ Three files carry the weight:
 |---|---|
 | `api/mcp.ts` | The actual Vercel/Express entry point. Builds the list of configured scoped tokens (`MCP_BEARER_TOKEN`, `MCP_READONLY_BEARER_TOKEN`) and wires them plus a cached `PoolDataSource` into the handler. |
 | `api/_lib/mcp/handler.ts` | Protocol-agnostic request handling: rejects unconfigured/unauthenticated/rate-limited requests, resolves which token matched (and its scopes), then hands off to the MCP SDK's transport. |
-| `api/_lib/mcp/server.ts` | Registers the 7 read tools always, and the 4 write tools only when the resolved scopes include `'write'`, against a `PoolDataSource`. This is where the actual tool logic, validation, and response formatting live. |
+| `api/_lib/mcp/server.ts` | Registers the 8 read tools always, and the 4 write tools only when the resolved scopes include `'write'`, against a `PoolDataSource`. This is where the actual tool logic, validation, and response formatting live. |
 
 Everything below `server.ts` — the actual reads and writes — goes through
 the `PoolDataSource` interface, never directly. That indirection is what
@@ -152,7 +152,7 @@ sequenceDiagram
         H-->>C: 503 with the underlying error message
     end
     H->>S: createPoolStatusMcpServer(source, matched.scopes)
-    S->>S: register the 7 read tools; register the 4 write tools only if scopes include 'write'
+    S->>S: register the 8 read tools; register the 4 write tools only if scopes include 'write'
     H->>S: connect StreamableHTTPServerTransport
     C->>S: JSON-RPC tool call (routed by the transport)
     S->>DS: source.listReadings() / createReading() / etc.
@@ -176,7 +176,7 @@ breaks once a tool actually tries to touch Firestore.
   scopes into `createPoolStatusMcpServer(source, scopes)`. A read-only
   token's connection never has the four write tools registered on it at
   all (`server.ts`'s `canWrite` gate around their `registerTool` calls) —
-  so a read-only client's own `tools/list` only ever shows the 7 read
+  so a read-only client's own `tools/list` only ever shows the 8 read
   tools, and calling a write tool by name anyway fails exactly like
   calling any other unknown tool name (`isError: true`, "Tool ... not
   found") rather than a scope-specific error, since as far as that
@@ -245,7 +245,7 @@ classDiagram
 `server.ts` never imports Firestore, Storage, or the Admin SDK directly —
 only this interface. That single decision is why:
 
-- The full tool surface (all 11 tools, including every validation edge
+- The full tool surface (all 12 tools, including every validation edge
   case) is unit-testable with zero external dependencies.
 - A future second implementation (a different database, a different
   owner-resolution scheme) is a new class implementing this interface, not
@@ -512,7 +512,7 @@ Express dev server via `server.ts`).
 
 ## Testing strategy
 
-`api/_lib/mcp/server.test.ts` exercises all 11 tools end-to-end — real MCP
+`api/_lib/mcp/server.test.ts` exercises all 12 tools end-to-end — real MCP
 client, real JSON-RPC round-trip over an in-process transport — against an
 in-memory implementation of `PoolDataSource`, never against real Firestore
 or Storage. That's what makes ~90 tests, including every validation branch

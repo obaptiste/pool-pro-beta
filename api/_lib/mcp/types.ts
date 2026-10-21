@@ -1,4 +1,4 @@
-import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Priority, Reading, TaskFrequency } from '../../../src/types.js';
+import type { ControllerLogWindow, EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Priority, Reading, TaskFrequency } from '../../../src/types.js';
 
 /**
  * What a bearer token is allowed to do. 'write' implies 'read' — there's no
@@ -44,6 +44,30 @@ export interface ListReadingsOptions {
   until?: Date;
   /** Cursor: only readings strictly after this (timestamp, id) in newest-first order. */
   before?: ReadingCursor;
+  /** Maximum rows to return; callers ask for one extra to detect `has_more`. */
+  limit: number;
+}
+
+/**
+ * Pagination cursor for controller log windows: the (start, id) of the last
+ * row on the previous page. Same reasoning as ReadingCursor — the cursor has
+ * to encode exactly what the query is ordered by, plus a unique tie-breaker.
+ * `start` alone isn't unique: two controllers on one account cover the same
+ * hour, so their windows share a start instant, and a start-only cursor would
+ * skip or repeat rows sitting either side of that tie.
+ */
+export interface ControllerWindowCursor {
+  start: Date;
+  id: string;
+}
+
+export interface ListControllerWindowsOptions {
+  /** Only windows starting at or after this instant. */
+  since?: Date;
+  /** Only windows starting at or before this instant. */
+  until?: Date;
+  /** Cursor: only windows strictly after this (start, id) in newest-first order. */
+  before?: ControllerWindowCursor;
   /** Maximum rows to return; callers ask for one extra to detect `has_more`. */
   limit: number;
 }
@@ -110,6 +134,14 @@ export interface AdjustInventoryInput {
 export interface PoolDataSource {
   /** Newest first. */
   listReadings(options: ListReadingsOptions): Promise<Reading[]>;
+  /**
+   * Hourly min/max windows imported from a controller CSV export, newest
+   * first. Deliberately a separate collection from `readings` and never
+   * merged into it: a window is a range over an hour, not a point
+   * measurement, and imported windows can be days old — see CLAUDE.md's
+   * Firestore data model note.
+   */
+  listControllerWindows(options: ListControllerWindowsOptions): Promise<ControllerLogWindow[]>;
   listTasks(): Promise<MaintenanceTask[]>;
   listInventory(): Promise<InventoryItem[]>;
   listEquipment(): Promise<EquipmentItem[]>;

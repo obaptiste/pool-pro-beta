@@ -3,8 +3,8 @@ import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin
 import { getDownloadURL } from 'firebase-admin/storage';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, getStorageAdmin, resolveOwnerUid } from '../firebaseAdmin.js';
 import { NUMERIC_READING_FIELDS } from '../../../src/lib/readingValidation.js';
-import type { EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types.js';
-import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type PoolDataSource } from './types.js';
+import type { ControllerLogWindow, EquipmentItem, InventoryItem, MaintenanceSchedule, MaintenanceTask, Reading } from '../../../src/types.js';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListControllerWindowsOptions, type ListReadingsOptions, type PoolDataSource } from './types.js';
 
 export const McpConfigError = FirebaseAdminConfigError;
 
@@ -188,6 +188,54 @@ export async function createFirestoreSource(): Promise<PoolDataSource> {
           photoUrl: typeof data.photoUrl === 'string' ? data.photoUrl : undefined,
           editedAt: toDate(data.editedAt) ?? undefined,
           previousValues: toPreviousValues(data.previousValues),
+        };
+      });
+    },
+
+    async listControllerWindows({ since, until, before, limit }: ListControllerWindowsOptions): Promise<ControllerLogWindow[]> {
+      // Ordered by start then document ID, for the same reason listReadings
+      // is: two controllers on one account cover the same hour, so `start`
+      // alone is not a total order and the startAfter cursor would skip or
+      // repeat rows across that tie.
+      //
+      // Unlike App.tsx's own controllerLogs listener — which is equality-only
+      // and sorts client-side precisely to avoid needing one — this query
+      // needs the composite index declared in firestore.indexes.json. Without
+      // it deployed, Firestore rejects the query outright (FAILED_PRECONDITION
+      // with a console link), which is a loud, immediately diagnosable failure
+      // rather than a silently wrong order. Sorting client-side instead is not
+      // an option here: without orderBy, a `.limit()` returns arbitrary
+      // documents, so "the newest N windows" could not be answered at all
+      // without reading the whole collection, which grows ~24 docs/day per
+      // imported controller.
+      let query = ownedBy('controllerLogs').orderBy('start', 'desc').orderBy(FieldPath.documentId(), 'desc');
+      if (since) query = query.where('start', '>=', Timestamp.fromDate(since));
+      if (until) query = query.where('start', '<=', Timestamp.fromDate(until));
+      if (before) query = query.startAfter(Timestamp.fromDate(before.start), before.id);
+      const snapshot = await query.limit(limit).get();
+      return snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          uid: String(data.uid),
+          source: 'hanna-csv' as const,
+          deviceId: String(data.deviceId ?? ''),
+          location: typeof data.location === 'string' ? data.location : null,
+          startLocal: String(data.startLocal ?? ''),
+          endLocal: String(data.endLocal ?? ''),
+          start: toDate(data.start) ?? new Date(0),
+          end: toDate(data.end) ?? new Date(0),
+          phMin: numOrNull(data.phMin),
+          phMax: numOrNull(data.phMax),
+          orpMinMv: numOrNull(data.orpMinMv),
+          orpMaxMv: numOrNull(data.orpMaxMv),
+          temperatureMinC: numOrNull(data.temperatureMinC),
+          temperatureMaxC: numOrNull(data.temperatureMaxC),
+          acidBaseMinMl: numOrNull(data.acidBaseMinMl),
+          acidBaseMaxMl: numOrNull(data.acidBaseMaxMl),
+          chlorineMinMl: numOrNull(data.chlorineMinMl),
+          chlorineMaxMl: numOrNull(data.chlorineMaxMl),
+          importedAt: toDate(data.importedAt) ?? new Date(0),
         };
       });
     },

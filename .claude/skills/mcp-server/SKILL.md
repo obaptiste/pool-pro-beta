@@ -1,11 +1,11 @@
 ---
 name: mcp-server
-description: This repo's own conventions for its remote MCP server (api/_lib/mcp/*, api/mcp.ts) — a read/write pool-data endpoint for external MCP clients (Claude, ChatGPT, etc.), with 7 read tools and 4 write tools (logging readings with photo evidence, adding/completing tasks, adjusting inventory). Use this whenever adding or changing an MCP tool, touching anything under api/_lib/mcp/, working on api/mcp.ts, or reasoning about this server's auth, pagination, or tool-description conventions. This is NOT a general "how do I build an MCP server" guide — for that, use a generic MCP-building skill instead. This one captures the specific, hard-won patterns already established in this codebase (tool description format, annotations, bounded pagination, uid scoping, the PoolDataSource testability seam) so new tools stay consistent instead of quietly drifting from them. Trigger even if the user just says "add an MCP tool for X" or "why does poolstatus_get_reading_trends do Y" without naming this skill.
+description: This repo's own conventions for its remote MCP server (api/_lib/mcp/*, api/mcp.ts) — a read/write pool-data endpoint for external MCP clients (Claude, ChatGPT, etc.), with 8 read tools and 4 write tools (logging readings with photo evidence, adding/completing tasks, adjusting inventory). Use this whenever adding or changing an MCP tool, touching anything under api/_lib/mcp/, working on api/mcp.ts, or reasoning about this server's auth, pagination, or tool-description conventions. This is NOT a general "how do I build an MCP server" guide — for that, use a generic MCP-building skill instead. This one captures the specific, hard-won patterns already established in this codebase (tool description format, annotations, bounded pagination, uid scoping, the PoolDataSource testability seam) so new tools stay consistent instead of quietly drifting from them. Trigger even if the user just says "add an MCP tool for X" or "why does poolstatus_get_reading_trends do Y" without naming this skill.
 ---
 
 # PoolStatus MCP server conventions
 
-The MCP server lives in `api/_lib/mcp/` (`server.ts` has the tools, `handler.ts` the transport/auth, `firestoreSource.ts` the storage adapter, `types.ts` the `PoolDataSource` interface, `cursor.ts` pagination helpers) and is mounted from `api/mcp.ts` (Vercel) and `server.ts`'s `/api/mcp` route (Express dev server) — both call the same `handleMcpRequest`. It has 7 read tools and 4 write tools today. See `docs/mcp-server.md` for the full architecture writeup (request lifecycle, safety model, deep dive on the photo-upload path) — this file is the condensed "how to add/change a tool correctly" version; read the doc before a non-trivial change, use this skill as the checklist while making it.
+The MCP server lives in `api/_lib/mcp/` (`server.ts` has the tools, `handler.ts` the transport/auth, `firestoreSource.ts` the storage adapter, `types.ts` the `PoolDataSource` interface, `cursor.ts` pagination helpers) and is mounted from `api/mcp.ts` (Vercel) and `server.ts`'s `/api/mcp` route (Express dev server) — both call the same `handleMcpRequest`. It has 8 read tools and 4 write tools today. See `docs/mcp-server.md` for the full architecture writeup (request lifecycle, safety model, deep dive on the photo-upload path) — this file is the condensed "how to add/change a tool correctly" version; read the doc before a non-trivial change, use this skill as the checklist while making it.
 
 Every point below exists because getting it wrong already cost a review round in this repo — they're not arbitrary style preferences.
 
@@ -21,7 +21,7 @@ server.registerTool(
 
 ## The description is UX, not documentation
 
-An MCP client picks which tool to call — and how to call it — purely from `description`. A skimpy one causes wrong-tool or wrong-args calls with no way to correct it after the fact. The 7 read tools all follow the same full shape — use it for any new read tool, and as the target to bring a write tool's description up to when you're touching one:
+An MCP client picks which tool to call — and how to call it — purely from `description`. A skimpy one causes wrong-tool or wrong-args calls with no way to correct it after the fact. The 8 read tools all follow the same full shape — use it for any new read tool, and as the target to bring a write tool's description up to when you're touching one:
 
 ```
 <One or two sentences on what this returns and any non-obvious behavior.>
@@ -51,7 +51,7 @@ For a **successful** result, return the raw structured data plus text via the sh
 
 ## Tool annotations
 
-Four constants, reused across the 11 tools — pick the one matching the *real* semantics of a new tool, don't default to whichever is closest:
+Four constants, reused across the 12 tools — pick the one matching the *real* semantics of a new tool, don't default to whichever is closest:
 
 ```ts
 const READ_ONLY          = { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false };
