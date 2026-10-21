@@ -178,20 +178,55 @@ function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs:
   if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
     return null;
   }
-  // An offset Hanna actually sent is authoritative; the configured device
-  // clock only ever fills in a missing one.
-  if (offset !== undefined) {
-    return Number.isNaN(Date.parse(value)) ? null : value;
-  }
+  // With no device clock configured, an offset Hanna sent stands as-is and a
+  // bare value is read as UTC -- the original behaviour, unchanged.
   if (clock.kind === 'utc') {
-    return Number.isNaN(Date.parse(`${value}Z`)) ? null : `${value}Z`;
+    const normalised = offset === undefined ? `${value}Z` : value;
+    return Number.isNaN(Date.parse(normalised)) ? null : normalised;
   }
-  const wallClockAsUtcMs = Date.parse(`${value}Z`);
+
+  // With one configured, it wins even over an offset Hanna supplied, and the
+  // wall-clock portion is reinterpreted in the device's own zone.
+  //
+  // This reverses the previous rule ("an offset Hanna actually sent is
+  // authoritative"), which was wrong about what that offset means. The
+  // controller sends a bare wall clock; Hanna's own decoder reads it as UTC
+  // (dayjs.utc). So a "Z" arriving on a dashboard `lastUpdate` is not an
+  // independent measurement of the device's offset -- it is that same
+  // assumption echoed back, and treating it as authoritative let Hanna's
+  // guess silently override an operator who had physically read the clock on
+  // the front of the device. The configuration is a statement about the
+  // hardware; the Z is a statement about Hanna's default.
+  //
+  // At Joy Lane this is the difference between working and not: the device
+  // keeps correct UK local time, every reading arrives an hour in the future,
+  // and setting HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES changed nothing because
+  // the dashboard path (client.ts assigns `messages.lastUpdate` over the
+  // decoded DT) never produced an offset-less value for the config to fix.
+  //
+  // If Hanna ever does convert properly, this reinterprets a correct
+  // timestamp and lands an offset out -- which is why the diagnostic below
+  // records whether an offset was present, so one real response settles what
+  // no amount of reasoning about their backend can.
+  // Rebuilt from the matched parts rather than sliced off `value`: whatever
+  // offset Hanna supplied has to go before the device's own is appended, or
+  // the result is a string carrying two of them.
+  const wallClock = `${y}-${m}-${d}T${hh}:${mm}:${ss ?? '00'}`;
+  const wallClockAsUtcMs = Date.parse(`${wallClock}Z`);
   if (Number.isNaN(wallClockAsUtcMs)) return null;
+  if (offset !== undefined) {
+    // Shape only -- no timestamp, payload or device identifier. This is the
+    // line that settles whether the dashboard path really does arrive
+    // pre-stamped, which is otherwise unknowable from outside Hanna.
+    console.info('Hanna timestamp carried its own offset; configured device clock applied instead', JSON.stringify({
+      deviceClock: clock.kind,
+      suppliedOffset: offset === 'Z' ? 'Z' : 'numeric',
+    }));
+  }
   const minutes = clock.kind === 'offset'
     ? clock.minutes
     : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone, nowMs);
-  const normalised = `${value}${offsetSuffix(minutes)}`;
+  const normalised = `${wallClock}${offsetSuffix(minutes)}`;
   return Number.isNaN(Date.parse(normalised)) ? null : normalised;
 }
 

@@ -336,11 +336,13 @@ test('a fixed offset does NOT follow DST, which is the whole difference from the
   );
 });
 
-test('an offset Hanna actually sent wins over the configured device clock', async () => {
-  // The configuration only ever fills in a MISSING offset; it never
-  // overrides one the device stated.
+test('an offset Hanna sent is taken as given only when no device clock is configured', async () => {
+  // Superseded rule: this used to assert the opposite, that a supplied
+  // offset always won. It doesn't -- see the device-clock tests at the end
+  // of this file for why Hanna's "Z" is their assumption about a bare
+  // controller clock rather than a measurement of the device's offset.
   assert.deepEqual(
-    await recordedAtWith('2026-07-15T12:00:00Z', { kind: 'zone', timeZone: 'Europe/London' }),
+    await recordedAtWith('2026-07-15T12:00:00Z'),
     new Date('2026-07-15T12:00:00Z'),
   );
 });
@@ -428,4 +430,36 @@ test('an unambiguous zoned time ignores the server clock entirely', async () => 
       new Date('2026-07-15T11:00:00Z'),
     );
   }
+});
+
+// --- A configured device clock outranks an offset Hanna supplied ---
+
+test('a configured device clock reinterprets a timestamp even when Hanna sent its own offset', async () => {
+  // The dashboard path (client.ts assigns messages.lastUpdate over the
+  // decoded DT) can deliver a "Z" that is Hanna's own dayjs.utc assumption
+  // about a bare controller clock, not a measurement of the device's offset.
+  // Treating it as authoritative meant a configured device clock was never
+  // consulted on that path — the Joy Lane failure exactly.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00Z', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00Z', LONDON),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+  // A numeric offset is reinterpreted the same way: it is the wall clock that
+  // carries the meaning, not whatever Hanna appended to it.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00+05:00', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+});
+
+test('with no device clock configured, an offset Hanna sent is still taken as given', async () => {
+  // The default must not change: unset means UTC for a bare value and
+  // untouched for one carrying an offset.
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00Z'), new Date('2026-07-15T12:00:00Z'));
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00+02:00'), new Date('2026-07-15T10:00:00Z'));
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00'), new Date('2026-07-15T12:00:00Z'));
 });
