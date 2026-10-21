@@ -336,11 +336,13 @@ test('a fixed offset does NOT follow DST, which is the whole difference from the
   );
 });
 
-test('an offset Hanna actually sent wins over the configured device clock', async () => {
-  // The configuration only ever fills in a MISSING offset; it never
-  // overrides one the device stated.
+test('an offset Hanna sent is taken as given only when no device clock is configured', async () => {
+  // Superseded rule: this used to assert the opposite, that a supplied
+  // offset always won. It doesn't -- see the device-clock tests at the end
+  // of this file for why Hanna's "Z" is their assumption about a bare
+  // controller clock rather than a measurement of the device's offset.
   assert.deepEqual(
-    await recordedAtWith('2026-07-15T12:00:00Z', { kind: 'zone', timeZone: 'Europe/London' }),
+    await recordedAtWith('2026-07-15T12:00:00Z'),
     new Date('2026-07-15T12:00:00Z'),
   );
 });
@@ -428,4 +430,82 @@ test('an unambiguous zoned time ignores the server clock entirely', async () => 
       new Date('2026-07-15T11:00:00Z'),
     );
   }
+});
+
+// --- A configured device clock outranks an offset Hanna supplied ---
+
+test('a configured device clock reinterprets a timestamp even when Hanna sent its own offset', async () => {
+  // The dashboard path (client.ts assigns messages.lastUpdate over the
+  // decoded DT) can deliver a "Z" that is Hanna's own dayjs.utc assumption
+  // about a bare controller clock, not a measurement of the device's offset.
+  // Treating it as authoritative meant a configured device clock was never
+  // consulted on that path — the Joy Lane failure exactly.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00Z', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00Z', LONDON),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+  // A numeric offset is reinterpreted the same way: it is the wall clock that
+  // carries the meaning, not whatever Hanna appended to it.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00+05:00', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+});
+
+test('with no device clock configured, an offset Hanna sent is still taken as given', async () => {
+  // The default must not change: unset means UTC for a bare value and
+  // untouched for one carrying an offset.
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00Z'), new Date('2026-07-15T12:00:00Z'));
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00+02:00'), new Date('2026-07-15T10:00:00Z'));
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00'), new Date('2026-07-15T12:00:00Z'));
+});
+
+test('malformed supplied offsets are rejected before any configured clock replaces them', async () => {
+  const clocks: DeviceClock[] = [
+    { kind: 'utc' }, { kind: 'offset', minutes: 60 }, { kind: 'zone', timeZone: 'Europe/London' },
+  ];
+  for (const clock of clocks) {
+    for (const offset of ['+24:00', '-24:00', '+99:99', '-99:99', '+00:60', '-00:60', '+1260', '-1260', '+2400']) {
+      await assert.rejects(
+        () => recordedAtWith(`2026-07-15T12:00:00.750${offset}`, clock),
+        (error: unknown) => error instanceof HannaCloudError && error.diagnosticCode === 'HC_TIMESTAMP_FORMAT',
+        `${clock.kind} must reject ${offset}`,
+      );
+    }
+  }
+});
+
+test('valid supplied offsets remain replaceable without losing fractional seconds', async () => {
+  for (const clock of [{ kind: 'offset', minutes: 60 }, LONDON] as DeviceClock[]) {
+    for (const offset of ['Z', '+00:00', '-00:00', '+05:30', '-05:30', '+0530', '-0530', '+23:59', '-2359']) {
+      assert.deepEqual(
+        await recordedAtWith(`2026-07-15T12:00:00.750${offset}`, clock),
+        new Date('2026-07-15T11:00:00.750Z'),
+      );
+    }
+  }
+});
+
+test('rebuilding the wall clock keeps fractional seconds', async () => {
+  // The pattern matched `.750` without capturing it, so reconstruction
+  // truncated the reading by up to 999ms before applying the configured
+  // offset. sync.ts dedupes on the exact timestamp, so a truncated one can
+  // compare as not-newer against a reading already stored with its fraction.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750Z', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00.750Z'),
+  );
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750', LONDON),
+    new Date('2026-07-15T11:00:00.750Z'),
+  );
+  // Unchanged on the default path, where the value is never rebuilt.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750Z'),
+    new Date('2026-07-15T12:00:00.750Z'),
+  );
 });
