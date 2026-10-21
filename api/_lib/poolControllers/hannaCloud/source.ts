@@ -180,6 +180,13 @@ function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs:
   const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
   if (!match) return null;
   const [, y, m, d, hh, mm, ss, fraction, offset] = match;
+  // Validate Hanna's suffix before a configured clock discards it. Regex
+  // shape alone accepts +24:00/+99:99; replacing those would turn corrupt
+  // upstream input into a plausible timestamp and dedupe watermark.
+  if (offset && offset !== 'Z') {
+    const digits = offset.slice(1).replace(':', '');
+    if (Number(digits.slice(0, 2)) > 23 || Number(digits.slice(2)) > 59) return null;
+  }
   if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
     return null;
   }

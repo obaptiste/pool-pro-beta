@@ -464,6 +464,32 @@ test('with no device clock configured, an offset Hanna sent is still taken as gi
   assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00'), new Date('2026-07-15T12:00:00Z'));
 });
 
+test('malformed supplied offsets are rejected before any configured clock replaces them', async () => {
+  const clocks: DeviceClock[] = [
+    { kind: 'utc' }, { kind: 'offset', minutes: 60 }, { kind: 'zone', timeZone: 'Europe/London' },
+  ];
+  for (const clock of clocks) {
+    for (const offset of ['+24:00', '-24:00', '+99:99', '-99:99', '+00:60', '-00:60', '+1260', '-1260', '+2400']) {
+      await assert.rejects(
+        () => recordedAtWith(`2026-07-15T12:00:00.750${offset}`, clock),
+        (error: unknown) => error instanceof HannaCloudError && error.diagnosticCode === 'HC_TIMESTAMP_FORMAT',
+        `${clock.kind} must reject ${offset}`,
+      );
+    }
+  }
+});
+
+test('valid supplied offsets remain replaceable without losing fractional seconds', async () => {
+  for (const clock of [{ kind: 'offset', minutes: 60 }, LONDON] as DeviceClock[]) {
+    for (const offset of ['Z', '+00:00', '-00:00', '+05:30', '-05:30', '+0530', '-0530', '+23:59', '-2359']) {
+      assert.deepEqual(
+        await recordedAtWith(`2026-07-15T12:00:00.750${offset}`, clock),
+        new Date('2026-07-15T11:00:00.750Z'),
+      );
+    }
+  }
+});
+
 test('rebuilding the wall clock keeps fractional seconds', async () => {
   // The pattern matched `.750` without capturing it, so reconstruction
   // truncated the reading by up to 999ms before applying the configured
