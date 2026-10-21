@@ -3,16 +3,20 @@ import { createServer, type Server } from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { InventoryItem, MaintenanceTask, Reading } from '../../../src/types.js';
+import type { ControllerLogWindow, InventoryItem, MaintenanceTask, Reading } from '../../../src/types.js';
 import { handleMcpRequest } from './handler.js';
 import { __resetRateLimitForTests } from '../rateLimit.js';
 import { LATEST_READING_SEARCH_LIMIT, MAX_NOTES_LENGTH, MAX_TREND_FETCH_ROWS, MAX_TREND_ROWS } from './server.js';
-import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListReadingsOptions, type McpBearerToken, type PoolDataSource } from './types.js';
+import { NotFoundError, UnitMismatchError, type AddTaskInput, type AdjustInventoryInput, type CreateReadingInput, type ListControllerWindowsOptions, type ListReadingsOptions, type McpBearerToken, type PoolDataSource } from './types.js';
 
 // Spread into every ad-hoc fixture below that only exercises read tools —
 // keeps each of those focused on the one thing it's testing rather than
 // repeating four stub methods it never calls.
-const unimplementedWrites = {
+// Methods a given test's source doesn't exercise. They throw rather than
+// returning something empty, so a tool that starts reaching for data a test
+// never set up fails loudly instead of quietly asserting against [].
+const unusedSourceMethods = {
+  async listControllerWindows(): Promise<ControllerLogWindow[]> { throw new Error('listControllerWindows not used in this test'); },
   async createReading(): Promise<Reading> { throw new Error('createReading not used in this test'); },
   async addTask(): Promise<MaintenanceTask> { throw new Error('addTask not used in this test'); },
   async completeTask(): Promise<MaintenanceTask> { throw new Error('completeTask not used in this test'); },
@@ -55,6 +59,31 @@ const READINGS: Reading[] = [
   reading('r4', 10, { chlorine: 0, ph: 7.9 }),
 ];
 
+// Three consecutive hourly windows, newest first, as the CSV importer
+// writes them: a min/max band per metric plus the pump volumes the export
+// reports. The middle window carries an acid dose so the dose fields are
+// exercised as something other than zero.
+function window_(id: string, hourUtc: number, over: Partial<ControllerLogWindow> = {}): ControllerLogWindow {
+  const start = new Date(Date.UTC(2026, 9, 20, hourUtc, 0, 0));
+  return {
+    id, uid: 'owner', source: 'hanna-csv', deviceId: 'BL122_7AC443', location: 'Joy Lane',
+    startLocal: `2026-10-20 ${String(hourUtc + 1).padStart(2, '0')}:00:00`,
+    endLocal: `2026-10-20 ${String(hourUtc + 1).padStart(2, '0')}:56:00`,
+    start, end: new Date(start.getTime() + 56 * 60_000),
+    phMin: 7.55, phMax: 7.58, orpMinMv: 668, orpMaxMv: 671,
+    temperatureMinC: 29.8, temperatureMaxC: 30.1,
+    acidBaseMinMl: 0, acidBaseMaxMl: 0, chlorineMinMl: 0, chlorineMaxMl: 0,
+    importedAt: new Date(Date.UTC(2026, 9, 21, 9, 0, 0)),
+    ...over,
+  };
+}
+
+const CONTROLLER_WINDOWS: ControllerLogWindow[] = [
+  window_('owner_BL122_7AC443_20261020T150000', 14, { phMin: 7.52, phMax: 7.54 }),
+  window_('owner_BL122_7AC443_20261020T140000', 13, { acidBaseMaxMl: 297.69 }),
+  window_('owner_BL122_7AC443_20261020T130000', 12, { phMin: null, phMax: null, orpMinMv: null, orpMaxMv: null }),
+];
+
 const memorySource: PoolDataSource = {
   async listReadings({ since, until, before, limit }: ListReadingsOptions) {
     return READINGS
@@ -88,7 +117,18 @@ const memorySource: PoolDataSource = {
   async getSchedule() {
     return { uid: 'owner', testFrequency: 'weekly', lastTestDate: new Date(now - 10 * DAY), nextTestDate: new Date(now - 3 * DAY), remindersEnabled: true };
   },
-  ...unimplementedWrites,
+  ...unusedSourceMethods,
+  async listControllerWindows({ since, until, before, limit }: ListControllerWindowsOptions) {
+    return CONTROLLER_WINDOWS
+      .filter((w) => (!since || w.start >= since) && (!until || w.start <= until))
+      .filter((w) => {
+        if (!before) return true;
+        const ws = w.start.getTime();
+        const bs = before.start.getTime();
+        return ws !== bs ? ws < bs : w.id < before.id;
+      })
+      .slice(0, limit);
+  },
 };
 
 // A separate, per-test mutable source for the write tools — memorySource
@@ -102,7 +142,7 @@ function createWritableMemorySource(initialTasks: MaintenanceTask[] = [], initia
   const inventory = [...initialInventory];
   let nextId = 0;
   return {
-    ...unimplementedWrites,
+    ...unusedSourceMethods,
     async listReadings() { return []; },
     async listTasks() { return tasks; },
     async listInventory() { return inventory; },
@@ -258,10 +298,10 @@ describe('MCP endpoint auth', () => {
     assert.equal(res.status, 406);
   });
 
-  it('a read-only token only lists the seven read-only tools — the four write tools are never registered for it', async () => {
+  it('a read-only token only lists the eight read-only tools — the four write tools are never registered for it', async () => {
     const client = await connect(READONLY_TOKEN);
     const { tools } = await client.listTools();
-    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
+    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_controller_windows', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
     assert.deepEqual(tools.map((t) => t.name).sort(), readOnly.sort());
     await client.close();
   });
@@ -302,10 +342,10 @@ describe('MCP endpoint auth', () => {
 });
 
 describe('MCP tools', () => {
-  it('lists the seven read-only tools and four write tools', async () => {
+  it('lists the eight read-only tools and four write tools', async () => {
     const client = await connect(TOKEN);
     const { tools } = await client.listTools();
-    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
+    const readOnly = ['poolstatus_get_latest_reading', 'poolstatus_get_reading_trends', 'poolstatus_get_schedule', 'poolstatus_list_controller_windows', 'poolstatus_list_equipment', 'poolstatus_list_inventory', 'poolstatus_list_readings', 'poolstatus_list_tasks'];
     const write = ['poolstatus_add_task', 'poolstatus_adjust_inventory', 'poolstatus_complete_task', 'poolstatus_log_reading'];
     assert.deepEqual(tools.map((t) => t.name).sort(), [...readOnly, ...write].sort());
     const byName = new Map(tools.map((t) => [t.name, t]));
@@ -356,7 +396,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -381,7 +421,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -403,7 +443,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -429,7 +469,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -455,7 +495,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ reading: { id: string } | null }>(
@@ -477,7 +517,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(allNotes);
     const out = structured<{ reading: unknown }>(
@@ -504,7 +544,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_latest_reading', arguments: {} });
@@ -551,6 +591,171 @@ describe('MCP tools', () => {
     await client.close();
   });
 
+  it('list_controller_windows returns min/max bands, newest first, with nulls preserved', async () => {
+    const client = await connect(TOKEN);
+    const out = structured<{ count: number; windows: Array<Record<string, any>>; has_more: boolean }>(
+      await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} }),
+    );
+    assert.equal(out.count, 3);
+    assert.deepEqual(out.windows.map((w) => w.start), [
+      '2026-10-20T14:00:00.000Z', '2026-10-20T13:00:00.000Z', '2026-10-20T12:00:00.000Z',
+    ]);
+    // The pair is the measurement; neither half is a point value.
+    assert.deepEqual(out.windows[0].ph, { min: 7.52, max: 7.54 });
+    assert.deepEqual(out.windows[0].temperature_c, { min: 29.8, max: 30.1 });
+    // A metric the controller never logged stays null — never coerced to 0,
+    // which would read as a real measurement of zero.
+    assert.deepEqual(out.windows[2].ph, { min: null, max: null });
+    assert.deepEqual(out.windows[2].orp_mv, { min: null, max: null });
+    // The controller's own clock text survives verbatim.
+    assert.equal(out.windows[0].start_local, '2026-10-20 15:00:00');
+    await client.close();
+  });
+
+  it('list_controller_windows renders bands and dose events in markdown', async () => {
+    const client = await connect(TOKEN);
+    const result = await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: { limit: 3 } });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    assert.match(text, /pH 7\.52–7\.54/);
+    assert.match(text, /ORP 668–671 mV/);
+    // The pump's own reported endpoints, rendered as a band like every other
+    // metric — not a derived "total dosed", which the export doesn't state.
+    assert.match(text, /dosed acid\/base 0–297\.69 mL/);
+    // The all-null window shows an em dash, not a zero.
+    assert.match(text, /pH — · ORP —/);
+    await client.close();
+  });
+
+  it('list_controller_windows paginates on the (start, id) compound key', async () => {
+    const client = await connect(TOKEN);
+    const page1 = structured<{ windows: { id: string }[]; has_more: boolean; next_before: string | null }>(
+      await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: { limit: 2 } }),
+    );
+    assert.equal(page1.windows.length, 2);
+    assert.equal(page1.has_more, true);
+    assert.ok(page1.next_before);
+    const page2 = structured<typeof page1>(
+      await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: { limit: 2, before: page1.next_before } }),
+    );
+    assert.deepEqual(page2.windows.map((w) => w.id), ['owner_BL122_7AC443_20261020T130000']);
+    assert.equal(page2.has_more, false);
+    assert.equal(page2.next_before, null);
+    await client.close();
+  });
+
+  it('list_controller_windows honours since/until and stays parseable when empty', async () => {
+    const client = await connect(TOKEN);
+    const narrowed = structured<{ count: number }>(
+      await client.callTool({
+        name: 'poolstatus_list_controller_windows',
+        arguments: { since: '2026-10-20T14:00:00Z' },
+      }),
+    );
+    assert.equal(narrowed.count, 1);
+
+    // The empty branch must still honour response_format: a client parsing
+    // content[0].text as JSON shouldn't hit prose the moment a window
+    // happens to return no rows.
+    const empty = await client.callTool({
+      name: 'poolstatus_list_controller_windows',
+      arguments: { since: '2027-01-01T00:00:00Z', response_format: 'json' },
+    });
+    const text = (empty.content as Array<{ text: string }>)[0].text;
+    assert.deepEqual(JSON.parse(text).windows, []);
+    await client.close();
+  });
+
+  it('list_controller_windows renders a dose recorded on only one endpoint', async () => {
+    // The importer accepts each endpoint independently, so a window can carry
+    // a positive min with a blank max. Reading only .max reported "nothing
+    // dosed" for a window that records a dose.
+    const source: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [window_('w-min-only', 9, { acidBaseMinMl: 42.5, acidBaseMaxMl: null })];
+      },
+    };
+    const { client, close } = await connectToSource(source);
+    const result = await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} });
+    assert.match((result.content as Array<{ text: string }>)[0].text, /dosed acid\/base 42\.5 mL/);
+    await client.close();
+    close();
+  });
+
+  it('list_controller_windows names the controller in each row only when a page spans more than one', async () => {
+    // One device: an id on every row is noise. Two: a row that doesn't say
+    // which pool it came from lets a client read one controller's chemistry
+    // as another's.
+    const twoDevices: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [
+          window_('a', 14),
+          window_('b', 13, { deviceId: 'BL122_OTHER', location: 'Second pool' }),
+        ];
+      },
+    };
+    const two = await connectToSource(twoDevices);
+    const mixed = (await two.client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.match(mixed, /Joy Lane/);
+    assert.match(mixed, /Second pool/);
+    await two.client.close();
+    two.close();
+
+    // The shared single-device fixture must stay clean.
+    const client = await connect(TOKEN);
+    const single = (await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.doesNotMatch(single, /Joy Lane/);
+    await client.close();
+  });
+
+  it('list_controller_windows falls back to the device id when a location is blank', async () => {
+    // The importer stores whatever the export's location cell held, which can
+    // be an empty string — `??` would let that through as a blank identifier,
+    // which is worse than the device id it was meant to improve on.
+    const blankLocation: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [
+          window_('a', 14, { location: '' }),
+          window_('b', 13, { deviceId: 'BL122_OTHER', location: 'Second pool' }),
+        ];
+      },
+    };
+    const { client, close } = await connectToSource(blankLocation);
+    const text = (await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.match(text, /BL122_7AC443/);
+    assert.match(text, /Second pool/);
+    assert.doesNotMatch(text, /· +·/);
+    await client.close();
+    close();
+  });
+
+  it('list_controller_windows rejects a garbled pagination cursor', async () => {
+    const client = await connect(TOKEN);
+    const result = await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: { before: 'not-a-real-cursor' } });
+    assert.equal(result.isError, true);
+    await client.close();
+  });
+
   it('list_readings rejects a garbled pagination cursor', async () => {
     const client = await connect(TOKEN);
     const result = await client.callTool({ name: 'poolstatus_list_readings', arguments: { before: 'not-a-real-cursor' } });
@@ -571,7 +776,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ readings: { id: string }[] }>(
@@ -602,7 +807,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(emptySource);
     const result = await client.callTool({ name: 'poolstatus_list_readings', arguments: { response_format: 'json' } });
@@ -662,7 +867,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const bigServer = createServer((req, res) => {
       handleMcpRequest(req, res, { tokens: TOKENS, getSource: () => bigSource }).catch((error) => {
@@ -715,7 +920,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ readings_considered: number; truncated: boolean; metrics: { chlorine: { count: number } } }>(
@@ -744,7 +949,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(allNotes);
     const out = structured<{ readings_considered: number; truncated: boolean }>(
@@ -776,7 +981,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const result = await client.callTool({ name: 'poolstatus_get_reading_trends', arguments: { days: 1 } });
@@ -809,7 +1014,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(source);
     const out = structured<{ metrics: { combinedChlorine: { count: number; latest: number; average: number } } }>(
@@ -835,7 +1040,7 @@ describe('MCP tools', () => {
       async listInventory() { return []; },
       async listEquipment() { return []; },
       async getSchedule() { return null; },
-      ...unimplementedWrites,
+      ...unusedSourceMethods,
     };
     const { client, close } = await connectToSource(notesOnlySource);
     const out = structured<{ readings_considered: number }>(

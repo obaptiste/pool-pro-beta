@@ -14,8 +14,8 @@ import {
   NUMERIC_READING_FIELDS,
   type NumericReadingField,
 } from '../../../src/lib/readingValidation.js';
-import { DEFAULT_RANGES, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types.js';
-import { decodeReadingCursor, encodeReadingCursor } from './cursor.js';
+import { DEFAULT_RANGES, type ControllerLogWindow, type EquipmentItem, type Priority, type Reading, type Status, type TaskFrequency } from '../../../src/types.js';
+import { decodeControllerWindowCursor, decodeReadingCursor, encodeControllerWindowCursor, encodeReadingCursor } from './cursor.js';
 import { NotFoundError, UnitMismatchError, type McpScope, type PoolDataSource, type ReadingCursor } from './types.js';
 
 export const SERVER_NAME = 'poolstatus-mcp-server';
@@ -339,6 +339,68 @@ function nextServiceDate(item: EquipmentItem): Date | null {
   return next;
 }
 
+/**
+ * A controller window as the tool returns it. Min/max stay paired rather
+ * than flattened to `phMin`/`phMax`: the pair IS the measurement here (what
+ * the water did across the hour), and splitting it invites a client to read
+ * one half as if it were a point value.
+ */
+function serializeControllerWindow(w: ControllerLogWindow) {
+  return {
+    id: w.id,
+    device_id: w.deviceId,
+    location: w.location,
+    start: w.start.toISOString(),
+    end: w.end.toISOString(),
+    start_local: w.startLocal,
+    end_local: w.endLocal,
+    ph: { min: w.phMin, max: w.phMax },
+    orp_mv: { min: w.orpMinMv, max: w.orpMaxMv },
+    temperature_c: { min: w.temperatureMinC, max: w.temperatureMaxC },
+    // Named for the CSV's own "Acid/Base" column, not "acid". The pH pump
+    // doses whichever the controller is configured for, and the export
+    // doesn't say which — calling it acid would report a base addition as
+    // the opposite chemical intervention.
+    acid_base_ml: { min: w.acidBaseMinMl, max: w.acidBaseMaxMl },
+    chlorine_ml: { min: w.chlorineMinMl, max: w.chlorineMaxMl },
+    imported_at: w.importedAt.toISOString(),
+  };
+}
+
+// A band renders as "7.55–7.58", a flat band as the single value, and an
+// unmeasured one as "—". Never 0: a controller that logged nothing for a
+// metric is not a controller that measured zero.
+function band(range: { min: number | null; max: number | null }, unit = ''): string {
+  const { min, max } = range;
+  if (min == null && max == null) return '—';
+  if (min == null || max == null) return `${min ?? max}${unit}`;
+  return min === max ? `${min}${unit}` : `${min}–${max}${unit}`;
+}
+
+// A dose is present if EITHER endpoint is, for the same reason band() reads
+// both: the importer accepts each endpoint independently, so a window can
+// carry a positive min with a blank max. Checking only max would report
+// "nothing dosed" for a window that records a dose.
+function dose(range: { min: number | null; max: number | null }, label: string): string | null {
+  const amount = range.max ?? range.min;
+  return amount ? `${label} ${band(range, ' mL')}` : null;
+}
+
+/**
+ * `showDevice` is set only when a page spans more than one controller. With
+ * one device — the normal case — an id on every row is noise; with two, a
+ * row that doesn't say which pool it came from invites a client to read one
+ * controller's chemistry as another's.
+ */
+function controllerWindowToMarkdown(w: ReturnType<typeof serializeControllerWindow>, showDevice: boolean): string {
+  const dosed = [dose(w.acid_base_ml, 'acid/base'), dose(w.chlorine_ml, 'chlorine')].filter(Boolean).join(', ');
+  // `||`, not `??`: the importer stores whatever the export's location cell
+  // held, which can be an empty string. A blank identifier is worse than the
+  // device id it was meant to improve on.
+  const who = showDevice ? ` · ${w.location || w.device_id}` : '';
+  return `- **${w.start_local} – ${w.end_local}**${who} · pH ${band(w.ph)} · ORP ${band(w.orp_mv, ' mV')} · ${band(w.temperature_c, ' °C')}${dosed ? ` · dosed ${dosed}` : ''}`;
+}
+
 function toolResult(structured: Record<string, unknown>, text: string) {
   return { content: [{ type: 'text' as const, text }], structuredContent: structured };
 }
@@ -538,6 +600,80 @@ Use when: "Show me last week's readings", "When did chlorine last hit zero?"`,
             '',
             ...page.map(readingToMarkdown),
           ].join('\n\n');
+      return toolResult(output, text);
+    },
+  );
+
+  server.registerTool(
+    'poolstatus_list_controller_windows',
+    {
+      title: 'List controller log windows',
+      description: `List hourly min/max windows imported from the pool controller's own CSV export, newest first.
+
+Each window is a RANGE over roughly an hour (the lowest and highest value the controller saw), not a point measurement like a reading. These come from the controller's internal log, so they are far denser than manual tests — typically 24 windows a day — and show what the water did between tests rather than at one instant.
+
+Args:
+  - since (ISO date, optional): only windows starting at or after this instant, interpreted as UTC when no offset is given
+  - until (ISO date, optional): only windows starting at or before this instant; a bare date (e.g. "2026-10-20") means that whole UTC day, which is NOT the controller's own calendar day unless the controller keeps UTC — pass an offset-bearing instant (e.g. "2026-10-20T23:59:59+01:00") to select a local day exactly
+  - before (opaque string, optional): pagination cursor — pass the next_before value from a previous page, unmodified
+  - limit (1–${MAX_LIST_LIMIT}, default 24)
+  - response_format ('markdown' | 'json'): default 'markdown'
+
+Returns: { count, windows: [{ id, device_id, location, start, end, start_local, end_local, ph: {min,max}, orp_mv: {min,max}, temperature_c: {min,max}, acid_base_ml: {min,max}, chlorine_ml: {min,max}, imported_at }], has_more, next_before }. A metric is null when the controller logged no value for it in that window (a blank or "--" in the export) — null means not measured, never zero. acid_base_ml/chlorine_ml are dosing-pump volumes exactly as the export reports them — the pH pump doses acid OR base depending on how the controller is configured and the export does not say which, so never label it as acid exactly as the export reports them, not chemistry. start/end are instants; start_local/end_local are the controller's own clock text, kept verbatim.
+
+Use when: "What did pH do overnight?", "Show me the controller log for Tuesday", "When did the acid pump last dose?"
+Don't use when: you want the numbers from a manual test (use poolstatus_list_readings) — these windows never feed alerts, LSI or trends, and an imported window can be days old.`,
+      inputSchema: {
+        since: IsoDate.optional(),
+        until: IsoDate.optional(),
+        before: z.string().optional().describe("Opaque pagination cursor — pass a previous page's next_before value unmodified."),
+        limit: z.number().int().min(1).max(MAX_LIST_LIMIT).default(24),
+        response_format: ResponseFormat,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ since, until, before, limit, response_format }) => {
+      let cursor;
+      try {
+        cursor = before ? decodeControllerWindowCursor(before) : undefined;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid pagination cursor.';
+        return { content: [{ type: 'text' as const, text: message }], isError: true };
+      }
+      const rows = await source.listControllerWindows({
+        since: parseDate(since),
+        until: parseUntilDate(until),
+        before: cursor,
+        limit: limit + 1,
+      });
+      const hasMore = rows.length > limit;
+      const pageRows = rows.slice(0, limit);
+      const page = pageRows.map(serializeControllerWindow);
+      const lastRow = pageRows[pageRows.length - 1];
+      const output = {
+        count: page.length,
+        windows: page,
+        has_more: hasMore,
+        next_before: hasMore && lastRow ? encodeControllerWindowCursor({ start: lastRow.start, id: lastRow.id }) : null,
+      };
+      if (page.length === 0) {
+        return toolResult(
+          output,
+          response_format === 'json' ? JSON.stringify(output, null, 2) : 'No controller windows found for that window.',
+        );
+      }
+      const text = response_format === 'json'
+        ? JSON.stringify(output, null, 2)
+        : [
+            `## ${page.length} controller window${page.length === 1 ? '' : 's'}${hasMore ? ` (more available — pass before="${output.next_before}")` : ''}`,
+            '',
+            // Computed once, not per row: this was rebuilding the whole set
+            // inside the map, which is quadratic in the page size.
+            ...(() => {
+              const spansDevices = new Set(page.map((p) => p.device_id)).size > 1;
+              return page.map((w) => controllerWindowToMarkdown(w, spansDevices));
+            })(),
+          ].join('\n');
       return toolResult(output, text);
     },
   );
