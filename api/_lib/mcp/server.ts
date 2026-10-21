@@ -394,7 +394,10 @@ function dose(range: { min: number | null; max: number | null }, label: string):
  */
 function controllerWindowToMarkdown(w: ReturnType<typeof serializeControllerWindow>, showDevice: boolean): string {
   const dosed = [dose(w.acid_base_ml, 'acid/base'), dose(w.chlorine_ml, 'chlorine')].filter(Boolean).join(', ');
-  const who = showDevice ? ` · ${w.location ?? w.device_id}` : '';
+  // `||`, not `??`: the importer stores whatever the export's location cell
+  // held, which can be an empty string. A blank identifier is worse than the
+  // device id it was meant to improve on.
+  const who = showDevice ? ` · ${w.location || w.device_id}` : '';
   return `- **${w.start_local} – ${w.end_local}**${who} · pH ${band(w.ph)} · ORP ${band(w.orp_mv, ' mV')} · ${band(w.temperature_c, ' °C')}${dosed ? ` · dosed ${dosed}` : ''}`;
 }
 
@@ -664,7 +667,12 @@ Don't use when: you want the numbers from a manual test (use poolstatus_list_rea
         : [
             `## ${page.length} controller window${page.length === 1 ? '' : 's'}${hasMore ? ` (more available — pass before="${output.next_before}")` : ''}`,
             '',
-            ...page.map((w) => controllerWindowToMarkdown(w, new Set(page.map((p) => p.device_id)).size > 1)),
+            // Computed once, not per row: this was rebuilding the whole set
+            // inside the map, which is quadratic in the page size.
+            ...(() => {
+              const spansDevices = new Set(page.map((p) => p.device_id)).size > 1;
+              return page.map((w) => controllerWindowToMarkdown(w, spansDevices));
+            })(),
           ].join('\n');
       return toolResult(output, text);
     },

@@ -270,6 +270,7 @@ or parse a payload, as it prefers.
 | `poolstatus_get_latest_reading` | "What are the current numbers?" | — |
 | `poolstatus_list_readings` | "Show me last week's readings" | `since`, `until`, `before` (pagination cursor), `limit` |
 | `poolstatus_get_reading_trends` | "How has pH trended this month?" | `days` (1–90) — count/avg/min/max/direction per field |
+| `poolstatus_list_controller_windows` | "What did pH do overnight?" | `since`, `until`, `before` (pagination cursor), `limit` — hourly min/max bands from the controller's own log, not point measurements |
 | `poolstatus_list_tasks` | "What's still to do?" | `status` (open/completed/all), `frequency` |
 | `poolstatus_list_inventory` | "What needs reordering?" | `low_only` |
 | `poolstatus_list_equipment` | "Is the filter due a service?" | `due_only` |

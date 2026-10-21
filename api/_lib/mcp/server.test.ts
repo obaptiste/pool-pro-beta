@@ -721,6 +721,34 @@ describe('MCP tools', () => {
     await client.close();
   });
 
+  it('list_controller_windows falls back to the device id when a location is blank', async () => {
+    // The importer stores whatever the export's location cell held, which can
+    // be an empty string — `??` would let that through as a blank identifier,
+    // which is worse than the device id it was meant to improve on.
+    const blankLocation: PoolDataSource = {
+      ...unusedSourceMethods,
+      async listReadings() { return []; },
+      async listTasks() { return []; },
+      async listInventory() { return []; },
+      async listEquipment() { return []; },
+      async getSchedule() { return null; },
+      async listControllerWindows() {
+        return [
+          window_('a', 14, { location: '' }),
+          window_('b', 13, { deviceId: 'BL122_OTHER', location: 'Second pool' }),
+        ];
+      },
+    };
+    const { client, close } = await connectToSource(blankLocation);
+    const text = (await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: {} })
+      .then((r) => (r.content as Array<{ text: string }>)[0].text));
+    assert.match(text, /BL122_7AC443/);
+    assert.match(text, /Second pool/);
+    assert.doesNotMatch(text, /· +·/);
+    await client.close();
+    close();
+  });
+
   it('list_controller_windows rejects a garbled pagination cursor', async () => {
     const client = await connect(TOKEN);
     const result = await client.callTool({ name: 'poolstatus_list_controller_windows', arguments: { before: 'not-a-real-cursor' } });
