@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { FirebaseAdminConfigError, getAdminApp, getFirestoreAdmin, resolveOwnerUid } from '../_lib/firebaseAdmin.js';
 import { createFirestoreSyncStore } from '../_lib/poolControllers/firestoreAdapters.js';
-import { HannaCloudSource } from '../_lib/poolControllers/hannaCloud/source.js';
+import { HannaCloudSource, resolveDeviceClock } from '../_lib/poolControllers/hannaCloud/source.js';
 import { HannaCloudError } from '../_lib/poolControllers/hannaCloud/client.js';
 import { syncLatestReading } from '../_lib/poolControllers/sync.js';
 
@@ -201,7 +201,19 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
   }
 
   try {
-    const source = new HannaCloudSource({ email, password, deviceId: process.env.HANNA_CLOUD_DEVICE_ID });
+    const source = new HannaCloudSource({
+      email,
+      password,
+      deviceId: process.env.HANNA_CLOUD_DEVICE_ID,
+      // What the controller's own clock is set to. Unset means UTC, which is
+      // what Hanna's own decoder assumes; set it when the device is on local
+      // time instead. Throws on a malformed value, which the catch below
+      // surfaces rather than silently reverting to UTC.
+      deviceClock: resolveDeviceClock(
+        process.env.HANNA_CLOUD_DEVICE_TIMEZONE,
+        process.env.HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES,
+      ),
+    });
     if (mode === 'probe') {
       // A read-only connection test: only Hanna's login, device list and last
       // reading queries are called. Crucially: no Firestore instance, sync

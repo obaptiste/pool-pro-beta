@@ -63,15 +63,166 @@ const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?
 // non-ISO, locale-dependent formats (09/26/2026) instead of rejecting them --
 // either would become sync.ts's permanent dedupe watermark, so parseability
 // alone isn't enough here (see parseHannaTimestamp below).
-function normaliseHannaTimestampString(value: string): string | null {
+/**
+ * What an offset-less Hanna timestamp means -- i.e. what the controller's own
+ * clock is set to.
+ *
+ * Hanna's controllers send a bare wall-clock reading with no offset, and
+ * Hanna's own decoder reads it as UTC (`dayjs.utc`), so `utc` stays the
+ * default and nothing changes for a deployment that doesn't configure this.
+ * But the clock is set by hand on the keypad, and an installer who sets it
+ * to local time -- the obvious thing to do, since that is what the device
+ * then displays to whoever is standing in front of it -- makes every reading
+ * arrive labelled hours in the future, where the skew guard rejects it.
+ *
+ * Declaring the offset is not the same as widening MAX_CLOCK_SKEW_MS. The
+ * skew guard exists to catch a *wrong* clock; this says the clock is right
+ * and states which zone it is keeping, so the stored instant is correct
+ * rather than merely accepted.
+ *
+ * Two shapes, because a controller may or may not observe DST and we can't
+ * assume:
+ * - `zone`: an IANA zone, converted per-timestamp, so DST is handled for a
+ *   device that follows a region's clock changes.
+ * - `offset`: a fixed number of minutes, for a device left on one offset
+ *   year-round (which a simple controller with no DST setting effectively
+ *   is, even when sited somewhere that observes it).
+ * Picking the wrong one of the two is silent until a DST boundary, so the
+ * fixed offset is the safer default for hardware whose DST behaviour has
+ * not actually been observed across a transition.
+ */
+export type DeviceClock =
+  | { kind: 'utc' }
+  | { kind: 'zone'; timeZone: string }
+  | { kind: 'offset'; minutes: number };
+
+export const UTC_DEVICE_CLOCK: DeviceClock = { kind: 'utc' };
+
+// Minutes that `timeZone`'s local wall clock is ahead of UTC at `instantMs`.
+// Derived by formatting the instant in that zone and reading the result back
+// as if it were UTC -- the difference is the offset, DST included.
+function zoneOffsetMinutesAt(instantMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(instantMs));
+  const field: Record<string, string> = {};
+  for (const part of parts) field[part.type] = part.value;
+  // Some engines render midnight as hour 24 under hour12:false.
+  const hour = field.hour === '24' ? '00' : field.hour;
+  const asIfUtc = Date.UTC(
+    Number(field.year), Number(field.month) - 1, Number(field.day),
+    Number(hour), Number(field.minute), Number(field.second),
+  );
+  return Math.round((asIfUtc - instantMs) / 60_000);
+}
+
+/**
+ * The offset to stamp on a wall clock reading of `wallClockAsUtcMs` (the
+ * bare timestamp parsed as though it were UTC).
+ *
+ * Resolved against the zone twice: the first lookup uses an instant that is
+ * off by the offset itself, which straddles a DST boundary for readings
+ * within an hour of one. The second lookup, from the corrected instant,
+ * settles it. Inside a spring-forward gap the local time never existed and
+ * inside an autumn repeat it happened twice; both land on one of the two
+ * plausible instants rather than failing, which is the right trade for a
+ * telemetry timestamp -- an hour's ambiguity twice a year beats dropping
+ * the reading.
+ */
+function zoneOffsetMinutesForWallClock(wallClockAsUtcMs: number, timeZone: string): number {
+  const first = zoneOffsetMinutesAt(wallClockAsUtcMs, timeZone);
+  const corrected = zoneOffsetMinutesAt(wallClockAsUtcMs - first * 60_000, timeZone);
+  return corrected;
+}
+
+function offsetSuffix(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+';
+  const abs = Math.abs(minutes);
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+}
+
+function normaliseHannaTimestampString(value: string, clock: DeviceClock = UTC_DEVICE_CLOCK): string | null {
   const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
   if (!match) return null;
   const [, y, m, d, hh, mm, ss, offset] = match;
   if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
     return null;
   }
-  const normalised = offset === undefined ? `${value}Z` : value;
+  // An offset Hanna actually sent is authoritative; the configured device
+  // clock only ever fills in a missing one.
+  if (offset !== undefined) {
+    return Number.isNaN(Date.parse(value)) ? null : value;
+  }
+  if (clock.kind === 'utc') {
+    return Number.isNaN(Date.parse(`${value}Z`)) ? null : `${value}Z`;
+  }
+  const wallClockAsUtcMs = Date.parse(`${value}Z`);
+  if (Number.isNaN(wallClockAsUtcMs)) return null;
+  const minutes = clock.kind === 'offset'
+    ? clock.minutes
+    : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone);
+  const normalised = `${value}${offsetSuffix(minutes)}`;
   return Number.isNaN(Date.parse(normalised)) ? null : normalised;
+}
+
+/**
+ * Builds a DeviceClock from the two env vars, or throws with the variable
+ * named. Deliberately throws rather than falling back to UTC on a bad value:
+ * a typo'd zone silently reverting to the old behaviour would put back
+ * exactly the bug this exists to fix, and leave a diagnostic that says the
+ * controller's clock is wrong when the configuration is.
+ *
+ * A fixed offset wins over a zone when both are set -- it's the more
+ * specific claim about the hardware.
+ */
+export function resolveDeviceClock(
+  timeZone: string | undefined,
+  offsetMinutes: string | undefined,
+): DeviceClock {
+  const rawOffset = offsetMinutes?.trim();
+  if (rawOffset) {
+    const minutes = Number(rawOffset);
+    if (!Number.isInteger(minutes) || Math.abs(minutes) > 14 * 60) {
+      throw new HannaCloudError(
+        'HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES must be a whole number of minutes between -840 and 840.',
+        'HC_DEVICE_CLOCK_CONFIG',
+      );
+    }
+    return { kind: 'offset', minutes };
+  }
+  const zone = timeZone?.trim();
+  if (zone) {
+    // Intl alone is too permissive to validate with: it also accepts bare
+    // abbreviations like "BST" and raw offsets like "+01:00". The first is
+    // ambiguous -- British Summer Time and Bangladesh Standard Time are five
+    // hours apart -- and the second is a fixed offset wearing a zone's
+    // clothes, for which HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES is the honest
+    // field. Require the canonical Region/City form so a misconfiguration
+    // fails here instead of silently producing the wrong instant for half
+    // the year.
+    const canonical = zone === 'UTC' || /^[A-Za-z][A-Za-z0-9_+-]*\/[A-Za-z0-9_+/-]+$/.test(zone);
+    let known = false;
+    if (canonical) {
+      try {
+        // Throws RangeError on an unknown zone; no other way to check one.
+        new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(0);
+        known = true;
+      } catch {
+        known = false;
+      }
+    }
+    if (!known) {
+      throw new HannaCloudError(
+        `HANNA_CLOUD_DEVICE_TIMEZONE must be a canonical IANA zone such as Europe/London (got: ${zone}). For a device on a fixed offset, set HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES instead.`,
+        'HC_DEVICE_CLOCK_CONFIG',
+      );
+    }
+    return { kind: 'zone', timeZone: zone };
+  }
+  return UTC_DEVICE_CLOCK;
 }
 
 // Round, generous lower bound -- this integration (and this app) couldn't
@@ -100,10 +251,10 @@ const MIN_PLAUSIBLE_MS = Date.now() - MAX_PAST_YEARS * 365 * 24 * 60 * 60 * 1000
  * wrong-but-plausible value would make every subsequent legitimate reading
  * look "not newer" and get silently skipped, potentially for months.
  */
-function parseHannaTimestamp(dt: unknown): Date {
+function parseHannaTimestamp(dt: unknown, clock: DeviceClock = UTC_DEVICE_CLOCK): Date {
   let parsed: Date | null = null;
   if (typeof dt === 'string') {
-    const normalised = normaliseHannaTimestampString(dt);
+    const normalised = normaliseHannaTimestampString(dt, clock);
     if (normalised) parsed = new Date(normalised);
   } else if (typeof dt === 'number' && Number.isFinite(dt)) {
     // Sub-second-precision epochs (seconds) are ~10 digits today; ms epochs are ~13.
@@ -152,6 +303,8 @@ export interface HannaCloudSourceOptions {
   password: string;
   /** Skips the getDevices() lookup when set; required if the account has more than one BL12x/BL13x device. */
   deviceId?: string;
+  /** What the controller's own clock is set to; defaults to UTC. See DeviceClock. */
+  deviceClock?: DeviceClock;
 }
 
 export class HannaCloudSource implements PoolControllerSource {
@@ -159,12 +312,14 @@ export class HannaCloudSource implements PoolControllerSource {
 
   private readonly client: HannaCloudClient;
   private readonly configuredDeviceId: string | undefined;
+  private readonly deviceClock: DeviceClock;
   private authenticated = false;
   private resolvedDeviceId: string | undefined;
 
   constructor(options: HannaCloudSourceOptions) {
     this.client = new HannaCloudClient(options.email, options.password);
     this.configuredDeviceId = options.deviceId?.trim() || undefined;
+    this.deviceClock = options.deviceClock ?? UTC_DEVICE_CLOCK;
   }
 
   private async ensureAuthenticated(): Promise<void> {
@@ -212,7 +367,7 @@ export class HannaCloudSource implements PoolControllerSource {
       ph,
       sanitisationMv,
       temperature,
-      recordedAt: parseHannaTimestamp(reading.dt),
+      recordedAt: parseHannaTimestamp(reading.dt, this.deviceClock),
     };
   }
 }
