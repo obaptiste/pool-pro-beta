@@ -216,25 +216,16 @@ function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs:
   // the dashboard path (client.ts assigns `messages.lastUpdate` over the
   // decoded DT) never produced an offset-less value for the config to fix.
   //
-  // If Hanna ever does convert properly, this reinterprets a correct
-  // timestamp and lands an offset out -- which is why the diagnostic below
-  // records whether an offset was present, so one real response settles what
-  // no amount of reasoning about their backend can.
+  // If Hanna ever does convert properly, this would reinterpret a correct
+  // timestamp and land an offset out. Keep the configured clock aligned with
+  // the hardware; successful normalization is routine and must not log on
+  // every scheduled poll. Existing failure diagnostics remain available.
   // Rebuilt from the matched parts rather than sliced off `value`: whatever
   // offset Hanna supplied has to go before the device's own is appended, or
   // the result is a string carrying two of them.
   const wallClock = `${y}-${m}-${d}T${hh}:${mm}:${ss ?? '00'}${fraction ?? ''}`;
   const wallClockAsUtcMs = Date.parse(`${wallClock}Z`);
   if (Number.isNaN(wallClockAsUtcMs)) return null;
-  if (offset !== undefined) {
-    // Shape only -- no timestamp, payload or device identifier. This is the
-    // line that settles whether the dashboard path really does arrive
-    // pre-stamped, which is otherwise unknowable from outside Hanna.
-    console.info('Hanna timestamp carried its own offset; configured device clock applied instead', JSON.stringify({
-      deviceClock: clock.kind,
-      suppliedOffset: offset === 'Z' ? 'Z' : 'numeric',
-    }));
-  }
   const minutes = clock.kind === 'offset'
     ? clock.minutes
     : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone, nowMs);
