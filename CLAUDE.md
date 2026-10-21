@@ -265,10 +265,40 @@ fields as chemistry readings. Raw snapshots marked offline or with the
 `no_probe_connected` alarm bit yield no measurements. Blank/`--` values stay
 unavailable. Named parameters retain precedence. Every Hanna timestamp
 (legacy `DT`, raw `DT`, dashboard `lastUpdate`) may be offset-less ISO; source.ts
-reads it as UTC, matching Hanna's own `dayjs.utc` decoder, and pins the Z
-explicitly rather than letting Date parse local time. This is an assumption for
+reads it as UTC by default, matching Hanna's own `dayjs.utc` decoder, and pins
+the Z explicitly rather than letting Date parse local time. This is an assumption for
 the named-parameter and dashboard paths; the raw path is the one the bundle
 confirms. Calendar and clock-skew validation still runs in the source.
+
+**The controller's own clock is configurable** (`DeviceClock` in source.ts,
+built by `resolveDeviceClock()` from `HANNA_CLOUD_DEVICE_TIMEZONE` or
+`HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES`; unset = UTC, so the default is
+unchanged). The keypad clock is set by hand, and an installer who sets it to
+local time makes every reading arrive hours in the future, where
+`MAX_CLOCK_SKEW_MS` rejects it — observed at Joy Lane on 2026-10-21 as
+`aheadSeconds: 3263`, which is 3600 minus the reading's own 337-second age.
+Declaring the offset is **not** the same as widening the skew guard: the guard
+catches a *wrong* clock, this states which zone a *right* one keeps, so the
+stored instant is correct rather than merely accepted — never widen
+`MAX_CLOCK_SKEW_MS` to work around a device clock. The zone form converts per
+reading (DST-aware, for a device that follows local clock changes); the fixed
+offset doesn't (for a device with no DST setting, which is most). Picking
+wrongly is silent until a DST boundary. A malformed value throws
+`HC_DEVICE_CLOCK_CONFIG` rather than reverting to UTC, since a silent fallback
+would reinstate the bug and blame the device for a config typo; and the zone
+form requires the canonical `Region/City` form because `Intl` also accepts
+ambiguous abbreviations (`BST`) and bare offsets (`+01:00`).
+Correspondingly, `client.ts`'s `rawPoolTimestamp()` passes an offset-less raw
+`DT` through **verbatim** — it used to append `Z`, which made the UTC
+assumption unoverridable because the source never saw an offset-less value to
+correct. Decoding the payload is the client's job; deciding what a bare wall
+clock means is the source's.
+
+> **Not yet reconciled:** the CSV importer (`src/lib/hannaCsv.ts`) reads the
+> same offset-less controller times as the *importing browser's* local time,
+> not UTC and not this setting. The two paths therefore disagree whenever the
+> device isn't on the browser's own clock. Setting the device to UTC fixes the
+> cloud path and silently shifts imported windows by an hour; see issue #17.
 Hanna error classes set `name`, and the probe logs that name server-side.
 
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
@@ -368,6 +398,7 @@ low ORP from an auto-synced reading doesn't pass through silently.
 | 14 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
 | 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix. The `controllerLogs` listener has the same shape (~24 docs/day per imported controller) |
 | 16 | `api/_lib/mcp/server.ts`'s four write-tool `registerTool` calls | Wrapped in `if (canWrite) { ... }` without re-indenting their contents | Known — intentional; those tools' `description` fields are multi-line template-literal strings sent verbatim to MCP clients, so a blanket re-indent of the block would have added leading whitespace to the *visible tool-description text*, not just the source code (caught and reverted during development) |
+| 17 | `src/lib/hannaCsv.ts` vs `api/_lib/poolControllers/hannaCloud/source.ts` | The two controller paths disagree about what an offset-less device timestamp means: the CSV importer reads it as the importing browser's local time, the cloud sync as UTC (or `HANNA_CLOUD_DEVICE_TIMEZONE` / `..._UTC_OFFSET_MINUTES`). Whichever clock the device keeps, one path is wrong unless they're made to agree | Known — the cloud side is now configurable; the importer still isn't, and its `startLocal`/`endLocal` strings also feed `controllerLogDocId()`, so changing its interpretation shifts stored `start`/`end` without changing doc ids (re-import stays idempotent). Deserves its own PR |
 
 ## Agent Instructions
 

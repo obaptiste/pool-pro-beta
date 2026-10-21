@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { HannaCloudError } from './client.js';
-import { HannaCloudSource } from './source.js';
+import { HannaCloudSource, resolveDeviceClock } from './source.js';
+import type { DeviceClock } from './source.js';
 
 let calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 let responses: Array<{ status: number; body: unknown }> = [];
@@ -287,4 +288,144 @@ test('throws with a clear message when the account has multiple devices and none
   ];
   const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw' });
   await assert.rejects(() => source.getLatestReading(), /HANNA_CLOUD_DEVICE_ID/);
+});
+
+// --- Device clock: what an offset-less Hanna timestamp actually means ---
+
+function readingAt(dt: string) {
+  return { status: 200, body: { data: { lastDeviceReadings: [{
+    DID: 'BL122_TEST', DT: dt, messages: { RD: '7.4,720,29.1', EV: '0,0,0' },
+  }] } } };
+}
+
+async function recordedAtWith(dt: string, deviceClock?: DeviceClock) {
+  responses = [LOGIN_OK, readingAt(dt)];
+  const source = new HannaCloudSource({ email: 'a@b.com', password: 'pw', deviceId: 'BL122_TEST', deviceClock });
+  const reading = await source.getLatestReading();
+  return reading?.recordedAt;
+}
+
+test('a fixed-offset device clock converts an offset-less timestamp to the right instant', async () => {
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+});
+
+test('a zoned device clock applies that zone\'s summer offset', async () => {
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00', { kind: 'zone', timeZone: 'Europe/London' }),
+    new Date('2026-07-15T11:00:00Z'),
+  );
+});
+
+test('a zoned device clock applies the winter offset for the same zone, so DST is not baked in', async () => {
+  // The point of the zone form over a fixed offset: Europe/London is +1 in
+  // July and +0 in January, and a device that follows local clock changes
+  // needs the timestamp read differently in each.
+  assert.deepEqual(
+    await recordedAtWith('2026-01-15T12:00:00', { kind: 'zone', timeZone: 'Europe/London' }),
+    new Date('2026-01-15T12:00:00Z'),
+  );
+});
+
+test('a fixed offset does NOT follow DST, which is the whole difference from the zone form', async () => {
+  assert.deepEqual(
+    await recordedAtWith('2026-01-15T12:00:00', { kind: 'offset', minutes: 60 }),
+    new Date('2026-01-15T11:00:00Z'),
+  );
+});
+
+test('an offset Hanna actually sent wins over the configured device clock', async () => {
+  // The configuration only ever fills in a MISSING offset; it never
+  // overrides one the device stated.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00Z', { kind: 'zone', timeZone: 'Europe/London' }),
+    new Date('2026-07-15T12:00:00Z'),
+  );
+});
+
+test('no configured device clock still reads an offset-less timestamp as UTC', async () => {
+  assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00'), new Date('2026-07-15T12:00:00Z'));
+});
+
+test('resolveDeviceClock defaults to UTC and prefers an explicit offset over a zone', () => {
+  assert.deepEqual(resolveDeviceClock(undefined, undefined), { kind: 'utc' });
+  assert.deepEqual(resolveDeviceClock('  ', ''), { kind: 'utc' });
+  assert.deepEqual(resolveDeviceClock('Europe/London', undefined), { kind: 'zone', timeZone: 'Europe/London' });
+  assert.deepEqual(resolveDeviceClock(undefined, '60'), { kind: 'offset', minutes: 60 });
+  assert.deepEqual(resolveDeviceClock(undefined, '-330'), { kind: 'offset', minutes: -330 });
+  assert.deepEqual(resolveDeviceClock('Europe/London', '60'), { kind: 'offset', minutes: 60 });
+});
+
+test('resolveDeviceClock throws on a bad value rather than silently reverting to UTC', () => {
+  // Falling back would reinstate the exact bug this exists to fix, and leave
+  // a diagnostic blaming the controller's clock for a configuration typo.
+  for (const bad of ['Europe/Canterbury', 'BST', 'UTC+1']) {
+    assert.throws(() => resolveDeviceClock(bad, undefined), (e: unknown) =>
+      e instanceof HannaCloudError && e.diagnosticCode === 'HC_DEVICE_CLOCK_CONFIG');
+  }
+  for (const bad of ['sixty', '60.5', '900', '-900', 'NaN']) {
+    assert.throws(() => resolveDeviceClock(undefined, bad), (e: unknown) =>
+      e instanceof HannaCloudError && e.diagnosticCode === 'HC_DEVICE_CLOCK_CONFIG');
+  }
+});
+
+// --- DST transitions: the two moments the zone form has to earn its name ---
+
+async function recordedAtFrozen(dt: string, nowIso: string, deviceClock: DeviceClock) {
+  const realNow = Date.now;
+  // Only Date.now is faked: the fetch mock and node:test's own timers stay real.
+  Date.now = () => Date.parse(nowIso);
+  try {
+    return await recordedAtWith(dt, deviceClock);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+const LONDON: DeviceClock = { kind: 'zone', timeZone: 'Europe/London' };
+
+test('autumn fall-back: the repeated hour resolves to whichever occurrence the server clock says it is', async () => {
+  // UK DST ends 2026-10-25 at 02:00 BST -> 01:00 GMT, so local 01:30 happens
+  // twice: 00:30Z (BST) and 01:30Z (GMT). Picking blindly sent the first
+  // occurrence an hour into the future, where the skew guard rejected it --
+  // the controller going dark for an hour every single year.
+  assert.deepEqual(
+    await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T00:35:00Z', LONDON),
+    new Date('2026-10-25T00:30:00Z'),
+  );
+  assert.deepEqual(
+    await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T01:35:00Z', LONDON),
+    new Date('2026-10-25T01:30:00Z'),
+  );
+});
+
+test('autumn fall-back: a reading from the first occurrence is no longer rejected as future-dated', async () => {
+  // The regression this guards: the resolved instant must not land beyond
+  // MAX_CLOCK_SKEW_MS of the server clock. Previously this threw
+  // HC_TIMESTAMP_FUTURE at 3300s ahead.
+  const recordedAt = await recordedAtFrozen('2026-10-25T01:30:00', '2026-10-25T00:35:00Z', LONDON);
+  assert.ok(recordedAt);
+  assert.ok(recordedAt.getTime() <= Date.parse('2026-10-25T00:35:00Z'),
+    `resolved instant ${recordedAt.toISOString()} should not be in the future`);
+});
+
+test('spring forward: a local time that never existed still yields a reading rather than dropping it', async () => {
+  // UK DST starts 2026-03-29 at 01:00 GMT -> 02:00 BST, so local 01:30 never
+  // happens. Nothing can be correct; keeping the reading beats losing it.
+  const recordedAt = await recordedAtFrozen('2026-03-29T01:30:00', '2026-03-29T01:35:00Z', LONDON);
+  assert.ok(recordedAt instanceof Date);
+  assert.ok(Number.isFinite(recordedAt.getTime()));
+});
+
+test('an unambiguous zoned time ignores the server clock entirely', async () => {
+  // Outside a transition there is only one real offset, so a wrong-looking
+  // "now" must not drag the answer around.
+  for (const now of ['2026-07-15T11:05:00Z', '2026-07-20T00:00:00Z']) {
+    assert.deepEqual(
+      await recordedAtFrozen('2026-07-15T12:00:00', now, LONDON),
+      new Date('2026-07-15T11:00:00Z'),
+    );
+  }
 });

@@ -7,6 +7,8 @@ const priorSecret = process.env.CRON_SECRET;
 const priorEmail = process.env.HANNA_CLOUD_EMAIL;
 const priorPassword = process.env.HANNA_CLOUD_PASSWORD;
 const priorDeviceId = process.env.HANNA_CLOUD_DEVICE_ID;
+const priorDeviceTz = process.env.HANNA_CLOUD_DEVICE_TIMEZONE;
+const priorDeviceOffset = process.env.HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES;
 const originalFetch = globalThis.fetch;
 
 let calls: Array<{ url: string; body: any }> = [];
@@ -49,6 +51,8 @@ beforeEach(() => {
   process.env.HANNA_CLOUD_EMAIL = 'test@example.com';
   process.env.HANNA_CLOUD_PASSWORD = 'test-password';
   delete process.env.HANNA_CLOUD_DEVICE_ID;
+  delete process.env.HANNA_CLOUD_DEVICE_TIMEZONE;
+  delete process.env.HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES;
   globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
     calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
     const answer = answers.shift();
@@ -64,6 +68,8 @@ afterEach(() => {
     HANNA_CLOUD_EMAIL: priorEmail,
     HANNA_CLOUD_PASSWORD: priorPassword,
     HANNA_CLOUD_DEVICE_ID: priorDeviceId,
+    HANNA_CLOUD_DEVICE_TIMEZONE: priorDeviceTz,
+    HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES: priorDeviceOffset,
   })) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -207,4 +213,42 @@ test('network errors do not expose their original text in the probe result', asy
   assert.equal(result.status, 502);
   assert.equal(result.body.diagnosticCode, 'HC_LOGIN_NETWORK');
   assert.equal(JSON.stringify(result.body).includes('password-secret'), false);
+});
+
+test('a malformed device-clock variable names itself in the probe rather than becoming HC_UNEXPECTED', async () => {
+  // The whole reason resolveDeviceClock throws instead of falling back to UTC
+  // is to point at the variable. If the code doesn't survive the probe's
+  // redaction allowlist, the dashboard says HC_UNEXPECTED and the operator is
+  // back to guessing -- which is exactly what the throw exists to prevent.
+  for (const [name, value] of [
+    ['HANNA_CLOUD_DEVICE_TIMEZONE', 'Europe/Canterbury'],
+    ['HANNA_CLOUD_DEVICE_TIMEZONE', 'BST'],
+    ['HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES', 'sixty'],
+    ['HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES', '900'],
+  ] as const) {
+    delete process.env.HANNA_CLOUD_DEVICE_TIMEZONE;
+    delete process.env.HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES;
+    process.env[name] = value;
+    answers = [];
+    const response = await request();
+    assert.equal(response.status, 502, `${name}=${value} should fail the probe`);
+    assert.equal(response.body.diagnosticCode, 'HC_DEVICE_CLOCK_CONFIG', `${name}=${value}`);
+    // Fails before any outbound request: the configuration is read while the
+    // source is constructed, so Hanna is never contacted.
+    assert.equal(calls.length, 0, `${name}=${value} should not contact Hanna Cloud`);
+  }
+});
+
+test('a well-formed device clock does not disturb the probe', async () => {
+  delete process.env.HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES;
+  process.env.HANNA_CLOUD_DEVICE_TIMEZONE = 'Europe/London';
+  answers = [
+    { status: 200, body: AUTH_OK },
+    { status: 200, body: DEVICE_OK },
+    { status: 200, body: MEASUREMENT_OK },
+  ];
+  const response = await request();
+  assert.equal(response.status, 200);
+  assert.equal(response.body.written, false);
+  assert.equal(response.body.outcome, 'reading-available');
 });

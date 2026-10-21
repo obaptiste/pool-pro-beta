@@ -149,11 +149,19 @@ function decodeRawPoolParameters(did: string, messages: Record<string, unknown>)
 }
 
 function rawPoolTimestamp(value: unknown): unknown {
-  // Hanna's raw decoder explicitly interprets DT as UTC (dayjs.utc), including
-  // timestamps without a timezone. Only add the zone for that raw format;
-  // source.ts still validates the calendar and checks clock skew.
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
-    ? `${value}Z` : value;
+  // Deliberately passes an offset-less raw DT through untouched.
+  //
+  // This used to append "Z" here, matching Hanna's own raw decoder
+  // (dayjs.utc). That reading is still the default -- source.ts applies it
+  // when no device clock is configured, so behaviour is unchanged -- but
+  // pinning it in the client made the assumption unoverridable: a controller
+  // whose keypad clock is set to local time sends a local wall clock, and
+  // stamping UTC on it here meant the device-clock configuration could never
+  // see an offset-less value to correct. Decoding the payload belongs to the
+  // client; deciding what a bare wall clock means belongs to the source,
+  // which is where the configuration, the calendar check and the clock-skew
+  // guard already live.
+  return value;
 }
 
 export class HannaCloudClient {

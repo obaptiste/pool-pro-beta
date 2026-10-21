@@ -136,7 +136,13 @@ test('does not hide GraphQL failures in an HTTP 200 response or expose upstream 
   });
 });
 
-test('decodes raw BL122 RD values and uses its UTC measurement timestamp', async () => {
+// The client passes a raw offset-less DT through verbatim rather than
+// pinning "Z" on it. Reading a bare wall clock as UTC is still the default,
+// but it is source.ts's call now, because that is where the device-clock
+// configuration, the calendar check and the skew guard live -- see
+// rawPoolTimestamp. source.test.ts asserts the UTC default end to end
+// ('no configured device clock still reads an offset-less timestamp as UTC').
+test('decodes raw BL122 RD values and passes its measurement timestamp through verbatim', async () => {
   responses = [
     { status: 200, body: LOGIN_TOKENS },
     { status: 200, body: { data: { lastDeviceReadings: [{
@@ -146,7 +152,7 @@ test('decodes raw BL122 RD values and uses its UTC measurement timestamp', async
   const client = new HannaCloudClient('me@example.com', 'pw');
   await client.authenticate();
   assert.deepEqual(await client.getLastDeviceReading('BL122_TEST'), {
-    did: 'BL122_TEST', dt: '2026-10-17T12:00:00Z', parameters: [
+    did: 'BL122_TEST', dt: '2026-10-17T12:00:00', parameters: [
       { name: 'ph', value: '7.30' }, { name: 'orp', value: '680' }, { name: 'temp', value: '29.1' },
     ],
   });
