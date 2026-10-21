@@ -56,7 +56,12 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // controllers send offset-less times, and Hanna's own decoder reads those as
 // UTC (dayjs.utc). normaliseHannaTimestampString pins that explicitly, so an
 // offset-less string is never left to Date's local-time parsing.
-const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+// The fractional part is captured, not merely matched: normaliseHannaTimestampString
+// rebuilds the wall clock from these groups when a device clock is configured, and
+// a non-capturing `(?:\.\d+)?` silently dropped up to 999ms on the way through.
+// sync.ts dedupes on the exact timestamp, so a truncated one can compare as
+// not-newer against a reading already stored with its fraction intact.
+const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 // Date.parse (and therefore `new Date(str)`) silently normalizes
 // calendar-invalid strings (2026-02-30 becomes March 2) and happily accepts
@@ -174,7 +179,7 @@ function offsetSuffix(minutes: number): string {
 function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs: number): string | null {
   const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
   if (!match) return null;
-  const [, y, m, d, hh, mm, ss, offset] = match;
+  const [, y, m, d, hh, mm, ss, fraction, offset] = match;
   if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
     return null;
   }
@@ -211,7 +216,7 @@ function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs:
   // Rebuilt from the matched parts rather than sliced off `value`: whatever
   // offset Hanna supplied has to go before the device's own is appended, or
   // the result is a string carrying two of them.
-  const wallClock = `${y}-${m}-${d}T${hh}:${mm}:${ss ?? '00'}`;
+  const wallClock = `${y}-${m}-${d}T${hh}:${mm}:${ss ?? '00'}${fraction ?? ''}`;
   const wallClockAsUtcMs = Date.parse(`${wallClock}Z`);
   if (Number.isNaN(wallClockAsUtcMs)) return null;
   if (offset !== undefined) {

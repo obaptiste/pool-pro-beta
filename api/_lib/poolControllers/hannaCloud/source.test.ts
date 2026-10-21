@@ -463,3 +463,23 @@ test('with no device clock configured, an offset Hanna sent is still taken as gi
   assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00+02:00'), new Date('2026-07-15T10:00:00Z'));
   assert.deepEqual(await recordedAtWith('2026-07-15T12:00:00'), new Date('2026-07-15T12:00:00Z'));
 });
+
+test('rebuilding the wall clock keeps fractional seconds', async () => {
+  // The pattern matched `.750` without capturing it, so reconstruction
+  // truncated the reading by up to 999ms before applying the configured
+  // offset. sync.ts dedupes on the exact timestamp, so a truncated one can
+  // compare as not-newer against a reading already stored with its fraction.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750Z', { kind: 'offset', minutes: 60 }),
+    new Date('2026-07-15T11:00:00.750Z'),
+  );
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750', LONDON),
+    new Date('2026-07-15T11:00:00.750Z'),
+  );
+  // Unchanged on the default path, where the value is never rebuilt.
+  assert.deepEqual(
+    await recordedAtWith('2026-07-15T12:00:00.750Z'),
+    new Date('2026-07-15T12:00:00.750Z'),
+  );
+});
