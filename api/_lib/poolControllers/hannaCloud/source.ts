@@ -56,7 +56,12 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // controllers send offset-less times, and Hanna's own decoder reads those as
 // UTC (dayjs.utc). normaliseHannaTimestampString pins that explicitly, so an
 // offset-less string is never left to Date's local-time parsing.
-const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+// The fractional part is captured, not merely matched: normaliseHannaTimestampString
+// rebuilds the wall clock from these groups when a device clock is configured, and
+// a non-capturing `(?:\.\d+)?` silently dropped up to 999ms on the way through.
+// sync.ts dedupes on the exact timestamp, so a truncated one can compare as
+// not-newer against a reading already stored with its fraction intact.
+const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 // Date.parse (and therefore `new Date(str)`) silently normalizes
 // calendar-invalid strings (2026-02-30 becomes March 2) and happily accepts
@@ -174,24 +179,57 @@ function offsetSuffix(minutes: number): string {
 function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs: number): string | null {
   const match = STRICT_ISO_DATE_TIME_PATTERN.exec(value);
   if (!match) return null;
-  const [, y, m, d, hh, mm, ss, offset] = match;
+  const [, y, m, d, hh, mm, ss, fraction, offset] = match;
+  // Validate Hanna's suffix before a configured clock discards it. Regex
+  // shape alone accepts +24:00/+99:99; replacing those would turn corrupt
+  // upstream input into a plausible timestamp and dedupe watermark.
+  if (offset && offset !== 'Z') {
+    const digits = offset.slice(1).replace(':', '');
+    if (Number(digits.slice(0, 2)) > 23 || Number(digits.slice(2)) > 59) return null;
+  }
   if (!isValidCalendarDateTime(Number(y), Number(m), Number(d), Number(hh), Number(mm), ss != null ? Number(ss) : undefined)) {
     return null;
   }
-  // An offset Hanna actually sent is authoritative; the configured device
-  // clock only ever fills in a missing one.
-  if (offset !== undefined) {
-    return Number.isNaN(Date.parse(value)) ? null : value;
-  }
+  // With no device clock configured, an offset Hanna sent stands as-is and a
+  // bare value is read as UTC -- the original behaviour, unchanged.
   if (clock.kind === 'utc') {
-    return Number.isNaN(Date.parse(`${value}Z`)) ? null : `${value}Z`;
+    const normalised = offset === undefined ? `${value}Z` : value;
+    return Number.isNaN(Date.parse(normalised)) ? null : normalised;
   }
-  const wallClockAsUtcMs = Date.parse(`${value}Z`);
+
+  // With one configured, it wins even over an offset Hanna supplied, and the
+  // wall-clock portion is reinterpreted in the device's own zone.
+  //
+  // This reverses the previous rule ("an offset Hanna actually sent is
+  // authoritative"), which was wrong about what that offset means. The
+  // controller sends a bare wall clock; Hanna's own decoder reads it as UTC
+  // (dayjs.utc). So a "Z" arriving on a dashboard `lastUpdate` is not an
+  // independent measurement of the device's offset -- it is that same
+  // assumption echoed back, and treating it as authoritative let Hanna's
+  // guess silently override an operator who had physically read the clock on
+  // the front of the device. The configuration is a statement about the
+  // hardware; the Z is a statement about Hanna's default.
+  //
+  // At Joy Lane this is the difference between working and not: the device
+  // keeps correct UK local time, every reading arrives an hour in the future,
+  // and setting HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES changed nothing because
+  // the dashboard path (client.ts assigns `messages.lastUpdate` over the
+  // decoded DT) never produced an offset-less value for the config to fix.
+  //
+  // If Hanna ever does convert properly, this would reinterpret a correct
+  // timestamp and land an offset out. Keep the configured clock aligned with
+  // the hardware; successful normalization is routine and must not log on
+  // every scheduled poll. Existing failure diagnostics remain available.
+  // Rebuilt from the matched parts rather than sliced off `value`: whatever
+  // offset Hanna supplied has to go before the device's own is appended, or
+  // the result is a string carrying two of them.
+  const wallClock = `${y}-${m}-${d}T${hh}:${mm}:${ss ?? '00'}${fraction ?? ''}`;
+  const wallClockAsUtcMs = Date.parse(`${wallClock}Z`);
   if (Number.isNaN(wallClockAsUtcMs)) return null;
   const minutes = clock.kind === 'offset'
     ? clock.minutes
     : zoneOffsetMinutesForWallClock(wallClockAsUtcMs, clock.timeZone, nowMs);
-  const normalised = `${value}${offsetSuffix(minutes)}`;
+  const normalised = `${wallClock}${offsetSuffix(minutes)}`;
   return Number.isNaN(Date.parse(normalised)) ? null : normalised;
 }
 
