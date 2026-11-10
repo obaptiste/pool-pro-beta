@@ -77,12 +77,20 @@ parse_tasks() {
     exit 1
   fi
 
-  local line current="" in_item=0
+  local line current="" in_item=0 first_line=1
   local open_re='^- \[ \] '
   local continuation_re='^[[:space:]]+[^[:space:]]'
+  # Anything that looks like an open checkbox but is not written exactly
+  # "- [ ] " (a tab, "*", "[]", extra spaces, a numbered list, an indent).
+  # These are reported as unparsed so a typo never hides a task.
+  local loose_re='^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]*\[[[:space:]]?\]'
 
   while IFS= read -r line || [[ -n "${line}" ]]; do
     line="${line%$'\r'}"
+    if ((first_line)); then
+      line="${line#$'\xef\xbb\xbf'}"
+      first_line=0
+    fi
     if [[ "${line}" =~ ${open_re} ]]; then
       if ((in_item)); then classify_item "${current}"; fi
       current="${line}"
@@ -92,6 +100,7 @@ parse_tasks() {
     else
       if ((in_item)); then classify_item "${current}"; fi
       in_item=0
+      if [[ "${line}" =~ ${loose_re} ]]; then classify_item "${line}"; fi
     fi
   done <"${TASKS_FILE}"
   if ((in_item)); then classify_item "${current}"; fi
@@ -206,11 +215,16 @@ cmd_start() {
 cmd_status() {
   parse_tasks
   local branch dirty last_log="none"
-  branch="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
-  dirty="$(git -C "${REPO_ROOT}" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  # Outside a git work tree (a tarball, a bare copy) both git calls fail;
+  # report "unknown" and 0 rather than dying under `set -e` and `pipefail`.
+  if ! branch="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+    branch="unknown"
+  fi
+  dirty="$( (git -C "${REPO_ROOT}" status --porcelain 2>/dev/null || true) | wc -l | tr -d ' ')"
   if [[ -d "${LOG_DIR}" ]]; then
     local newest
-    newest="$(find "${LOG_DIR}" -maxdepth 1 -type f -name '*.md' | sort | tail -n 1)"
+    # Only files this script writes: their dated names sort chronologically.
+    newest="$(find "${LOG_DIR}" -maxdepth 1 -type f -name 'session-*.md' | sort | tail -n 1)"
     if [[ -n "${newest}" ]]; then last_log="${newest#"${REPO_ROOT}/"}"; fi
   fi
   printf 'Branch: %s\n' "${branch}"

@@ -3,10 +3,18 @@
 // Cronx-Academy repo, so these cases mirror that repo's Vitest suite.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +38,31 @@ function agent(args: string[], tasksFile: string = FIXTURE) {
 }
 
 const ranked = (out: string) => out.split('\n').filter((line) => line.startsWith('['));
+
+function backlog(name: string, content: string) {
+  const file = path.join(tmp, name);
+  writeFileSync(file, content);
+  return file;
+}
+
+// A copy of the script in a directory that is not a git work tree and has no
+// node_modules, so `status` and `check` can be exercised away from this repo.
+function standalone(args: string[], env: Record<string, string> = {}) {
+  const root = path.join(tmp, 'stand alone');
+  mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  copyFileSync(SCRIPT, path.join(root, 'scripts/agent'));
+  writeFileSync(path.join(root, 'TASKS.md'), '- [ ] **P1 — Only task.** Detail.\n');
+  const result = spawnSync('bash', [path.join(root, 'scripts/agent'), ...args], {
+    cwd: tmp,
+    encoding: 'utf8',
+    env: { ...process.env, AGENT_TASKS_FILE: '', AGENT_LOG_DIR: '', GIT_CEILING_DIRECTORIES: tmp, ...env },
+  });
+  return { code: result.status, out: result.stdout, err: result.stderr };
+}
+
+afterEach(() => {
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   tmp = mkdtempSync(path.join(tmpdir(), 'agent-cli-'));
@@ -160,7 +193,7 @@ describe('scripts/agent', () => {
     const lines = out.trim().split('\n');
     assert.match(lines[0], /^Branch: \S+/);
     assert.match(lines[1], /^Dirty files: \d+$/);
-    assert.equal(lines[2], 'Open: 4  Blocked: 1  Unparsed: 2');
+    assert.equal(lines[2], 'Open: 4  Blocked: 2  Unparsed: 2');
     assert.equal(lines[3], 'Last log: none');
   });
 
@@ -169,5 +202,85 @@ describe('scripts/agent', () => {
     assert.equal(agent(['help']).code, 0);
     assert.equal(agent([]).code, 0);
     assert.ok(agent(['help']).out.includes('Usage: scripts/agent'));
+  });
+
+  it('a blocked tag on a continuation line blocks the item', () => {
+    const { out } = agent(['list']);
+    assert.ok(out.includes('  P3 — Waiting on operator (blocked: operator action)'));
+    assert.ok(!ranked(out).join('\n').includes('Waiting on operator'));
+    assert.equal(agent(['status']).out.trim().split('\n')[2], 'Open: 4  Blocked: 2  Unparsed: 2');
+  });
+
+  it('an upper-case [X] item is done, not open or unparsed', () => {
+    const file = backlog('upper.md', '- [X] **P1 — Upper done.** x\n- [ ] **P2 — Real.** y\n');
+    const { out } = agent(['list'], file);
+    assert.deepEqual(ranked(out), ['[1] P2 — Real']);
+    assert.ok(!out.includes('Unparsed:'));
+    assert.ok(!out.includes('Upper done'));
+  });
+
+  it('malformed open checkboxes are reported as Unparsed, never dropped', () => {
+    const loose = [
+      '- [ ]\t**P1 — Tab after box.** x',
+      '* [ ] **P1 — Star bullet.** x',
+      '- [] **P1 — Empty box.** x',
+      '-  [ ] **P1 — Two spaces.** x',
+      '1. [ ] **P1 — Numbered.** x',
+      '  - [ ] **P1 — Indented top level.** x',
+    ];
+    const file = backlog('loose.md', '\uFEFF- [ ] **P2 — After a BOM.** x\n\n' + loose.join('\n\n') + '\n');
+    const { out } = agent(['list'], file);
+    assert.deepEqual(ranked(out), ['[1] P2 — After a BOM']);
+    for (const title of ['Tab after box', 'Star bullet', 'Empty box', 'Two spaces', 'Numbered', 'Indented top level']) {
+      assert.ok(out.slice(out.indexOf('Unparsed:')).includes(title));
+    }
+    assert.equal(agent(['status'], file).out.trim().split('\n')[2], 'Open: 1  Blocked: 0  Unparsed: 6');
+  });
+
+  it('an indented sub-item stays part of its parent, and a blank line ends an item', () => {
+    const file = backlog(
+      'nested.md',
+      '- [ ] **P1 — Parent.** Detail.\n      - [ ] nested step guava\n\n      Stray indented prose kumquat.\n'
+    );
+    const { out } = agent(['next'], file);
+    assert.ok(out.includes('guava'));
+    assert.ok(!out.includes('kumquat'));
+    assert.ok(!agent(['list'], file).out.includes('Unparsed:'));
+  });
+
+  it('list rejects a filter that is not P1, P2 or P3', () => {
+    for (const filter of ['P4', 'p2', 'all']) {
+      const { code, err } = agent(['list', filter]);
+      assert.equal(code, 1);
+      assert.ok(err.includes('Usage: scripts/agent list [P1|P2|P3]'));
+    }
+  });
+
+  it('start points at the agents guide when the repo has one', () => {
+    assert.match(agent(['start', '1']).out, /Read first: CLAUDE\.md, A(GENTS|gents)\.md/);
+  });
+
+  it('status works outside a git work tree', () => {
+    const { code, out } = standalone(['status']);
+    assert.equal(code, 0);
+    assert.deepEqual(out.trim().split('\n'), ['Branch: unknown', 'Dirty files: 0', 'Open: 1  Blocked: 0  Unparsed: 0', 'Last log: none']);
+  });
+
+  it('check refuses to run before dependencies are installed', () => {
+    const { code, out, err } = standalone(['check']);
+    assert.equal(code, 1);
+    assert.ok(err.includes('Run npm install first.'));
+    assert.ok(!out.includes('PASS'));
+  });
+
+  it('status reports the newest session log, ignoring files with other names', () => {
+    const logDir = path.join(tmp, 'logs');
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(path.join(logDir, 'session_2026-06-15_12-38-05.md'), 'old format\n');
+    writeFileSync(path.join(logDir, 'session-2020-01-01.md'), '- 00:00:00 older\n');
+    assert.equal(agent(['log', 'new note']).code, 0);
+    const last = agent(['status']).out.trim().split('\n')[3];
+    assert.match(last, /^Last log: .*session-\d{4}-\d{2}-\d{2}\.md$/);
+    assert.ok(!last.includes('2020-01-01'));
   });
 });
