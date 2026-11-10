@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# =============================================================================
+# scripts/agent — one control surface for the agent harness.
+#
+# Reads the backlog in TASKS.md and answers "what next?". Plain Bash and git
+# only, so it works on a fresh clone before `npm install`. Nothing here
+# commits, pushes, deletes, or installs; only `log` writes a file.
+#
+# Backlog item format (see the "Format" note at the top of TASKS.md):
+#   - [ ] **P<n> — Title.** detail, optionally with `blocked: <reason>`
+#
+# This file is kept byte-identical across repositories. Do not add
+# repo-specific behaviour here; put it in TASKS.md or CLAUDE.md instead.
+# =============================================================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TASKS_FILE="${AGENT_TASKS_FILE:-${REPO_ROOT}/TASKS.md}"
+LOG_DIR="${AGENT_LOG_DIR:-${REPO_ROOT}/logs/agent}"
+CHECK_COMMANDS=("npm run lint" "npm test")
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/agent <command>
+
+  next              Show the highest-priority open, unblocked task
+  list [P1|P2|P3]   List open tasks in priority order
+  start <n>         Print the worker brief for task <n> from `list`
+  status            Branch, dirty files, task counts, last session log
+  check             Run the repo's fast checks (lint, then tests)
+  log "<note>"      Append a timestamped note to today's session log
+  help              Show this message
+USAGE
+}
+
+# ─── Backlog parsing ─────────────────────────────────────────────────────────
+# Parallel arrays, one entry per open item, in file order.
+ITEM_KIND=()   # ranked | blocked | unparsed
+ITEM_PRIO=()   # 1, 2, 3 (empty for unparsed)
+ITEM_TITLE=()
+ITEM_REASON=() # blocked reason (empty otherwise)
+ITEM_RAW=()    # the item's lines as written, newline-joined
+RANKED=()      # indices into the arrays above, in priority order
+
+classify_item() {
+  local raw="$1"
+  local first="${raw%%$'\n'*}"
+  local head_re='^- \[ \] \*\*P([123]) — (.*)$'
+  local blocked_re='`blocked: ([^`]*)`'
+  local kind="unparsed" prio="" title="" reason=""
+
+  if [[ "${first}" =~ ${head_re} ]]; then
+    prio="${BASH_REMATCH[1]}"
+    title="${BASH_REMATCH[2]}"
+    title="${title%%\*\**}"
+    title="${title%.}"
+    title="${title%:}"
+    kind="ranked"
+    if [[ "${raw}" =~ ${blocked_re} ]]; then
+      kind="blocked"
+      reason="${BASH_REMATCH[1]}"
+    fi
+  fi
+
+  ITEM_KIND+=("${kind}")
+  ITEM_PRIO+=("${prio}")
+  ITEM_TITLE+=("${title}")
+  ITEM_REASON+=("${reason}")
+  ITEM_RAW+=("${raw}")
+}
+
+parse_tasks() {
+  if [[ ! -f "${TASKS_FILE}" ]]; then
+    printf 'No backlog found at %s\n' "${TASKS_FILE}" >&2
+    exit 1
+  fi
+
+  local line current="" in_item=0
+  local open_re='^- \[ \] '
+  local continuation_re='^[[:space:]]+[^[:space:]]'
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    if [[ "${line}" =~ ${open_re} ]]; then
+      if ((in_item)); then classify_item "${current}"; fi
+      current="${line}"
+      in_item=1
+    elif ((in_item)) && [[ "${line}" =~ ${continuation_re} ]]; then
+      current+=$'\n'"${line}"
+    else
+      if ((in_item)); then classify_item "${current}"; fi
+      in_item=0
+    fi
+  done <"${TASKS_FILE}"
+  if ((in_item)); then classify_item "${current}"; fi
+
+  local prio i
+  for prio in 1 2 3; do
+    for i in "${!ITEM_KIND[@]}"; do
+      if [[ "${ITEM_KIND[$i]}" == "ranked" && "${ITEM_PRIO[$i]}" == "${prio}" ]]; then
+        RANKED+=("${i}")
+      fi
+    done
+  done
+}
+
+count_kind() {
+  local kind="$1" i total=0
+  for i in "${!ITEM_KIND[@]}"; do
+    if [[ "${ITEM_KIND[$i]}" == "${kind}" ]]; then total=$((total + 1)); fi
+  done
+  printf '%s' "${total}"
+}
+
+print_head() { # <position> <item index>
+  printf '[%s] P%s — %s\n' "$1" "${ITEM_PRIO[$2]}" "${ITEM_TITLE[$2]}"
+}
+
+print_item() { # <position> <item index>
+  print_head "$1" "$2"
+  printf '\n%s\n' "${ITEM_RAW[$2]}"
+}
+
+# ─── Commands ────────────────────────────────────────────────────────────────
+cmd_next() {
+  parse_tasks
+  if ((${#RANKED[@]} == 0)); then
+    printf 'No open tasks.\n'
+    return 0
+  fi
+  print_item 1 "${RANKED[0]}"
+}
+
+cmd_list() {
+  local filter="${1:-}"
+  local filter_re='^P[123]$'
+  if [[ -n "${filter}" && ! "${filter}" =~ ${filter_re} ]]; then
+    printf 'Usage: scripts/agent list [P1|P2|P3]\n' >&2
+    return 1
+  fi
+  parse_tasks
+
+  local position=0 i
+  if ((${#RANKED[@]} == 0)); then printf 'No open tasks.\n'; fi
+  for i in ${RANKED[@]+"${RANKED[@]}"}; do
+    position=$((position + 1))
+    if [[ -z "${filter}" || "P${ITEM_PRIO[$i]}" == "${filter}" ]]; then
+      print_head "${position}" "${i}"
+    fi
+  done
+
+  if (($(count_kind blocked) > 0)); then
+    printf '\nBlocked:\n'
+    for i in "${!ITEM_KIND[@]}"; do
+      if [[ "${ITEM_KIND[$i]}" == "blocked" ]]; then
+        printf '  P%s — %s (blocked: %s)\n' \
+          "${ITEM_PRIO[$i]}" "${ITEM_TITLE[$i]}" "${ITEM_REASON[$i]}"
+      fi
+    done
+  fi
+
+  if (($(count_kind unparsed) > 0)); then
+    printf '\nUnparsed:\n'
+    local first
+    for i in "${!ITEM_KIND[@]}"; do
+      if [[ "${ITEM_KIND[$i]}" == "unparsed" ]]; then
+        first="${ITEM_RAW[$i]%%$'\n'*}"
+        printf '  %s\n' "${first:0:80}"
+      fi
+    done
+  fi
+}
+
+cmd_start() {
+  local n="${1:-}"
+  local number_re='^[1-9][0-9]*$'
+  parse_tasks
+  if [[ ! "${n}" =~ ${number_re} ]] || ((n > ${#RANKED[@]})); then
+    printf 'Usage: scripts/agent start <n>   (n is a task number from "scripts/agent list"; %s open)\n' \
+      "${#RANKED[@]}" >&2
+    return 1
+  fi
+
+  printf 'Worker brief\n============\n\n'
+  print_item "${n}" "${RANKED[$((n - 1))]}"
+
+  printf '\nRead first: CLAUDE.md'
+  local doc
+  for doc in AGENTS.md Agents.md; do
+    if [[ -f "${REPO_ROOT}/${doc}" ]]; then
+      printf ', %s' "${doc}"
+      break
+    fi
+  done
+  printf '\n\nWork this task only. Write the failing test first where the change is testable.\n'
+  printf 'Before you commit, run:\n'
+  local command
+  for command in "${CHECK_COMMANDS[@]}"; do
+    printf '  %s\n' "${command}"
+  done
+  printf '(or: scripts/agent check)\n'
+}
+
+cmd_status() {
+  parse_tasks
+  local branch dirty last_log="none"
+  branch="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  dirty="$(git -C "${REPO_ROOT}" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -d "${LOG_DIR}" ]]; then
+    local newest
+    newest="$(find "${LOG_DIR}" -maxdepth 1 -type f -name '*.md' | sort | tail -n 1)"
+    if [[ -n "${newest}" ]]; then last_log="${newest#"${REPO_ROOT}/"}"; fi
+  fi
+  printf 'Branch: %s\n' "${branch}"
+  printf 'Dirty files: %s\n' "${dirty}"
+  printf 'Open: %s  Blocked: %s  Unparsed: %s\n' \
+    "${#RANKED[@]}" "$(count_kind blocked)" "$(count_kind unparsed)"
+  printf 'Last log: %s\n' "${last_log}"
+}
+
+cmd_check() {
+  if [[ ! -d "${REPO_ROOT}/node_modules" ]]; then
+    printf 'Run npm install first.\n' >&2
+    return 1
+  fi
+  cd "${REPO_ROOT}"
+  local command
+  for command in "${CHECK_COMMANDS[@]}"; do
+    printf '── %s\n' "${command}"
+    # Word-splitting is intended: each entry is a fixed command line.
+    # shellcheck disable=SC2086
+    if ${command}; then
+      printf 'PASS %s\n' "${command}"
+    else
+      printf 'FAIL %s\n' "${command}"
+      return 1
+    fi
+  done
+}
+
+cmd_log() {
+  local note="$*"
+  if [[ -z "${note}" ]]; then
+    printf 'Usage: scripts/agent log "<note>"\n' >&2
+    return 1
+  fi
+  mkdir -p "${LOG_DIR}"
+  local file
+  file="${LOG_DIR}/session-$(date '+%Y-%m-%d').md"
+  printf -- '- %s %s\n' "$(date '+%H:%M:%S')" "${note}" >>"${file}"
+  printf 'Logged to %s\n' "${file#"${REPO_ROOT}/"}"
+}
+
+# ─── Dispatch ────────────────────────────────────────────────────────────────
+command="${1:-help}"
+if (($# > 0)); then shift; fi
+
+case "${command}" in
+  next) cmd_next ;;
+  list) cmd_list "$@" ;;
+  start) cmd_start "$@" ;;
+  status) cmd_status ;;
+  check) cmd_check ;;
+  log) cmd_log "$@" ;;
+  help | -h | --help) usage ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

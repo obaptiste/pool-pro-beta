@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
-    "test": "tsx --test \"src/**/*.test.ts\" \"api/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\" \"api/**/*.test.ts\" \"scripts/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",

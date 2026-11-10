@@ -72,6 +72,8 @@ api/
     mcp/                      MCP server implementation and Firestore-backed data source
 firestore.rules             Firestore security rules with field validation
 vercel.json                 Vercel Cron config (pool controller sync)
+TASKS.md                    The backlog — actionable items, parsed by scripts/agent
+scripts/agent               Control CLI over TASKS.md (next / list / start / status / check / log)
 ```
 
 ## Development Commands
@@ -83,6 +85,30 @@ npm run build        # Production Vite build → dist/
 npm run lint         # TypeScript type-check (tsc --noEmit, app + service worker)
 npm run preview      # Preview production build
 ```
+
+## Agent Harness
+
+`TASKS.md` is the only backlog. Every open item is written
+`- [ ] **P<n> — Title.** detail`; add `` `blocked: <reason>` `` to an item that
+cannot be worked yet. `scripts/agent` reads that file and is the one control
+surface for people and agents. It is plain Bash with no dependencies, so it works
+before `npm install`, and it never commits, pushes, or deletes anything.
+
+| Command | What it does |
+|---|---|
+| `scripts/agent next` | Show the highest-priority open, unblocked task (P1, then P2, then P3) |
+| `scripts/agent list [P1/P2/P3]` | List open tasks in priority order, then blocked and unparsed items |
+| `scripts/agent start <n>` | Print the worker brief for task `n` from `list` |
+| `scripts/agent status` | Branch, dirty files, task counts, last session log |
+| `scripts/agent check` | Run `npm run lint`, then `npm test`; stop at the first failure |
+| `scripts/agent log "<note>"` | Append a timestamped note to `logs/agent/session-<date>.md` (gitignored) |
+
+- When you finish a task, tick it in `TASKS.md` in the same PR. When you find new
+  work, add it there in the item format. The known-issues table below stays the
+  decision record: add a row there when a decision needs its reasoning kept.
+- `scripts/agent` is kept byte-identical with the copy in the Cronx-Academy repo
+  (tests: `scripts/agent.test.ts`). Repo-specific guidance belongs in `TASKS.md` or
+  this file, not in the script.
 
 ## Environment Variables
 
@@ -379,6 +405,9 @@ low ORP from an auto-synced reading doesn't pass through silently.
   drive-by change bundled into the telemetry-sync work.
 
 ## Code Review — Known Issues & Decisions
+
+> Actionable items from this table are tracked in [`TASKS.md`](TASKS.md); run
+> `scripts/agent next` for the next one. This table records the decisions.
 
 | # | File | Issue | Status |
 |---|---|---|---|
