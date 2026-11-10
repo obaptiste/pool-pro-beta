@@ -48,12 +48,12 @@ src/
     TabBar.tsx              Persistent bottom nav: Home · Readings · Tasks · Supplies · More
     MoreSheet.tsx           "More" tab sheet: Equipment, Weekly Report, Trends, Wishlist, Glossary, Export, Sign out…
     Tasks.tsx               Shift checklist full-screen view (Tasks tab)
-    TrendsView.tsx          Full-screen wrapper around TrendCharts (opens focused on a metric)
+    TrendsView.tsx          Full-screen wrapper around TrendCharts (opens focused on a metric); its title is the range picker, saved per user
     GeminiAssistant.tsx     Floating AI button + sheet: protocol detail, supply locator, free-form question
     ReadingForm.tsx         New reading entry with voice transcription (Gemini)
     Inventory.tsx           Chemical stock tracker
     Equipment.tsx           Equipment service schedule tracker
-    TrendCharts.tsx         7-day trend charts (Recharts)
+    TrendCharts.tsx         Trend charts (Recharts) over a 4 / 7 / 14-day or all-time window, picked from the TrendsView title
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
     ControllerImport.tsx    More → Import Controller Data: upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
