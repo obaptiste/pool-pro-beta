@@ -21,6 +21,37 @@ export const filterReadingsFrom = (readings: Reading[], resetAt: Date | null): R
   return readings.filter((reading) => reading.timestamp.getTime() >= resetAt.getTime());
 };
 
+/** Time windows the Trends screen can show. `all` means "since the last reset, or everything". */
+export type TrendRange = '4d' | '7d' | '14d' | 'all';
+
+export const DEFAULT_TREND_RANGE: TrendRange = '7d';
+
+export const TREND_RANGE_OPTIONS: { value: TrendRange; label: string; title: string; days: number | null }[] = [
+  { value: '4d', label: '4 days', title: '4-Day Trends', days: 4 },
+  { value: '7d', label: '7 days', title: '7-Day Trends', days: 7 },
+  { value: '14d', label: '14 days', title: '14-Day Trends', days: 14 },
+  { value: 'all', label: 'All time', title: 'All-Time Trends', days: null },
+];
+
+export const isTrendRange = (value: unknown): value is TrendRange =>
+  TREND_RANGE_OPTIONS.some((option) => option.value === value);
+
+export const getTrendRangeOption = (range: TrendRange) =>
+  TREND_RANGE_OPTIONS.find((option) => option.value === range) ?? TREND_RANGE_OPTIONS[1];
+
+/**
+ * Where the chart window starts: the later of the operator's "Start a new trend" reset
+ * and `now − N days`. A reset inside the window always wins, so resetting still means
+ * "nothing before this point", whatever range is picked.
+ */
+export const getTrendWindowStart = (range: TrendRange, resetAt: Date | null, now = new Date()): Date | null => {
+  const { days } = getTrendRangeOption(range);
+  if (days == null) return resetAt;
+  const rangeStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  if (!resetAt) return rangeStart;
+  return resetAt.getTime() > rangeStart.getTime() ? resetAt : rangeStart;
+};
+
 export const buildTrendPoints = (
   readings: Reading[],
   metric: TrendMetricKey,

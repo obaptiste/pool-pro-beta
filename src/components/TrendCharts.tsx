@@ -13,11 +13,21 @@ import {
 import { format } from 'date-fns';
 import { ArrowRight, Check, RefreshCcw, ShieldCheck, X } from 'lucide-react';
 import { Reading, DEFAULT_RANGES } from '../types';
-import { buildTrendPoints, filterReadingsFrom, TrendMetricKey } from '../lib/trends';
+import {
+  buildTrendPoints,
+  DEFAULT_TREND_RANGE,
+  filterReadingsFrom,
+  getTrendRangeOption,
+  getTrendWindowStart,
+  TrendMetricKey,
+  TrendRange,
+} from '../lib/trends';
 
 interface Props {
   readings: Reading[];
   userId: string;
+  /** Time window to chart. Combined with the "Start a new trend" reset: whichever starts later wins. */
+  range?: TrendRange;
   onLogReading: () => void;
   /** Chart to scroll into view on mount (e.g. the telemetry card that was tapped on the dashboard). */
   focusMetric?: TrendMetricKey;
@@ -41,7 +51,7 @@ const parseStoredDate = (value: string | null): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export default function TrendCharts({ readings, userId, onLogReading, focusMetric }: Props) {
+export default function TrendCharts({ readings, userId, range = DEFAULT_TREND_RANGE, onLogReading, focusMetric }: Props) {
   const storageKey = `poolpro:trend-start:${userId}`;
   React.useEffect(() => {
     if (!focusMetric) return;
@@ -53,7 +63,11 @@ export default function TrendCharts({ readings, userId, onLogReading, focusMetri
   }, [focusMetric]);
   const [resetAt, setResetAt] = React.useState<Date | null>(() => parseStoredDate(localStorage.getItem(storageKey)));
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
-  const currentReadings = filterReadingsFrom(readings, resetAt);
+  const sinceReset = filterReadingsFrom(readings, resetAt);
+  const currentReadings = filterReadingsFrom(sinceReset, getTrendWindowStart(range, resetAt));
+  const rangeDays = getTrendRangeOption(range).days;
+  // Readings exist since the reset, just not inside the picked window — say so rather than "add a reading".
+  const windowIsEmpty = currentReadings.length === 0 && sinceReset.length > 0 && rangeDays != null;
 
   const resetTrend = () => {
     const now = new Date();
@@ -110,7 +124,14 @@ export default function TrendCharts({ readings, userId, onLogReading, focusMetri
         </section>
       )}
 
-      {currentReadings.length === 0 && (
+      {windowIsEmpty && (
+        <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 px-5 py-4 text-center" role="status">
+          <p className="text-xs font-bold text-white">No readings in the last {rangeDays} days.</p>
+          <p className="mt-1 text-[10px] uppercase tracking-wider text-ink-dim">Try a longer range from the title above.</p>
+        </div>
+      )}
+
+      {currentReadings.length === 0 && !windowIsEmpty && (
         <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 px-5 py-4 text-center" role="status">
           <p className="text-xs font-bold text-white">Your optimal guides are ready.</p>
           <p className="mt-1 text-[10px] uppercase tracking-wider text-ink-dim">Add a reading to draw your actual results over them.</p>
