@@ -55,8 +55,9 @@ test('keeps min/max and dose values exactly as reported', () => {
     [7.18, 7.49, 697, 709, 33.4, 38.1],
   );
   assert.deepEqual([w.acidBaseMinMl, w.acidBaseMaxMl, w.chlorineMinMl, w.chlorineMaxMl], [0, 297.69, 0, 50]);
-  assert.equal(w.start.getHours(), 19);
-  assert.equal(w.start.getMinutes(), 10);
+  // An explicit instant, not getHours(): the result must not depend on the
+  // time zone of the machine running the tests.
+  assert.equal(w.start.toISOString(), '2026-10-14T19:10:04.000Z');
 });
 
 test('"--" becomes null, never 0', () => {
