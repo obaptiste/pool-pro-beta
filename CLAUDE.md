@@ -41,6 +41,7 @@ src/
     lsi.ts                  calculateLSI() — shared Langelier Saturation Index logic
     aiProtocol.ts           AI maintenance protocol request + system prompt, shared by dashboard card and assistant
     dashboardSummary.ts     Pure derivations behind dashboard surfaces (sync pill, trend glyphs, tile copy, agent activity)
+    deviceClock.ts          DeviceClock — what a controller's own clock is set to (UTC / zone / fixed offset) + conversion helpers, shared by the CSV importer and the cloud sync
     hannaCsv.ts             parseHannaCsv() — zero-trust parser for Hanna BL-series controller CSV exports + controllerLogDocId(); controllerValueWarning() grades pH/ORP for both the import preview and the log view
     controllerLog.ts        Pure helpers behind the controller log views (doc mapping, range filter anchored to the latest window, gaps, grading)
   components/
@@ -56,7 +57,7 @@ src/
     TrendCharts.tsx         Trend charts (Recharts) over a 4 / 7 / 14-day or all-time window, picked from the TrendsView title
     History.tsx             Full reading history with delete
     ReminderSettings.tsx    Notification schedule settings
-    ControllerImport.tsx    More → Import Controller Data: upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
+    ControllerImport.tsx    More → Import Controller Data: choose the controller clock, upload a Hanna CSV, preview, write hourly windows to `controllerLogs`
     ControllerLogView.tsx   More → Controller Log (and the Home card): min–max band chart per window for pH/ORP/temp, dose strip, dose events
     ControllerLogCard.tsx   Home card summarising the latest 24 imported windows — history, not status (no Good/Watch chips)
     ControllerCharts.tsx    Custom SVG band chart + dose strip shared by the view and the card
@@ -136,7 +137,7 @@ OPENAI_API_KEY=      # Optional — ChatGPT fallback
 - `inventory/{id}` — chemical stock items; seeded from `DEFAULT_INVENTORY` on first login
 - `equipment/{id}` — equipment registry; seeded from `DEFAULT_EQUIPMENT` on first login
 - `schedules/{uid}` — test frequency and reminder schedule per user
-- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and only the controller log views read it (ControllerLogView, the Home ControllerLogCard) — never alerts, LSI, readings, trends, or AI prompts, since imported windows can be days old. App.tsx's listener is equality-only (`where uid ==`, sorted client-side) to avoid needing a composite index, and is unbounded like `readings` (known issue #15). Times have no offset in the file, so they're read as the importing browser's local time; `startLocal`/`endLocal` keep the raw text.
+- `controllerLogs/{uid}_{deviceId}_{YYYYMMDDTHHMMSS}[_2]` — hourly windows imported from a controller CSV export (min/max pH, ORP, temperature, plus acid/chlorine pump volumes as reported). Deterministic ids make re-imports idempotent; a local start time that repeats when clocks go back gets `_2`. Deliberately separate from `readings`: a window is a range, not a point measurement, and only the controller log views read it (ControllerLogView, the Home ControllerLogCard) — never alerts, LSI, readings, trends, or AI prompts, since imported windows can be days old. App.tsx's listener is equality-only (`where uid ==`, sorted client-side) to avoid needing a composite index, and is unbounded like `readings` (known issue #15). Times have no offset in the file, so the operator chooses the controller's clock on the import screen (`DeviceClock` in `src/lib/deviceClock.ts` — UTC, a time zone, or a fixed offset; no default, remembered per user in `localStorage`) and `parseHannaCsv(text, clock)` reads them on it; `startLocal`/`endLocal` keep the raw text. Doc ids come from that raw text, so re-importing with a different clock rewrites the stored `start`/`end` of the same documents (`planImport()` finds them) instead of duplicating windows.
 - `poolControllerSyncState/{ownerUid}_{sourceId}` — server-only; last-synced marker for the pool controller telemetry job (see below)
 
 All documents carry a `uid` field matched to `request.auth.uid` in Firestore rules. Rules also enforce field-level validation (types, enums, size limits).
@@ -320,11 +321,13 @@ assumption unoverridable because the source never saw an offset-less value to
 correct. Decoding the payload is the client's job; deciding what a bare wall
 clock means is the source's.
 
-> **Not yet reconciled:** the CSV importer (`src/lib/hannaCsv.ts`) reads the
-> same offset-less controller times as the *importing browser's* local time,
-> not UTC and not this setting. The two paths therefore disagree whenever the
-> device isn't on the browser's own clock. Setting the device to UTC fixes the
-> cloud path and silently shifts imported windows by an hour; see issue #17.
+> **Shared with the CSV importer.** `DeviceClock` and its conversion helpers
+> live in `src/lib/deviceClock.ts`, and the CSV importer (`src/lib/hannaCsv.ts`)
+> reads the same offset-less controller times through them. The browser can't
+> see these env vars, so the import screen asks the operator for the clock.
+> Nothing enforces that the two answers match: if the cloud sync uses a zone
+> or offset, the import must be given the same one. The preview warns when the
+> chosen clock puts the export's last window in the future.
 Hanna error classes set `name`, and the probe logs that name server-side.
 
 `api/cron/sync-pool-controller.ts` polls a Hanna Instruments BL122/BL132 pool
@@ -427,7 +430,7 @@ low ORP from an auto-synced reading doesn't pass through silently.
 | 14 | `api/_lib/poolControllers/hannaCloud/client.ts` | Talks to Hanna Cloud's private GraphQL API — no official API exists | Known — accepted risk; see "Pool controller telemetry" above |
 | 15 | `App.tsx` (`readings` listener) | No `limit()` on the Firestore `readings` query — 15-min auto-sync writes ~96 docs/day/user with no pruning; History/TrendCharts/WeeklyReport/Dashboard/GeminiAssistant all hold the full unbounded array in memory | Known — accepted for now; see "Known limitation: unbounded `readings` growth" above; deserves its own PR, not a drive-by fix. The `controllerLogs` listener has the same shape (~24 docs/day per imported controller) |
 | 16 | `api/_lib/mcp/server.ts`'s four write-tool `registerTool` calls | Wrapped in `if (canWrite) { ... }` without re-indenting their contents | Known — intentional; those tools' `description` fields are multi-line template-literal strings sent verbatim to MCP clients, so a blanket re-indent of the block would have added leading whitespace to the *visible tool-description text*, not just the source code (caught and reverted during development) |
-| 17 | `src/lib/hannaCsv.ts` vs `api/_lib/poolControllers/hannaCloud/source.ts` | The two controller paths disagree about what an offset-less device timestamp means: the CSV importer reads it as the importing browser's local time, the cloud sync as UTC (or `HANNA_CLOUD_DEVICE_TIMEZONE` / `..._UTC_OFFSET_MINUTES`). Whichever clock the device keeps, one path is wrong unless they're made to agree | Known — the cloud side is now configurable; the importer still isn't, and its `startLocal`/`endLocal` strings also feed `controllerLogDocId()`, so changing its interpretation shifts stored `start`/`end` without changing doc ids (re-import stays idempotent). Deserves its own PR |
+| 17 | `src/lib/hannaCsv.ts` vs `api/_lib/poolControllers/hannaCloud/source.ts` | The two controller paths disagreed about what an offset-less device timestamp means: the CSV importer read it as the importing browser's local time, the cloud sync as UTC (or `HANNA_CLOUD_DEVICE_TIMEZONE` / `..._UTC_OFFSET_MINUTES`) | Fixed — both use `DeviceClock` from `src/lib/deviceClock.ts`; the importer takes the clock from the operator on the import screen (no default), and a re-import with the right clock corrects the stored `start`/`end` of windows imported earlier without changing doc ids. Still a known gap: the operator's answer and the server env vars are two separate settings that must be kept the same by hand; a single stored setting both read would remove that |
 
 ## Agent Instructions
 

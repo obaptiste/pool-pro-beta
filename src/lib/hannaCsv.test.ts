@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { controllerLogDocId, isDoseWindow, summariseSafetyWarnings, windowDocId, parseCell, parseHannaCsv, parseLocalDateTime, splitCsvLine, HannaCsvError } from './hannaCsv';
+import { controllerLogDocId, isDoseWindow, planImport, summariseSafetyWarnings, windowDocId, parseCell, parseDeviceDateTime, parseHannaCsv as parseWithClock, splitCsvLine, HannaCsvError } from './hannaCsv';
+import type { DeviceClock } from './deviceClock';
+
+const UTC: DeviceClock = { kind: 'utc' };
+const LONDON: DeviceClock = { kind: 'zone', timeZone: 'Europe/London' };
+const PLUS_ONE: DeviceClock = { kind: 'offset', minutes: 60 };
+// Existing cases don't care which clock the controller keeps.
+const parseHannaCsv = (text: string) => parseWithClock(text, UTC);
 
 // Trimmed from a real BL122 export, trailing tabs included.
 const HEADER = [
@@ -48,8 +55,9 @@ test('keeps min/max and dose values exactly as reported', () => {
     [7.18, 7.49, 697, 709, 33.4, 38.1],
   );
   assert.deepEqual([w.acidBaseMinMl, w.acidBaseMaxMl, w.chlorineMinMl, w.chlorineMaxMl], [0, 297.69, 0, 50]);
-  assert.equal(w.start.getHours(), 19);
-  assert.equal(w.start.getMinutes(), 10);
+  // An explicit instant, not getHours(): the result must not depend on the
+  // time zone of the machine running the tests.
+  assert.equal(w.start.toISOString(), '2026-10-14T19:10:04.000Z');
 });
 
 test('"--" becomes null, never 0', () => {
@@ -132,11 +140,83 @@ test('splitCsvLine keeps quoted commas inside one cell', () => {
   assert.deepEqual(splitCsvLine('"say ""hi""",2'), ['say "hi"', '2']);
 });
 
-test('parseLocalDateTime rejects impossible dates and other formats', () => {
-  assert.ok(parseLocalDateTime('2026-10-14 13:41:07'));
-  assert.equal(parseLocalDateTime('2026-02-30 10:00:00'), null);
-  assert.equal(parseLocalDateTime('2026-10-14T13:41:07'), null);
-  assert.equal(parseLocalDateTime('2026-10-14'), null);
+test('parseDeviceDateTime rejects impossible dates and other formats', () => {
+  assert.ok(parseDeviceDateTime('2026-10-14 13:41:07', UTC));
+  assert.equal(parseDeviceDateTime('2026-02-30 10:00:00', UTC), null);
+  assert.equal(parseDeviceDateTime('2026-10-14 24:00:00', UTC), null);
+  assert.equal(parseDeviceDateTime('2026-10-14T13:41:07', UTC), null);
+  assert.equal(parseDeviceDateTime('2026-10-14', UTC), null);
+});
+
+test('parseDeviceDateTime reads the same text as a different instant for each controller clock', () => {
+  const text = '2026-07-01 12:00:00';
+  assert.equal(parseDeviceDateTime(text, UTC)!.toISOString(), '2026-07-01T12:00:00.000Z');
+  assert.equal(parseDeviceDateTime(text, PLUS_ONE)!.toISOString(), '2026-07-01T11:00:00.000Z');
+  assert.equal(parseDeviceDateTime(text, LONDON)!.toISOString(), '2026-07-01T11:00:00.000Z');
+  // A fixed offset ignores daylight saving; a zone follows it.
+  assert.equal(parseDeviceDateTime('2026-12-01 12:00:00', PLUS_ONE)!.toISOString(), '2026-12-01T11:00:00.000Z');
+  assert.equal(parseDeviceDateTime('2026-12-01 12:00:00', LONDON)!.toISOString(), '2026-12-01T12:00:00.000Z');
+});
+
+test('parseDeviceDateTime handles the repeated and the skipped hour of a zone clock', () => {
+  assert.equal(parseDeviceDateTime('2026-10-25 01:30:00', LONDON, 1)!.toISOString(), '2026-10-25T00:30:00.000Z');
+  assert.equal(parseDeviceDateTime('2026-10-25 01:30:00', LONDON, 2)!.toISOString(), '2026-10-25T01:30:00.000Z');
+  assert.equal(parseDeviceDateTime('2026-03-29 01:30:00', LONDON), null);
+  // The same wall-clock times are ordinary on a clock with no daylight saving.
+  assert.equal(parseDeviceDateTime('2026-03-29 01:30:00', UTC)!.toISOString(), '2026-03-29T01:30:00.000Z');
+  assert.equal(parseDeviceDateTime('2026-10-25 01:30:00', PLUS_ONE, 2)!.toISOString(), '2026-10-25T00:30:00.000Z');
+});
+
+test('parseHannaCsv stores instants for the chosen controller clock and keeps the raw text', () => {
+  const utc = parseWithClock(csv(), UTC).windows.find((x) => x.rec === 2)!;
+  const london = parseWithClock(csv(), LONDON).windows.find((x) => x.rec === 2)!;
+  assert.equal(utc.start.toISOString(), '2026-10-14T14:09:17.000Z');
+  assert.equal(london.start.toISOString(), '2026-10-14T13:09:17.000Z');
+  assert.equal(london.end.toISOString(), '2026-10-14T13:56:15.000Z');
+  assert.equal(utc.startLocal, london.startLocal);
+  assert.equal(windowDocId('u1', 'BL122_7AC443', utc), windowDocId('u1', 'BL122_7AC443', london));
+});
+
+test('parseHannaCsv gives the repeat of a fall-back hour the later instant and its own id', () => {
+  const rows = [
+    '1,2026-10-25 01:10:00,2026-10-25 01:55:00,7.4,7.5,700,710,29,30,0,0,0,0',
+    '2,2026-10-25 01:10:00,2026-10-25 01:55:00,7.4,7.5,700,710,29,30,0,0,0,0',
+  ];
+  const ws = parseWithClock(csv(rows), LONDON).windows;
+  assert.deepEqual(ws.map((w) => w.start.toISOString()), ['2026-10-25T00:10:00.000Z', '2026-10-25T01:10:00.000Z']);
+  assert.deepEqual(ws.map((w) => w.occurrence), [1, 2]);
+  assert.notEqual(windowDocId('u1', 'd', ws[0]), windowDocId('u1', 'd', ws[1]));
+});
+
+test('planImport separates new windows, windows whose stored time is wrong, and unchanged ones', () => {
+  const ws = parseWithClock(csv(), LONDON).windows; // recs 1, 2, 7
+  const win = (rec: number) => ws.find((w) => w.rec === rec)!;
+  const id = (rec: number) => windowDocId('u1', 'BL122_7AC443', win(rec));
+  const stored = new Map<string, { start: number; end: number }>([
+    [id(1), { start: win(1).start.getTime(), end: win(1).end.getTime() }], // already right
+    // imported earlier as if UTC
+    [id(2), { start: Date.parse('2026-10-14T14:09:17Z'), end: Date.parse('2026-10-14T14:56:15Z') }],
+  ]);
+  const plan = planImport(ws, (w) => windowDocId('u1', 'BL122_7AC443', w), stored);
+  assert.deepEqual(plan.fresh.map((x) => x.w.rec), [7]);
+  assert.deepEqual(plan.corrected.map((x) => x.w.rec), [2]);
+  assert.equal(plan.unchanged, 1);
+  assert.equal(plan.corrected[0].id, id(2));
+});
+
+test('planImport corrects a window whose start is right but whose end is not', () => {
+  // Across the spring clock change, 00:50 is the same instant on a UTC clock
+  // and a London one, but 02:10 is an hour apart.
+  const row = ['1,2026-03-29 00:50:00,2026-03-29 02:10:00,7.4,7.5,700,710,29,30,0,0,0,0'];
+  const asUtc = parseWithClock(csv(row), UTC).windows[0];
+  const asLondon = parseWithClock(csv(row), LONDON).windows[0];
+  assert.equal(asUtc.start.getTime(), asLondon.start.getTime());
+  assert.notEqual(asUtc.end.getTime(), asLondon.end.getTime());
+  const idOf = (w: typeof asUtc) => windowDocId('u1', 'd', w);
+  const stored = new Map([[idOf(asUtc), { start: asUtc.start.getTime(), end: asUtc.end.getTime() }]]);
+  const plan = planImport([asLondon], idOf, stored);
+  assert.deepEqual(plan.corrected.map((x) => x.w.rec), [1]);
+  assert.equal(plan.unchanged, 0);
 });
 
 test('controllerLogDocId is deterministic, uid-prefixed, and path-safe', () => {

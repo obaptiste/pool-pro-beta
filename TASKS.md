@@ -19,14 +19,18 @@ Tick an item in the same PR that finishes it.
 
 ## Correctness
 
-- [ ] **P1 — Reconcile what an offset-less controller timestamp means.** The CSV
-      importer (`src/lib/hannaCsv.ts`) reads it as the importing browser's local
-      time; the cloud sync (`api/_lib/poolControllers/hannaCloud/source.ts`) reads it
-      as UTC or the configured `HANNA_CLOUD_DEVICE_TIMEZONE` /
-      `HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES`. Make the importer use the same device
-      clock. Its `startLocal`/`endLocal` strings feed `controllerLogDocId()`, so doc
-      ids must not change (re-import stays idempotent) even though stored
-      `start`/`end` shift. Known issue #17; own PR.
+- [x] **P1 — Reconcile what an offset-less controller timestamp means.** Done: the
+      CSV importer and the cloud sync both read controller times through
+      `DeviceClock` (`src/lib/deviceClock.ts`). The import screen asks which clock
+      the controller keeps (UTC, a time zone, or a fixed offset; no default) and
+      warns if that puts the export in the future. Doc ids are unchanged, and
+      re-importing a file with the right clock corrects the stored times of
+      windows imported earlier. Known issue #17.
+- [ ] **P3 — Keep the controller clock in one place.** The import screen's answer
+      and the server's `HANNA_CLOUD_DEVICE_TIMEZONE` /
+      `HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES` are separate settings that must
+      match by hand. Store the clock once (for example per user in Firestore, with
+      a rules update) and have both the importer and the cloud sync read it.
 
 ## Data growth and storage
 

@@ -1,4 +1,5 @@
 import { DEFAULT_RANGES } from '../types.js';
+import { wallClockOffsets, type DeviceClock } from './deviceClock.js';
 import { getImpossibleValueError, getSoftWarning, ORP_ACTION_ALERT_MV, type NumericReadingField } from './readingValidation.js';
 
 /**
@@ -18,15 +19,15 @@ import { getImpossibleValueError, getSoftWarning, ORP_ACTION_ALERT_MV, type Nume
 export interface HannaWindow {
   rec: number;
   /**
-   * 1 normally; 2 for the second window in one file with the same local
-   * start time, which happens when clocks go back and an hour repeats.
+   * 1 normally; 2 for the second window in one file with the same start
+   * text, which happens when clocks go back and an hour repeats.
    * Part of the doc id so the two never overwrite each other.
    */
   occurrence: number;
-  /** Raw "YYYY-MM-DD HH:MM:SS" from the file. Controller local time, no offset. */
+  /** Raw "YYYY-MM-DD HH:MM:SS" from the file: the controller's own clock, no offset. */
   startLocal: string;
   endLocal: string;
-  /** startLocal/endLocal read in the importing browser's own time zone. */
+  /** startLocal/endLocal as instants, read on the controller clock given to parseHannaCsv. */
   start: Date;
   end: Date;
   phMin: number | null;
@@ -119,37 +120,43 @@ export function parseCell(raw: string | undefined): number | null {
 
 const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
 /**
- * Reads "YYYY-MM-DD HH:MM:SS" as local time via the Date constructor (never
- * string parsing, which Safari rejects for this format), then checks the
- * result still has the same components, so 2026-02-30 or a time skipped by
- * a DST change is rejected instead of silently shifted.
+ * Reads "YYYY-MM-DD HH:MM:SS" as an instant on the controller's own clock.
+ * The text carries no offset, so `clock` says what it means; the same text
+ * is a different instant on a UTC clock and on a UK-local one.
+ *
+ * Returns null for anything that is not a real date-time on that clock:
+ * 2026-02-30, hour 24, or (on a 'zone' clock) a local time skipped when
+ * clocks go forward. Rejected rather than silently shifted, so the caller
+ * can report the row.
+ *
+ * When a 'zone' clock goes back, an hour of local time happens twice.
+ * `occurrence` picks which: 1 is the first pass through it, 2 the repeat an
+ * hour later. An export lists its rows in order, so the second row with the
+ * same start text is the repeat.
  */
-export function parseLocalDateTime(s: string): Date | null {
+export function parseDeviceDateTime(s: string, clock: DeviceClock, occurrence = 1): Date | null {
   const m = DATE_TIME.exec(s.trim());
   if (!m) return null;
   const [Y, M, D, h, min, sec] = m.slice(1).map(Number);
-  const d = new Date(Y, M - 1, D, h, min, sec);
-  if (d.getFullYear() !== Y || d.getMonth() !== M - 1 || d.getDate() !== D ||
-      d.getHours() !== h || d.getMinutes() !== min || d.getSeconds() !== sec) return null;
-  return d;
-}
+  const wallClockAsUtcMs = Date.UTC(Y, M - 1, D, h, min, sec);
+  const check = new Date(wallClockAsUtcMs);
+  if (check.getUTCFullYear() !== Y || check.getUTCMonth() !== M - 1 || check.getUTCDate() !== D ||
+      check.getUTCHours() !== h || check.getUTCMinutes() !== min || check.getUTCSeconds() !== sec) return null;
 
-const sameLocalTime = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate() &&
-  a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes() && a.getSeconds() === b.getSeconds();
+  if (clock.kind === 'utc') return check;
+  if (clock.kind === 'offset') return new Date(wallClockAsUtcMs - clock.minutes * 60_000);
+  const offsets = wallClockOffsets(wallClockAsUtcMs, clock.timeZone);
+  if (offsets.length === 0) return null;
+  const offset = offsets[Math.min(occurrence, offsets.length) - 1];
+  return new Date(wallClockAsUtcMs - offset * 60_000);
+}
 
 /**
- * When clocks go back, a local time like 01:30 happens twice and the Date
- * constructor always picks the first. For the repeat, use the second
- * instant: an hour later that still reads as the same local time. Outside
- * a repeated hour the shifted time reads differently, so it's left alone.
+ * Parses a controller export. `clock` is what the controller's own clock is
+ * set to, and it is required: guessing it (the importing browser's zone, or
+ * UTC) is exactly how imported windows came to disagree with the cloud sync.
  */
-function laterInstantOfRepeatedTime(d: Date): Date {
-  const later = new Date(d.getTime() + 3_600_000);
-  return sameLocalTime(later, d) ? later : d;
-}
-
-export function parseHannaCsv(text: string): HannaExport {
+export function parseHannaCsv(text: string, clock: DeviceClock): HannaExport {
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).map((l) => l.replace(/[\t ]+$/, ''));
   if (lines.every((l) => l.trim() === '')) throw new HannaCsvError('The file is empty.');
 
@@ -208,13 +215,9 @@ export function parseHannaCsv(text: string): HannaExport {
 
     const startLocal = (cells[col.start] ?? '').trim();
     const endLocal = (cells[col.end] ?? '').trim();
-    let start = parseLocalDateTime(startLocal);
-    let end = parseLocalDateTime(endLocal);
     const occurrence = (startsSeen.get(startLocal) ?? 0) + 1;
-    if (start && end && occurrence > 1) {
-      start = laterInstantOfRepeatedTime(start);
-      end = laterInstantOfRepeatedTime(end);
-    }
+    const start = parseDeviceDateTime(startLocal, clock, occurrence);
+    const end = parseDeviceDateTime(endLocal, clock, occurrence);
     if (!start || !end || end < start) { invalidRows.push(rec); continue; }
     startsSeen.set(startLocal, occurrence);
 
@@ -237,8 +240,8 @@ export function parseHannaCsv(text: string): HannaExport {
 /**
  * Deterministic Firestore doc id for one window, so importing the same file
  * twice (or an overlapping later export) can never duplicate it. Built from
- * the raw local timestamp, not the parsed instant, so a re-import from a
- * browser in another time zone still lands on the same document. Prefixed
+ * the raw timestamp text, not the parsed instant, so a re-import with a
+ * different controller clock still lands on the same document. Prefixed
  * with the owner's uid: firestore.rules requires that on create, so another
  * account can't pre-claim one of these ids. A repeated local start time
  * (clocks going back) gets an "_2" suffix so it doesn't overwrite the first.
@@ -251,6 +254,48 @@ export function controllerLogDocId(uid: string, deviceId: string, startLocal: st
 
 export const windowDocId = (uid: string, deviceId: string, w: Pick<HannaWindow, 'startLocal' | 'occurrence'>) =>
   controllerLogDocId(uid, deviceId, w.startLocal, w.occurrence);
+
+export interface ImportPlan {
+  /** Windows with no stored document yet. */
+  fresh: { w: HannaWindow; id: string }[];
+  /**
+   * Windows already stored whose saved start or end is a different instant,
+   * which means they were imported on another controller clock. Writing them
+   * again fixes the stored times; the id is unchanged.
+   */
+  corrected: { w: HannaWindow; id: string }[];
+  /** Windows already stored with the same start and end. Nothing to write. */
+  unchanged: number;
+}
+
+/** The instants (epoch ms) saved for a window that already exists. */
+export interface StoredWindowTimes {
+  start: number;
+  end: number;
+}
+
+/**
+ * Decides what an import has to write, given the times stored for each
+ * window id that already exists.
+ *
+ * Both ends are compared. A window that crosses a daylight-saving change can
+ * start at the same instant on two clocks and still end an hour apart.
+ */
+export function planImport(
+  windows: HannaWindow[],
+  idOf: (w: HannaWindow) => string,
+  storedTimes: ReadonlyMap<string, StoredWindowTimes>,
+): ImportPlan {
+  const plan: ImportPlan = { fresh: [], corrected: [], unchanged: 0 };
+  for (const w of windows) {
+    const id = idOf(w);
+    const stored = storedTimes.get(id);
+    if (stored === undefined) plan.fresh.push({ w, id });
+    else if (stored.start !== w.start.getTime() || stored.end !== w.end.getTime()) plan.corrected.push({ w, id });
+    else plan.unchanged++;
+  }
+  return plan;
+}
 
 /** Windows where either pump ran, for the import preview. */
 export const isDoseWindow = (w: HannaWindow) => (w.acidBaseMaxMl ?? 0) > 0 || (w.chlorineMaxMl ?? 0) > 0;

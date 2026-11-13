@@ -2,6 +2,15 @@ import { isValidCalendarDateTime } from '../../isoDate.js';
 import type { PoolControllerReading, PoolControllerSource } from '../types.js';
 import { HannaCloudClient, HannaCloudError, type HannaReadingParameter } from './client.js';
 import { getImpossibleValueError, type NumericReadingField } from '../../../../src/lib/readingValidation.js';
+import {
+  isCanonicalTimeZone,
+  MAX_UTC_OFFSET_MINUTES,
+  offsetSuffix,
+  UTC_DEVICE_CLOCK,
+  wallClockOffsets,
+  zoneOffsetMinutesAt,
+  type DeviceClock,
+} from '../../../../src/lib/deviceClock.js';
 
 // Only a real number or a non-blank numeric string counts as a measurement.
 // `Number(value)` alone isn't enough: JS coerces '', '   ', false, and [] to
@@ -96,33 +105,8 @@ const STRICT_ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?
  * fixed offset is the safer default for hardware whose DST behaviour has
  * not actually been observed across a transition.
  */
-export type DeviceClock =
-  | { kind: 'utc' }
-  | { kind: 'zone'; timeZone: string }
-  | { kind: 'offset'; minutes: number };
-
-export const UTC_DEVICE_CLOCK: DeviceClock = { kind: 'utc' };
-
-// Minutes that `timeZone`'s local wall clock is ahead of UTC at `instantMs`.
-// Derived by formatting the instant in that zone and reading the result back
-// as if it were UTC -- the difference is the offset, DST included.
-function zoneOffsetMinutesAt(instantMs: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date(instantMs));
-  const field: Record<string, string> = {};
-  for (const part of parts) field[part.type] = part.value;
-  // Some engines render midnight as hour 24 under hour12:false.
-  const hour = field.hour === '24' ? '00' : field.hour;
-  const asIfUtc = Date.UTC(
-    Number(field.year), Number(field.month) - 1, Number(field.day),
-    Number(hour), Number(field.minute), Number(field.second),
-  );
-  return Math.round((asIfUtc - instantMs) / 60_000);
-}
+export type { DeviceClock };
+export { UTC_DEVICE_CLOCK };
 
 /**
  * The offset to stamp on a wall clock reading of `wallClockAsUtcMs` (the
@@ -152,28 +136,13 @@ function zoneOffsetMinutesAt(instantMs: number, timeZone: string): number {
  * timestamp alone cannot supply.
  */
 function zoneOffsetMinutesForWallClock(wallClockAsUtcMs: number, timeZone: string, nowMs: number): number {
-  // Sample a day either side so both sides of any transition are seen.
-  const candidates = new Set<number>();
-  for (const probe of [wallClockAsUtcMs - 86_400_000, wallClockAsUtcMs, wallClockAsUtcMs + 86_400_000]) {
-    candidates.add(zoneOffsetMinutesAt(probe, timeZone));
-  }
-  // An offset is only real if it round-trips: the instant it implies must
-  // itself sit at that offset in the zone. In the spring gap none do; in the
-  // autumn overlap two do.
-  const real = [...candidates].filter(
-    (offset) => zoneOffsetMinutesAt(wallClockAsUtcMs - offset * 60_000, timeZone) === offset,
-  );
+  // In the spring gap no offset is real; in the autumn overlap two are.
+  const real = wallClockOffsets(wallClockAsUtcMs, timeZone);
   if (real.length === 0) return zoneOffsetMinutesAt(wallClockAsUtcMs, timeZone);
   if (real.length === 1) return real[0];
   return real.reduce((best, offset) =>
     Math.abs(wallClockAsUtcMs - offset * 60_000 - nowMs) < Math.abs(wallClockAsUtcMs - best * 60_000 - nowMs)
       ? offset : best);
-}
-
-function offsetSuffix(minutes: number): string {
-  const sign = minutes < 0 ? '-' : '+';
-  const abs = Math.abs(minutes);
-  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
 }
 
 function normaliseHannaTimestampString(value: string, clock: DeviceClock, nowMs: number): string | null {
@@ -250,7 +219,7 @@ export function resolveDeviceClock(
   const rawOffset = offsetMinutes?.trim();
   if (rawOffset) {
     const minutes = Number(rawOffset);
-    if (!Number.isInteger(minutes) || Math.abs(minutes) > 14 * 60) {
+    if (!Number.isInteger(minutes) || Math.abs(minutes) > MAX_UTC_OFFSET_MINUTES) {
       throw new HannaCloudError(
         'HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES must be a whole number of minutes between -840 and 840.',
         'HC_DEVICE_CLOCK_CONFIG',
@@ -260,25 +229,10 @@ export function resolveDeviceClock(
   }
   const zone = timeZone?.trim();
   if (zone) {
-    // Intl alone is too permissive to validate with: it also accepts bare
-    // abbreviations like "BST" and raw offsets like "+01:00". The first is
-    // ambiguous -- British Summer Time and Bangladesh Standard Time are five
-    // hours apart -- and the second is a fixed offset wearing a zone's
-    // clothes, for which HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES is the honest
-    // field. Require the canonical Region/City form so a misconfiguration
-    // fails here instead of silently producing the wrong instant for half
-    // the year.
-    const canonical = zone === 'UTC' || /^[A-Za-z][A-Za-z0-9_+-]*\/[A-Za-z0-9_+/-]+$/.test(zone);
-    let known = false;
-    if (canonical) {
-      try {
-        // Throws RangeError on an unknown zone; no other way to check one.
-        new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(0);
-        known = true;
-      } catch {
-        known = false;
-      }
-    }
+    // Canonical Region/City only, so a misconfiguration fails here instead
+    // of silently producing the wrong instant for half the year (see
+    // isCanonicalTimeZone for why Intl alone can't validate this).
+    const known = isCanonicalTimeZone(zone);
     if (!known) {
       throw new HannaCloudError(
         `HANNA_CLOUD_DEVICE_TIMEZONE must be a canonical IANA zone such as Europe/London (got: ${zone}). For a device on a fixed offset, set HANNA_CLOUD_DEVICE_UTC_OFFSET_MINUTES instead.`,
