@@ -26,16 +26,30 @@ export const UTC_DEVICE_CLOCK: DeviceClock = { kind: 'utc' };
 /** Largest offset from UTC any real zone uses, in minutes (UTC+14:00). */
 export const MAX_UTC_OFFSET_MINUTES = 14 * 60;
 
+// Building an Intl.DateTimeFormat is slow, and one conversion needs several
+// lookups, so a three-month export on a 'zone' clock took over a second of
+// blocked main thread. One formatter per zone is reused instead. The cache
+// only ever holds the zones a session actually uses.
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = zoneFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    zoneFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 // Minutes that `timeZone`'s local wall clock is ahead of UTC at `instantMs`.
 // Derived by formatting the instant in that zone and reading the result back
 // as if it were UTC -- the difference is the offset, DST included.
 export function zoneOffsetMinutesAt(instantMs: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date(instantMs));
+  const parts = zoneFormatter(timeZone).formatToParts(new Date(instantMs));
   const field: Record<string, string> = {};
   for (const part of parts) field[part.type] = part.value;
   // Some engines render midnight as hour 24 under hour12:false.

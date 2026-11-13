@@ -259,30 +259,39 @@ export interface ImportPlan {
   /** Windows with no stored document yet. */
   fresh: { w: HannaWindow; id: string }[];
   /**
-   * Windows already stored whose saved start is a different instant, which
-   * means they were imported on another controller clock. Writing them again
-   * fixes the stored times; the id is unchanged.
+   * Windows already stored whose saved start or end is a different instant,
+   * which means they were imported on another controller clock. Writing them
+   * again fixes the stored times; the id is unchanged.
    */
   corrected: { w: HannaWindow; id: string }[];
-  /** Windows already stored with the same start. Nothing to write. */
+  /** Windows already stored with the same start and end. Nothing to write. */
   unchanged: number;
 }
 
+/** The instants (epoch ms) saved for a window that already exists. */
+export interface StoredWindowTimes {
+  start: number;
+  end: number;
+}
+
 /**
- * Decides what an import has to write, given the start time (epoch ms)
- * stored for each window id that already exists.
+ * Decides what an import has to write, given the times stored for each
+ * window id that already exists.
+ *
+ * Both ends are compared. A window that crosses a daylight-saving change can
+ * start at the same instant on two clocks and still end an hour apart.
  */
 export function planImport(
   windows: HannaWindow[],
   idOf: (w: HannaWindow) => string,
-  storedStartMs: ReadonlyMap<string, number>,
+  storedTimes: ReadonlyMap<string, StoredWindowTimes>,
 ): ImportPlan {
   const plan: ImportPlan = { fresh: [], corrected: [], unchanged: 0 };
   for (const w of windows) {
     const id = idOf(w);
-    const stored = storedStartMs.get(id);
+    const stored = storedTimes.get(id);
     if (stored === undefined) plan.fresh.push({ w, id });
-    else if (stored !== w.start.getTime()) plan.corrected.push({ w, id });
+    else if (stored.start !== w.start.getTime() || stored.end !== w.end.getTime()) plan.corrected.push({ w, id });
     else plan.unchanged++;
   }
   return plan;

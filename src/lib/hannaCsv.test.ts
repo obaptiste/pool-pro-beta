@@ -189,16 +189,33 @@ test('parseHannaCsv gives the repeat of a fall-back hour the later instant and i
 
 test('planImport separates new windows, windows whose stored time is wrong, and unchanged ones', () => {
   const ws = parseWithClock(csv(), LONDON).windows; // recs 1, 2, 7
-  const id = (rec: number) => windowDocId('u1', 'BL122_7AC443', ws.find((w) => w.rec === rec)!);
-  const stored = new Map<string, number>([
-    [id(1), ws.find((w) => w.rec === 1)!.start.getTime()], // already right
-    [id(2), Date.parse('2026-10-14T14:09:17Z')], // imported earlier as if UTC
+  const win = (rec: number) => ws.find((w) => w.rec === rec)!;
+  const id = (rec: number) => windowDocId('u1', 'BL122_7AC443', win(rec));
+  const stored = new Map<string, { start: number; end: number }>([
+    [id(1), { start: win(1).start.getTime(), end: win(1).end.getTime() }], // already right
+    // imported earlier as if UTC
+    [id(2), { start: Date.parse('2026-10-14T14:09:17Z'), end: Date.parse('2026-10-14T14:56:15Z') }],
   ]);
   const plan = planImport(ws, (w) => windowDocId('u1', 'BL122_7AC443', w), stored);
   assert.deepEqual(plan.fresh.map((x) => x.w.rec), [7]);
   assert.deepEqual(plan.corrected.map((x) => x.w.rec), [2]);
   assert.equal(plan.unchanged, 1);
   assert.equal(plan.corrected[0].id, id(2));
+});
+
+test('planImport corrects a window whose start is right but whose end is not', () => {
+  // Across the spring clock change, 00:50 is the same instant on a UTC clock
+  // and a London one, but 02:10 is an hour apart.
+  const row = ['1,2026-03-29 00:50:00,2026-03-29 02:10:00,7.4,7.5,700,710,29,30,0,0,0,0'];
+  const asUtc = parseWithClock(csv(row), UTC).windows[0];
+  const asLondon = parseWithClock(csv(row), LONDON).windows[0];
+  assert.equal(asUtc.start.getTime(), asLondon.start.getTime());
+  assert.notEqual(asUtc.end.getTime(), asLondon.end.getTime());
+  const idOf = (w: typeof asUtc) => windowDocId('u1', 'd', w);
+  const stored = new Map([[idOf(asUtc), { start: asUtc.start.getTime(), end: asUtc.end.getTime() }]]);
+  const plan = planImport([asLondon], idOf, stored);
+  assert.deepEqual(plan.corrected.map((x) => x.w.rec), [1]);
+  assert.equal(plan.unchanged, 0);
 });
 
 test('controllerLogDocId is deterministic, uid-prefixed, and path-safe', () => {

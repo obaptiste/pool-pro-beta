@@ -5,7 +5,7 @@ import { collection, doc, getDocsFromServer, query, Timestamp, where, writeBatch
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useModalFocus } from '../lib/useModalFocus';
 import { useToast } from '../lib/toast';
-import { HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, planImport, summariseSafetyWarnings, windowDocId } from '../lib/hannaCsv';
+import { HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, planImport, StoredWindowTimes, summariseSafetyWarnings, windowDocId } from '../lib/hannaCsv';
 import { describeDeviceClock, resolveDeviceClockChoice, type DeviceClock, type DeviceClockChoice } from '../lib/deviceClock';
 
 interface Props {
@@ -49,8 +49,8 @@ function loadClockChoice(uid: string): DeviceClockChoice {
 type Phase =
   | { kind: 'pick' }
   | { kind: 'reading' }
-  // `stored` maps each already-imported window id to its saved start (epoch ms).
-  | { kind: 'preview'; file: string; data: HannaExport; clock: DeviceClock; stored: Map<string, number> }
+  // `stored` maps each already-imported window id to its saved start and end.
+  | { kind: 'preview'; file: string; data: HannaExport; clock: DeviceClock; stored: Map<string, StoredWindowTimes> }
   | { kind: 'importing'; done: number; total: number }
   | { kind: 'done'; saved: number; queued: boolean }
   | { kind: 'error'; message: string };
@@ -103,13 +103,14 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
     // answer must stop here rather than count as "nothing imported yet".
     // From the server, not the local cache: offline, a cached getDocs
     // would quietly return a partial set.
-    let stored: Map<string, number>;
+    let stored: Map<string, StoredWindowTimes>;
     try {
       const snap = await getDocsFromServer(query(collection(db, 'controllerLogs'), where('uid', '==', uid), where('deviceId', '==', data.deviceId)));
-      // NaN for a document with no readable start, so it counts as needing correction.
+      // NaN for a time that can't be read, so that window counts as needing correction.
+      const millis = (v: unknown) => (v instanceof Timestamp ? v.toMillis() : NaN);
       stored = new Map(snap.docs.map((d) => {
-        const start = d.data().start;
-        return [d.id, start instanceof Timestamp ? start.toMillis() : NaN];
+        const { start, end } = d.data();
+        return [d.id, { start: millis(start), end: millis(end) }];
       }));
     } catch (err) {
       console.error('Could not check for already-imported windows', err);
