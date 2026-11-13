@@ -1,11 +1,12 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileUp, Gauge, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, doc, getDocsFromServer, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useModalFocus } from '../lib/useModalFocus';
 import { useToast } from '../lib/toast';
-import { HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, summariseSafetyWarnings, windowDocId } from '../lib/hannaCsv';
+import { HannaCsvError, HannaExport, HannaWindow, isDoseWindow, parseHannaCsv, planImport, summariseSafetyWarnings, windowDocId } from '../lib/hannaCsv';
+import { describeDeviceClock, resolveDeviceClockChoice, type DeviceClock, type DeviceClockChoice } from '../lib/deviceClock';
 
 interface Props {
   isOpen: boolean;
@@ -20,11 +21,36 @@ const BATCH_SIZE = 400;
 // commit() only resolves once the server acknowledges it; offline, the
 // persistent cache queues the writes instead, so stop waiting after this.
 const COMMIT_WAIT_MS = 20_000;
+// A window that ends this far ahead of now means the chosen clock is wrong.
+const FUTURE_TOLERANCE_MS = 5 * 60_000;
+
+// The controller clock is a fact about the hardware, so the last answer is
+// remembered per user on this device instead of being asked from scratch.
+const clockKey = (uid: string) => `poolstatus:controllerClock:${uid}`;
+const browserTimeZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+};
+function loadClockChoice(uid: string): DeviceClockChoice {
+  const blank: DeviceClockChoice = { kind: '', timeZone: browserTimeZone(), offset: '' };
+  try {
+    const raw = JSON.parse(localStorage.getItem(clockKey(uid)) ?? 'null');
+    if (!raw || typeof raw !== 'object') return blank;
+    const kind = ['utc', 'zone', 'offset'].includes(raw.kind) ? raw.kind : '';
+    return {
+      kind,
+      timeZone: typeof raw.timeZone === 'string' && raw.timeZone ? raw.timeZone : blank.timeZone,
+      offset: typeof raw.offset === 'string' ? raw.offset : '',
+    };
+  } catch {
+    return blank;
+  }
+}
 
 type Phase =
   | { kind: 'pick' }
   | { kind: 'reading' }
-  | { kind: 'preview'; file: string; data: HannaExport; existing: Set<string> }
+  // `stored` maps each already-imported window id to its saved start (epoch ms).
+  | { kind: 'preview'; file: string; data: HannaExport; clock: DeviceClock; stored: Map<string, number> }
   | { kind: 'importing'; done: number; total: number }
   | { kind: 'done'; saved: number; queued: boolean }
   | { kind: 'error'; message: string };
@@ -38,6 +64,14 @@ const fmtHeaderDate = (s: string | null) => {
 /** Imports a Hanna BL-series controller CSV export into `controllerLogs`. */
 export default function ControllerImport({ isOpen, onClose, uid }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'pick' });
+  const [clockChoice, setClockChoice] = useState<DeviceClockChoice>(() => loadClockChoice(uid));
+  useEffect(() => { setClockChoice(loadClockChoice(uid)); }, [uid]);
+  const resolvedClock = resolveDeviceClockChoice(clockChoice);
+  const updateClock = (patch: Partial<DeviceClockChoice>) => {
+    const next = { ...clockChoice, ...patch };
+    setClockChoice(next);
+    try { localStorage.setItem(clockKey(uid), JSON.stringify(next)); } catch { /* private mode: asked again next time */ }
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const busy = phase.kind === 'reading' || phase.kind === 'importing';
@@ -47,7 +81,8 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || !('clock' in resolvedClock)) return;
+    const { clock } = resolvedClock;
     if (file.size > MAX_FILE_BYTES) {
       setPhase({ kind: 'error', message: 'That file is over 5 MB, which is far bigger than a controller export. Check you picked the right file.' });
       return;
@@ -55,7 +90,7 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
     setPhase({ kind: 'reading' });
     let data: HannaExport;
     try {
-      data = parseHannaCsv(await file.text());
+      data = parseHannaCsv(await file.text(), clock);
     } catch (err) {
       setPhase({ kind: 'error', message: err instanceof HannaCsvError ? err.message : 'The file couldn\'t be read as text.' });
       return;
@@ -68,25 +103,29 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
     // answer must stop here rather than count as "nothing imported yet".
     // From the server, not the local cache: offline, a cached getDocs
     // would quietly return a partial set.
-    let existing: Set<string>;
+    let stored: Map<string, number>;
     try {
       const snap = await getDocsFromServer(query(collection(db, 'controllerLogs'), where('uid', '==', uid), where('deviceId', '==', data.deviceId)));
-      existing = new Set(snap.docs.map((d) => d.id));
+      // NaN for a document with no readable start, so it counts as needing correction.
+      stored = new Map(snap.docs.map((d) => {
+        const start = d.data().start;
+        return [d.id, start instanceof Timestamp ? start.toMillis() : NaN];
+      }));
     } catch (err) {
       console.error('Could not check for already-imported windows', err);
       setPhase({ kind: 'error', message: 'Couldn\'t check what\'s already been imported. Check your connection and try again.' });
       return;
     }
-    setPhase({ kind: 'preview', file: file.name, data, existing });
+    setPhase({ kind: 'preview', file: file.name, data, clock, stored });
   };
 
   const handleImport = async () => {
     if (phase.kind !== 'preview') return;
-    const { data, existing } = phase;
+    const { data, stored } = phase;
     const importedAt = Timestamp.now();
-    const fresh = data.windows
-      .map((w) => ({ w, id: windowDocId(uid, data.deviceId, w) }))
-      .filter(({ id }) => !existing.has(id));
+    // New windows, plus stored ones whose saved time came from another clock.
+    const plan = planImport(data.windows, (w) => windowDocId(uid, data.deviceId, w), stored);
+    const fresh = [...plan.fresh, ...plan.corrected];
     // Field set must match isValidControllerLog in firestore.rules exactly.
     const toDoc = (w: HannaWindow, id: string) => ({
       id, uid, source: 'hanna-csv', deviceId: data.deviceId, location: data.location,
@@ -173,14 +212,18 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
                     Upload the CSV exported from a Hanna BL-series controller (for example the BL122). Each hourly window keeps its
                     min and max pH, ORP and temperature, plus the acid and chlorine the controller dosed.
                   </p>
+                  <ClockPicker choice={clockChoice} onChange={updateClock} error={'error' in resolvedClock && clockChoice.kind !== '' ? resolvedClock.error : null} />
                   <button
                     type="button"
                     onClick={() => inputRef.current?.click()}
-                    className="w-full rounded-xl border-2 border-dashed border-border-dim hover:border-accent/50 p-6 flex flex-col items-center gap-2 text-ink transition-colors"
+                    disabled={!('clock' in resolvedClock)}
+                    className="disabled:opacity-40 disabled:cursor-not-allowed w-full rounded-xl border-2 border-dashed border-border-dim hover:border-accent/50 p-6 flex flex-col items-center gap-2 text-ink transition-colors"
                   >
                     <FileUp size={24} className="text-accent" />
                     <span className="text-sm font-bold">Choose a .csv file</span>
-                    <span className="text-[10px] text-ink-dim">Nothing is saved until you confirm</span>
+                    <span className="text-[10px] text-ink-dim">
+                      {'clock' in resolvedClock ? 'Nothing is saved until you confirm' : 'Choose the controller clock first'}
+                    </span>
                   </button>
                 </>
               )}
@@ -231,14 +274,20 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
                     Back
                   </button>
                   {(() => {
-                    const fresh = phase.data.windows.filter((w) => !phase.existing.has(windowDocId(uid, phase.data.deviceId, w))).length;
+                    const plan = planImport(phase.data.windows, (w) => windowDocId(uid, phase.data.deviceId, w), phase.stored);
+                    const fresh = plan.fresh.length;
+                    const corrected = plan.corrected.length;
+                    const windows = (n: number) => `${n} ${n === 1 ? 'window' : 'windows'}`;
                     return (
                       <button
                         onClick={handleImport}
-                        disabled={fresh === 0}
+                        disabled={fresh + corrected === 0}
                         className="flex-[2] py-3 rounded-xl bg-accent text-primary text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all disabled:opacity-50"
                       >
-                        {fresh === 0 ? 'Already imported' : `Import ${fresh} ${fresh === 1 ? 'window' : 'windows'}`}
+                        {fresh + corrected === 0 ? 'Already imported'
+                          : corrected === 0 ? `Import ${windows(fresh)}`
+                          : fresh === 0 ? `Correct ${windows(corrected)}`
+                          : `Import ${fresh}, correct ${corrected}`}
                       </button>
                     );
                   })()}
@@ -261,10 +310,14 @@ export default function ControllerImport({ isOpen, onClose, uid }: Props) {
 }
 
 function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; uid: string }) {
-  const { data, existing, file } = phase;
+  const { data, stored, file, clock } = phase;
+  const plan = planImport(data.windows, (w) => windowDocId(uid, data.deviceId, w), stored);
   const first = data.windows[0].start;
   const last = data.windows[data.windows.length - 1].end;
-  const already = data.windows.filter((w) => existing.has(windowDocId(uid, data.deviceId, w))).length;
+  const already = plan.unchanged + plan.corrected.length;
+  // Controller logs are history, so a window that ends in the future means
+  // the chosen clock is not the one the controller keeps.
+  const inFuture = last.getTime() > Date.now() + FUTURE_TOLERANCE_MS;
   const hours = (last.getTime() - first.getTime()) / 3_600_000;
   const requested = data.requestedStart && data.requestedEnd
     ? (new Date(data.requestedEnd.replace(' ', 'T')).getTime() - new Date(data.requestedStart.replace(' ', 'T')).getTime()) / 3_600_000
@@ -277,11 +330,13 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
   const rows: [string, string][] = [
     ['File', file],
     ['Controller', [data.deviceId, data.location].filter(Boolean).join(' · ')],
+    ['Controller clock', describeDeviceClock(clock)],
     ['Covers', `${fmt(first)} → ${fmt(last)}`],
     ['Windows found', String(data.windows.length)],
     ['Dose events', String(data.windows.filter(isDoseWindow).length)],
     ['Already imported', String(already)],
   ];
+  if (plan.corrected.length) rows.push(['Times to correct', String(plan.corrected.length)]);
   if (data.emptyRows) rows.push(['Empty rows skipped', String(data.emptyRows)]);
   if (data.invalidRows.length) rows.push(['Unreadable rows skipped', `#${data.invalidRows.join(', #')}`]);
 
@@ -295,6 +350,25 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
           </div>
         ))}
       </dl>
+      {inFuture && (
+        <div className="flex gap-2 items-start rounded-xl border border-critical/50 bg-critical/5 p-3 text-xs text-ink" role="alert">
+          <AlertTriangle size={14} className="text-critical shrink-0 mt-0.5" />
+          <span>
+            With the controller clock set to {describeDeviceClock(clock)}, this export ends at {fmt(last)}, which is in the future.
+            That clock is probably not the one the controller keeps. Go back and check it against the clock on the front of the controller.
+          </span>
+        </div>
+      )}
+      {plan.corrected.length > 0 && (
+        <div className="flex gap-2 items-start rounded-xl border border-warning/40 bg-warning/5 p-3 text-xs text-ink">
+          <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />
+          <span>
+            {plan.corrected.length} {plan.corrected.length === 1 ? 'window was' : 'windows were'} imported before with a different
+            controller clock. Importing now replaces {plan.corrected.length === 1 ? 'its' : 'their'} saved times with the ones
+            shown here. The recorded values don't change.
+          </span>
+        </div>
+      )}
       {safety.worst.length > 0 && (
         <div className={`rounded-xl border p-3 space-y-2 text-xs text-ink ${serious ? 'border-critical/50 bg-critical/5' : 'border-warning/40 bg-warning/5'}`} role="alert">
           <div className="flex gap-2 items-start font-bold">
@@ -323,7 +397,76 @@ function Preview({ phase, uid }: { phase: Extract<Phase, { kind: 'preview' }>; u
           </span>
         </div>
       )}
-      <p className="text-[10px] text-ink-dim">Times are read as this device's local time. These windows go to a separate controller log and don't appear in Readings.</p>
+      <p className="text-[10px] text-ink-dim">Times in the file are read on the controller clock above and shown here in this device's time zone. These windows go to a separate controller log and don't appear in Readings.</p>
     </div>
+  );
+}
+
+const CLOCK_OPTIONS: { kind: DeviceClock['kind']; label: string; hint: string }[] = [
+  { kind: 'utc', label: 'UTC', hint: 'The controller sync\'s default.' },
+  { kind: 'zone', label: 'A time zone', hint: 'Follows daylight saving, for a controller whose clock is changed with local time.' },
+  { kind: 'offset', label: 'A fixed offset from UTC', hint: 'Never changes, for a controller with no daylight-saving setting.' },
+];
+
+/** Asks what the controller's own clock is set to. There is no default answer. */
+function ClockPicker({ choice, onChange, error }: {
+  choice: DeviceClockChoice;
+  onChange: (patch: Partial<DeviceClockChoice>) => void;
+  error: string | null;
+}) {
+  const inputClass = 'mt-2 ml-7 w-[calc(100%-1.75rem)] rounded-lg bg-primary border border-border-dim px-3 py-2 text-sm font-mono text-ink focus:border-accent focus:outline-none';
+  return (
+    <fieldset className="rounded-xl bg-surface border border-border-dim p-4 space-y-3">
+      <legend className="px-1 text-[10px] font-bold uppercase tracking-widest text-ink-muted">Controller clock</legend>
+      <p className="text-xs text-ink-muted">
+        The times in the file have no time zone. Choose what the clock on the front of the controller is set to. If the
+        controller also syncs automatically, use the same setting as that sync.
+      </p>
+      {CLOCK_OPTIONS.map((option) => (
+        <div key={option.kind}>
+          <label className="flex gap-3 items-start text-sm text-ink cursor-pointer">
+            <input
+              type="radio"
+              name="controller-clock"
+              className="mt-1 accent-current"
+              checked={choice.kind === option.kind}
+              onChange={() => onChange({ kind: option.kind })}
+            />
+            <span className="flex-1">
+              <span className="font-bold">{option.label}</span>
+              <span className="block text-[11px] text-ink-dim">{option.hint}</span>
+            </span>
+          </label>
+          {/* Outside the label, so the text box is not announced as part of the radio button. */}
+          {option.kind === 'zone' && choice.kind === 'zone' && (
+            <input
+              type="text"
+              aria-label="Time zone name"
+              value={choice.timeZone}
+              onChange={(e) => onChange({ timeZone: e.target.value })}
+              placeholder="Europe/London"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              className={inputClass}
+            />
+          )}
+          {option.kind === 'offset' && choice.kind === 'offset' && (
+            <input
+              type="text"
+              aria-label="Offset from UTC"
+              value={choice.offset}
+              onChange={(e) => onChange({ offset: e.target.value })}
+              placeholder="+01:00"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              className={inputClass}
+            />
+          )}
+        </div>
+      ))}
+      {error && <p className="text-xs text-warning" role="alert">{error}</p>}
+    </fieldset>
   );
 }
